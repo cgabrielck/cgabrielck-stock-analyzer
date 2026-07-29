@@ -944,6 +944,15 @@ def render_recommendations_tab() -> None:
                 st.metric(t("risk.penalty", lang), f"-{rec.get('risk_penalty', 0):.0f}")
             with score_cols[2]:
                 st.metric(t("risk.selection_score", lang), f"{rec.get('risk_adjusted_score', rec.get('total_score', 0)):.1f}")
+            sentiment = rec.get("sentiment", {})
+            if sentiment.get("composite_score") is not None:
+                st.caption(t(
+                    "recommend.sentiment_summary",
+                    lang,
+                    score=sentiment["composite_score"],
+                    label=t(f"sentiment.{sentiment.get('composite_label', 'neutral')}", lang),
+                    modifier=rec.get("sentiment_modifier_pct", 0),
+                ))
 
             # Relative strength
             try:
@@ -1739,6 +1748,10 @@ def render_rankings_tab() -> None:
         "price": t("ranking.price", lang), "growth_score": t("ranking.growth_score", lang),
         "model_score": t("ranking.model_score", lang), "risk_penalty": t("ranking.risk_penalty", lang),
         "risk_adjusted_score": t("ranking.risk_adjusted_score", lang), "risk_level": t("ranking.risk_level", lang),
+        "timing_score": t("ranking.timing_score", lang), "sentiment_score": t("ranking.sentiment_score", lang),
+        "sentiment_modifier_pct": t("ranking.sentiment_modifier", lang),
+        "dollar_volume_10d_avg": t("ranking.dollar_volume", lang),
+        "dollar_volume_ratio": t("ranking.dollar_volume_ratio", lang),
         "revenue_growth": t("ranking.revenue_growth", lang), "eps_growth": t("ranking.eps_growth", lang),
         "profit_margin": t("ranking.profit_margin", lang), "peg": "PEG", "roe": "ROE",
         "debt_equity": t("ranking.debt_equity", lang), "llm_score": t("ranking.llm_score", lang),
@@ -2466,7 +2479,7 @@ def render_backtest_tab(selected_tickers: Optional[List[str]] = None) -> None:
             help=t("backtest.fundamentals_help", lang), key="backtest_use_fundamentals",
         )
     with col2:
-        years = st.selectbox(t("backtest.years", lang), [3, 5], index=1)
+        years = st.selectbox(t("backtest.years", lang), [2, 3], index=1)
     with col3:
         weighting_label = st.selectbox(
             t("backtest.weighting", lang),
@@ -2479,7 +2492,7 @@ def render_backtest_tab(selected_tickers: Optional[List[str]] = None) -> None:
 
     import datetime as dt
     end_str = dt.datetime.now().strftime("%Y-%m-%d")
-    start_str = str(dt.datetime.now().year - years) + "-01-01"
+    start_str = (dt.datetime.now() - dt.timedelta(days=years * 365)).strftime("%Y-%m-%d")
     request_signature = _backtest_request_signature(
         active_tickers, start_str, end_str, use_fund, weighting, cost_bps,
     )
@@ -2780,6 +2793,29 @@ def render_portfolio_tab() -> None:
             } for row in stress_tests]), hide_index=True, width="stretch")
 
     high_corr = portfolio.get("high_corr_pairs", [])
+    correlation_df = portfolio.get("correlation_df")
+    if correlation_df is not None and not correlation_df.empty:
+        st.subheader(t("portfolio.correlation_heatmap", lang))
+        correlation_long = (
+            correlation_df.rename_axis("ticker_y")
+            .reset_index()
+            .melt(id_vars="ticker_y", var_name="ticker_x", value_name="correlation")
+        )
+        heatmap = alt.Chart(correlation_long).mark_rect(cornerRadius=2).encode(
+            x=alt.X("ticker_x:N", title=None, sort=list(correlation_df.columns)),
+            y=alt.Y("ticker_y:N", title=None, sort=list(correlation_df.index)),
+            color=alt.Color(
+                "correlation:Q",
+                scale=alt.Scale(domain=[-1, 0, 1], range=["#2563eb", "#111827", "#ef4444"]),
+                title="ρ",
+            ),
+            tooltip=[
+                alt.Tooltip("ticker_x:N", title="Ticker"),
+                alt.Tooltip("ticker_y:N", title="Ticker"),
+                alt.Tooltip("correlation:Q", title="ρ", format=".3f"),
+            ],
+        ).properties(height=max(240, 42 * len(correlation_df.index)))
+        st.altair_chart(heatmap, width="stretch")
     if high_corr:
         with st.expander(t("portfolio.high_corr", lang), expanded=True):
             st.caption(t("portfolio.high_corr_desc", lang))

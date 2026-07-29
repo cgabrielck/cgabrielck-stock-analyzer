@@ -1,5 +1,6 @@
 import pandas as pd
 import sys
+from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
@@ -7,6 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 from backtesting.calibration import ExpandingScoreCalibrator
 from backtesting.engine import (
     BacktestResult,
+    DEFAULT_START,
     _calculate_turnover,
     _close_on_date,
     _compute_aggregate_metrics,
@@ -141,3 +143,9 @@ def test_alpha_interval_reasons_distinguish_negative_zero_and_unavailable() -> N
     assert _alpha_interval_reason({"available": True, "lower": -5, "upper": -1}) == "alpha_interval_below_zero"
     assert _alpha_interval_reason({"available": True, "lower": -1, "upper": 2}) == "alpha_interval_includes_zero"
     assert _alpha_interval_reason({"available": False}) == "alpha_interval_unavailable"
+
+
+def test_default_backtest_window_is_about_three_years() -> None:
+    age_days = (datetime.now() - datetime.strptime(DEFAULT_START, "%Y-%m-%d")).days
+
+    assert 3 * 365 - 2 <= age_days <= 3 * 365 + 2

@@ -6,7 +6,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 
 from accounts.repository import InMemoryAccountRepository
-from saved_plans import alert_rule_data, build_alert_levels, build_saved_plan, is_saveable_plan, plan_changes
+from saved_plans import (
+    alert_rule_data,
+    build_alert_levels,
+    build_option_alert_levels,
+    build_saved_plan,
+    is_saveable_plan,
+    plan_changes,
+)
 
 
 def _result(stance="bullish", offset=0):
@@ -142,3 +149,22 @@ def test_plan_outcomes_are_immutable_idempotent_and_user_scoped() -> None:
     assert first == second
     assert first.outcome_data["raw_return_pct"] == 3.0
     assert repository.list_plan_outcomes(bob.id, plan.plan_id) == []
+
+
+def test_option_alerts_require_a_complete_positive_price_plan() -> None:
+    complete = {
+        "action": "buy_to_open",
+        "option_type": "call",
+        "expiry": "2026-09-18",
+        "contract": {"contract_symbol": "AAPL260918C00200000", "strike": 200},
+        "max_entry_premium": 3.5,
+        "stop_premium": 2.0,
+        "take_profit_premiums": [5.0, 7.0],
+    }
+
+    result = build_option_alert_levels(complete)
+
+    assert result["entry"]["monitor_symbol"] == "AAPL260918C00200000"
+    assert result["targets"][1]["price"] == 7.0
+    assert build_option_alert_levels({**complete, "take_profit_premiums": [5.0]}) == {}
+    assert build_option_alert_levels({**complete, "stop_premium": -1}) == {}

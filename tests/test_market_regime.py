@@ -15,6 +15,8 @@ def test_bull_regime_uses_full_target_allocation() -> None:
 
     assert result["regime"] == "bull"
     assert result["target_allocation"] == 0.9
+    assert result["pillar_weights"]["trend"] == 0.30
+    assert sum(result["pillar_weights"].values()) == 1.0
 
 
 def test_high_vix_overrides_bull_trend() -> None:
@@ -25,6 +27,7 @@ def test_high_vix_overrides_bull_trend() -> None:
     assert result["regime"] == "high_volatility"
     assert result["entry_threshold"] == 75.0
     assert result["target_allocation"] == 0.4
+    assert result["pillar_weights"]["risk"] == 0.40
 
 
 def test_insufficient_history_returns_neutral_unavailable() -> None:

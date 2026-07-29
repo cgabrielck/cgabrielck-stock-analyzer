@@ -30,7 +30,9 @@ from agents.technical_analyzer import (
     _compute_sma,
     _compute_bb,
     _compute_atr,
+    _compute_adx,
 )
+from agents.signal_pillars import calculate_five_pillar_score
 from agents.portfolio_manager import (
     DEFAULT_STOP_LOSS_PCT,
     DEFAULT_UPISDE_PCT,
@@ -55,7 +57,7 @@ from utils.selection import MIN_RECOMMENDATION_METRICS, select_recommendations
 
 FILING_LAG_DAYS: int = 60
 MAX_WORKERS: int = 5
-DEFAULT_START: str = "2020-01-01"
+DEFAULT_START: str = (datetime.now() - timedelta(days=3 * 365)).strftime("%Y-%m-%d")
 TECH_CANDIDATES: int = 15
 ENTRY_THRESHOLD: float = 60.0
 FILL_THRESHOLD: float = 50.0
@@ -245,7 +247,9 @@ def _extract_fundamentals_as_of(
 # Technical scoring on historical data
 # ---------------------------------------------------------------------------
 
-def _score_stock_technical(hist: pd.DataFrame, ticker: str) -> Dict[str, Any]:
+def _score_stock_technical(
+    hist: pd.DataFrame, ticker: str, pillar_weights: Optional[Dict[str, float]] = None,
+) -> Dict[str, Any]:
     if len(hist) < 50:
         return {"ticker": ticker, "score": 0, "error": "insufficient_history"}
 
@@ -268,55 +272,16 @@ def _score_stock_technical(hist: pd.DataFrame, ticker: str) -> Dict[str, Any]:
     vol_short = float(volume.tail(10).mean())
     vol_long = float(volume.tail(50).mean())
     volume_ratio = vol_short / vol_long if vol_long > 0 else None
-
-    total = 0
-
-    if sma20 and sma50 and sma20 > sma50:
-        total += 25
-    elif sma20 and sma50 and sma20 < sma50:
-        total += 5
-
-    if rsi is not None:
-        if 40 <= rsi <= 60:
-            total += 20
-        elif 30 <= rsi < 40:
-            total += 15
-        elif rsi < 30:
-            total += 10
-        elif rsi > 70:
-            total += 5
-
-    if macd_hist is not None:
-        if macd_hist > 0:
-            total += 15
-        else:
-            total += 5
-
-    if volume_ratio is not None:
-        if volume_ratio > 0.8:
-            total += 10
-        elif volume_ratio < 0.5:
-            total += 5
-
-    if price_vs_sma50 is not None:
-        if -5 <= price_vs_sma50 <= 5:
-            total += 10
-        elif price_vs_sma50 > 5:
-            total += 5
-        elif price_vs_sma50 < -15:
-            total -= 5
-
-    if bb_lower and bb_upper and current_price:
-        if current_price <= bb_lower:
-            total += 15
-        elif current_price >= bb_upper:
-            total += 5
-
-    total = max(0, min(100, total))
-
-    return {
+    dollar_volume = close * volume
+    dollar_volume_10d_avg = float(dollar_volume.tail(10).mean())
+    dollar_volume_50d_avg = float(dollar_volume.tail(50).mean())
+    dollar_volume_ratio = dollar_volume_10d_avg / dollar_volume_50d_avg if dollar_volume_50d_avg > 0 else None
+    volume_above_avg = volume > volume.rolling(20).mean()
+    signed_quality = close.diff().apply(lambda value: 1 if value > 0 else -1 if value < 0 else 0)
+    quality_signal = signed_quality.where(volume_above_avg, 0).tail(20)
+    obv = (np.sign(close.diff()).fillna(0) * volume).cumsum()
+    technical = {
         "ticker": ticker,
-        "total_score": round(total, 1),
         "price": current_price,
         "rsi_14": rsi,
         "macd_histogram": macd_hist,
@@ -324,10 +289,22 @@ def _score_stock_technical(hist: pd.DataFrame, ticker: str) -> Dict[str, Any]:
         "sma_50": sma50,
         "atr_14": atr,
         "volume_ratio_10_50": volume_ratio,
+        "dollar_volume_10d_avg": dollar_volume_10d_avg,
+        "dollar_volume_50d_avg": dollar_volume_50d_avg,
+        "dollar_volume_ratio": dollar_volume_ratio,
+        "volume_quality_score": float(max(0, min(100, quality_signal.mean() * 50 + 50))),
+        "obv_trend": float(obv.tail(10).mean() - obv.tail(30).mean()) if len(obv) >= 30 else None,
         "bb_upper": bb_upper,
         "bb_lower": bb_lower,
+        "sma_200": _compute_sma(close, 200),
+        "adx_14": _compute_adx(high, low, close, 14),
         "trend_signal": "uptrend" if sma50 and current_price > sma50 else "downtrend",
     }
+    risk_metrics = calculate_risk_metrics(close)
+    pillar_result = calculate_five_pillar_score(technical, risk_metrics, pillar_weights)
+    technical["signal_pillars"] = pillar_result
+    technical["total_score"] = pillar_result["score"] or 0
+    return technical
 
 
 # ---------------------------------------------------------------------------
@@ -487,6 +464,10 @@ def run_backtest(
         technical_count = 0
         fundamental_count = 0
         eligible_count = 0
+        spy_history = price_data["SPY"][price_data["SPY"].index <= reb_date_tz]["Close"]
+        vix_df = price_data.get("^VIX")
+        vix_history = vix_df[vix_df.index <= reb_date_tz]["Close"] if vix_df is not None else None
+        market_regime = classify_market_regime(spy_history, vix_history)
 
         for ticker in period_universe:
             df = price_data.get(ticker)
@@ -496,7 +477,7 @@ def run_backtest(
             if len(hist) < 50:
                 continue
 
-            tech = _score_stock_technical(hist, ticker)
+            tech = _score_stock_technical(hist, ticker, market_regime.get("pillar_weights"))
             if tech.get("error"):
                 continue
             technical_count += 1
@@ -535,6 +516,7 @@ def run_backtest(
                 "sma_20": tech.get("sma_20"),
                 "sma_50": tech.get("sma_50"),
                 "trend_signal": tech.get("trend_signal"),
+                "signal_pillars": tech.get("signal_pillars"),
             }
             risk_metrics = calculate_risk_metrics(hist["Close"])
             risk_metrics["risk_level"] = risk_label(risk_metrics)
@@ -551,10 +533,6 @@ def run_backtest(
             eligible_count = len(scored)
 
         scored.sort(key=lambda x: x.get("risk_adjusted_score", 0) or 0, reverse=True)
-        spy_history = price_data["SPY"][price_data["SPY"].index <= reb_date_tz]["Close"]
-        vix_df = price_data.get("^VIX")
-        vix_history = vix_df[vix_df.index <= reb_date_tz]["Close"] if vix_df is not None else None
-        market_regime = classify_market_regime(spy_history, vix_history)
         picks = select_recommendations(
             scored,
             entry_threshold=market_regime.get("entry_threshold", ENTRY_THRESHOLD),

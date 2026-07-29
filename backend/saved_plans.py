@@ -4,8 +4,10 @@ from datetime import date, datetime
 from typing import Any, Dict, List, Optional
 
 
-PLAN_SCHEMA_VERSION = 1
-ALERT_EVENT_TYPES = ("entry_zone", "confirmation", "stop", "target_1", "target_2")
+PLAN_SCHEMA_VERSION = 2
+STOCK_ALERT_EVENT_TYPES = ("entry_zone", "confirmation", "stop", "target_1", "target_2")
+OPTION_ALERT_EVENT_TYPES = ("option_entry", "option_stop", "option_target_1", "option_target_2")
+ALERT_EVENT_TYPES = STOCK_ALERT_EVENT_TYPES + OPTION_ALERT_EVENT_TYPES
 
 
 def build_saved_plan(
@@ -45,6 +47,10 @@ def build_saved_plan(
         "provenance": result.get("provenance", {}),
         "alert_levels": build_alert_levels(trade),
     }
+    option_alerts = build_option_alert_levels(result.get("options_plan", {}))
+    if option_alerts:
+        payload["option_plan"] = result.get("options_plan", {})
+        payload["alert_levels"]["options"] = option_alerts
     normalized = _json_value(payload)
     json.dumps(normalized, allow_nan=False)
     return normalized
@@ -95,6 +101,12 @@ def alert_rule_data(plan_data: Dict[str, Any], event_type: str) -> Dict[str, Any
     if event_type not in ALERT_EVENT_TYPES:
         raise ValueError("invalid_alert_event")
     levels = plan_data["alert_levels"]
+    if event_type.startswith("option_"):
+        option_levels = levels.get("options", {})
+        key = event_type.removeprefix("option_")
+        if key.startswith("target_"):
+            return option_levels.get("targets", [])[int(key[-1]) - 1]
+        return option_levels[key]
     if event_type == "entry_zone":
         return levels["entry_zone"]
     if event_type == "confirmation":
@@ -102,6 +114,38 @@ def alert_rule_data(plan_data: Dict[str, Any], event_type: str) -> Dict[str, Any
     if event_type == "stop":
         return levels["stop"]
     return levels["targets"][int(event_type[-1]) - 1]
+
+
+def build_option_alert_levels(options_plan: Dict[str, Any]) -> Dict[str, Any]:
+    if options_plan.get("action") != "buy_to_open":
+        return {}
+    contract = options_plan.get("contract", {})
+    symbol = contract.get("contract_symbol")
+    entry = options_plan.get("max_entry_premium")
+    stop = options_plan.get("stop_premium")
+    targets = options_plan.get("take_profit_premiums", [])
+    required_prices = [entry, stop, *targets[:2]]
+    if (
+        not symbol
+        or len(targets) < 2
+        or not all(_finite(value) and float(value) > 0 for value in required_prices)
+    ):
+        return {}
+    common = {
+        "instrument_type": "option",
+        "monitor_symbol": symbol,
+        "option_type": options_plan.get("option_type"),
+        "expiry": options_plan.get("expiry"),
+        "strike": contract.get("strike"),
+    }
+    return {
+        "entry": {**common, "price": entry, "comparison": "at_or_below"},
+        "stop": {**common, "price": stop, "comparison": "at_or_below"},
+        "targets": [
+            {**common, "price": price, "comparison": "at_or_above"}
+            for price in targets[:2]
+        ],
+    }
 
 
 def plan_changes(previous: Dict[str, Any], current: Dict[str, Any]) -> List[Dict[str, Any]]:

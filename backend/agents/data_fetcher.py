@@ -684,7 +684,23 @@ _NEGATIVE_KEYWORDS: set[str] = {
 
 
 def _analyze_news_sentiment(title: str, summary: str) -> str:
-    text = (title + " " + summary).lower()
+    text = (title + " " + summary).strip()
+    try:
+        from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+
+        analyzer = getattr(_analyze_news_sentiment, "_analyzer", None)
+        if analyzer is None:
+            analyzer = SentimentIntensityAnalyzer()
+            setattr(_analyze_news_sentiment, "_analyzer", analyzer)
+        compound = analyzer.polarity_scores(text)["compound"]
+        if compound >= 0.05:
+            return "positive"
+        if compound <= -0.05:
+            return "negative"
+        return "neutral"
+    except (ImportError, OSError):
+        pass
+    text = text.lower()
     pos_count = sum(1 for kw in _POSITIVE_KEYWORDS if kw in text)
     neg_count = sum(1 for kw in _NEGATIVE_KEYWORDS if kw in text)
     if pos_count > neg_count:

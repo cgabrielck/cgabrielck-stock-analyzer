@@ -1,3 +1,4 @@
+import concurrent.futures
 from typing import Any, Callable, Dict, List, Optional
 
 from agents.data_fetcher import fetch_all_stocks, fetch_news
@@ -8,6 +9,8 @@ from agents.technical_analyzer import compute_all_technical
 from agents.llm_agent import analyze_stocks_batch, is_available as llm_available
 from agents.risk_analyzer import calculate_risk_adjusted_score, fetch_risk_metrics
 from agents.market_regime import detect_global_market_regime
+from agents.sentiment_analyzer import compute_sentiment
+from agents.signal_pillars import calculate_five_pillar_score
 from utils.constants import SECTOR_CN_MAP, STOCK_UNIVERSE
 from utils.selection import MIN_RECOMMENDATION_METRICS, select_recommendations
 from i18n import t
@@ -62,12 +65,25 @@ def run_full_analysis(
         s["universe_tier"] = tier_map.get(ticker, "satellite")
         s["sector_cn"] = SECTOR_CN_MAP.get(s.get("sector"), s.get("sector", "未知"))
 
+    market_regime = detect_global_market_regime(force_refresh=force_refresh)
     tickers = [stock["ticker"] for stock in scored]
     tech_data = compute_all_technical(tickers, force_refresh=force_refresh)
     for stock in scored:
         tech = tech_data.get(stock["ticker"], {})
+        if not tech.get("error") and tech.get("signal_pillars"):
+            pillars = calculate_five_pillar_score(
+                tech, tech.get("risk_metrics"), market_regime.get("pillar_weights"),
+            )
+            tech["signal_pillars"] = pillars
+            tech["technical_score"] = pillars["score"]
         tech_score = tech.get("technical_score")
         stock["technical_score"] = tech_score
+        stock["signal_pillars"] = tech.get("signal_pillars")
+        for key in (
+            "dollar_volume_10d_avg", "dollar_volume_50d_avg", "dollar_volume_ratio",
+            "volume_quality_score", "obv_trend", "volume_signal",
+        ):
+            stock[key] = tech.get(key)
         stock["risk_metrics"] = tech.get("risk_metrics", {"available": False, "risk_level": "unknown"})
         if tech.get("price") is not None:
             for key in ("price", "price_session", "price_source", "price_quote_time", "price_market_state", "price_stale"):
@@ -86,13 +102,23 @@ def run_full_analysis(
         rest = [s for s in scored if s["ticker"] not in llm_tickers]
         scored = scored_with_llm + rest
 
+    news_by_ticker = _fetch_news_batch([stock["ticker"] for stock in scored], force_refresh)
+    for stock in scored:
+        ticker = stock["ticker"]
+        sentiment = compute_sentiment(news_by_ticker.get(ticker, []), tech_data.get(ticker, {}))
+        stock["sentiment"] = sentiment
+        stock["score_before_sentiment"] = stock.get("total_score", 0) or 0
+        stock["sentiment_modifier_pct"] = _sentiment_modifier_pct(sentiment)
+        stock["total_score"] = round(max(0, min(
+            100, stock["score_before_sentiment"] * (1 + stock["sentiment_modifier_pct"] / 100),
+        )), 1)
+
     for stock in scored:
         stock.update(calculate_risk_adjusted_score(
             stock.get("total_score", 0) or 0,
             stock.get("risk_metrics", {}),
         ))
     scored.sort(key=lambda stock: stock.get("risk_adjusted_score", 0) or 0, reverse=True)
-    market_regime = detect_global_market_regime(force_refresh=force_refresh)
     picks = select_recommendations(
         scored,
         entry_threshold=market_regime.get("entry_threshold", ENTRY_THRESHOLD),
@@ -110,7 +136,7 @@ def run_full_analysis(
         sec_info = get_latest_filing(rec.get("cik"), rec["ticker"], lang=lang)
         rec["sec_insights"] = sec_info
 
-        news = fetch_news(rec["ticker"])
+        news = news_by_ticker.get(rec["ticker"], [])
         rec["news"] = news
 
         if rec.get("llm_reasoning"):
@@ -145,6 +171,11 @@ def run_full_analysis(
             "risk_penalty": s.get("risk_penalty", 0),
             "risk_adjusted_score": s.get("risk_adjusted_score", s.get("total_score", 0)),
             "risk_level": s.get("risk_metrics", {}).get("risk_level", "unknown"),
+            "timing_score": s.get("technical_score"),
+            "sentiment_score": s.get("sentiment", {}).get("composite_score"),
+            "sentiment_modifier_pct": s.get("sentiment_modifier_pct", 0),
+            "dollar_volume_10d_avg": s.get("dollar_volume_10d_avg"),
+            "dollar_volume_ratio": s.get("dollar_volume_ratio"),
             "revenue_growth": s.get("revenue_growth"),
             "eps_growth": s.get("eps_growth"),
             "profit_margin": s.get("profit_margin"),
@@ -169,6 +200,30 @@ def run_full_analysis(
         "market_regime": market_regime,
         "_debug_all_data": all_data,
     }
+
+
+def _sentiment_modifier_pct(sentiment: Dict[str, Any]) -> float:
+    score = sentiment.get("composite_score")
+    if score is not None and score >= 80:
+        return 3.0
+    if score is not None and score <= 20:
+        return -3.0
+    return 0.0
+
+
+def _fetch_news_batch(tickers: List[str], force_refresh: bool) -> Dict[str, List[Dict[str, Any]]]:
+    results: Dict[str, List[Dict[str, Any]]] = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, len(tickers) or 1)) as executor:
+        futures = {
+            executor.submit(fetch_news, ticker, 5, force_refresh): ticker for ticker in tickers
+        }
+        for future in concurrent.futures.as_completed(futures):
+            ticker = futures[future]
+            try:
+                results[ticker] = future.result()
+            except Exception:
+                results[ticker] = []
+    return results
 
 
 def _generate_reasoning(data: Dict[str, Any], news: List[Dict[str, Any]], lang: str = "zh_tw") -> str:

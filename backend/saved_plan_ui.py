@@ -8,7 +8,10 @@ import yfinance as yf
 from accounts.repository import AccountRepository, AccountStorageError
 from accounts.session import current_context
 from i18n import t
-from saved_plans import ALERT_EVENT_TYPES, alert_rule_data, build_saved_plan, is_saveable_plan, plan_changes
+from saved_plans import (
+    ALERT_EVENT_TYPES, STOCK_ALERT_EVENT_TYPES, OPTION_ALERT_EVENT_TYPES,
+    alert_rule_data, build_saved_plan, is_saveable_plan, plan_changes,
+)
 from saved_plan_outcomes import OUTCOME_HORIZONS, evaluate_saved_plan_outcome
 
 
@@ -84,7 +87,9 @@ def render_saved_plan_controls(
 
 def _render_alert_rules(user_id: str, active, lang: str, repository: AccountRepository) -> None:
     stance = active.plan_data.get("decision", {}).get("stance")
-    allowed = ALERT_EVENT_TYPES if stance in {"bullish", "bearish"} else ALERT_EVENT_TYPES[:2]
+    allowed = list(STOCK_ALERT_EVENT_TYPES if stance in {"bullish", "bearish"} else STOCK_ALERT_EVENT_TYPES[:2])
+    if active.plan_data.get("alert_levels", {}).get("options"):
+        allowed.extend(OPTION_ALERT_EVENT_TYPES)
     existing = {
         rule.event_type for rule in repository.list_alert_rules(user_id, active.plan_id)
         if rule.plan_version == active.version

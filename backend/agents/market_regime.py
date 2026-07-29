@@ -6,11 +6,23 @@ import yfinance as yf
 from utils.cache import cache
 
 
-REGIME_CONFIG: Dict[str, Dict[str, float]] = {
-    "bull": {"entry_threshold": 60.0, "fill_threshold": 50.0, "target_allocation": 0.90},
-    "neutral": {"entry_threshold": 65.0, "fill_threshold": 55.0, "target_allocation": 0.70},
-    "bear": {"entry_threshold": 72.0, "fill_threshold": 65.0, "target_allocation": 0.40},
-    "high_volatility": {"entry_threshold": 75.0, "fill_threshold": 68.0, "target_allocation": 0.40},
+REGIME_CONFIG: Dict[str, Dict[str, Any]] = {
+    "bull": {
+        "entry_threshold": 60.0, "fill_threshold": 50.0, "target_allocation": 0.90,
+        "pillar_weights": {"trend": 0.30, "momentum": 0.25, "mean_reversion": 0.10, "volume": 0.20, "risk": 0.15},
+    },
+    "neutral": {
+        "entry_threshold": 65.0, "fill_threshold": 55.0, "target_allocation": 0.70,
+        "pillar_weights": {"trend": 0.25, "momentum": 0.20, "mean_reversion": 0.15, "volume": 0.20, "risk": 0.20},
+    },
+    "bear": {
+        "entry_threshold": 72.0, "fill_threshold": 65.0, "target_allocation": 0.40,
+        "pillar_weights": {"trend": 0.15, "momentum": 0.15, "mean_reversion": 0.25, "volume": 0.15, "risk": 0.30},
+    },
+    "high_volatility": {
+        "entry_threshold": 75.0, "fill_threshold": 68.0, "target_allocation": 0.40,
+        "pillar_weights": {"trend": 0.15, "momentum": 0.10, "mean_reversion": 0.20, "volume": 0.15, "risk": 0.40},
+    },
 }
 
 

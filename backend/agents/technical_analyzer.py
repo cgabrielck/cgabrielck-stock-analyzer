@@ -11,6 +11,7 @@ from utils.price_utils import get_latest_quote
 from agents.risk_analyzer import calculate_risk_metrics, risk_label
 from agents.auto_upgrader import agent_state
 from agents.alpha_vantage_data import fetch_daily_adjusted
+from agents.signal_pillars import calculate_five_pillar_score
 
 
 def _compute_rsi(series: pd.Series, length: int = 14) -> float:
@@ -195,6 +196,16 @@ def compute_technical_indicators(
         vol_short = float(volume.tail(10).mean())
         vol_long = float(volume.tail(50).mean())
         volume_ratio = vol_short / vol_long if vol_long > 0 else None
+        dollar_volume = close * volume
+        dollar_volume_10d_avg = float(dollar_volume.tail(10).mean())
+        dollar_volume_50d_avg = float(dollar_volume.tail(50).mean())
+        dollar_volume_ratio = dollar_volume_10d_avg / dollar_volume_50d_avg if dollar_volume_50d_avg > 0 else None
+        volume_above_avg = volume > volume.rolling(20).mean()
+        signed_quality = close.diff().apply(lambda value: 1 if value > 0 else -1 if value < 0 else 0)
+        quality_signal = signed_quality.where(volume_above_avg, 0).tail(20)
+        volume_quality_score = float(max(0, min(100, quality_signal.mean() * 50 + 50)))
+        obv = (np.sign(close.diff()).fillna(0) * volume).cumsum()
+        obv_trend = float(obv.tail(10).mean() - obv.tail(30).mean()) if len(obv) >= 30 else None
 
         price_vs_sma50 = ((current_price / sma50_val) - 1) * 100 if sma50_val and sma50_val > 0 else None
 
@@ -226,6 +237,11 @@ def compute_technical_indicators(
             "sma_50": sma50_val,
             "atr_14": atr_val,
             "volume_ratio_10_50": volume_ratio,
+            "dollar_volume_10d_avg": dollar_volume_10d_avg,
+            "dollar_volume_50d_avg": dollar_volume_50d_avg,
+            "dollar_volume_ratio": dollar_volume_ratio,
+            "volume_quality_score": round(volume_quality_score, 1),
+            "obv_trend": obv_trend,
             "price_vs_sma50_pct": price_vs_sma50,
             "ema_9": _compute_ema(close, 9),
             "ema_21": _compute_ema(close, 21),
@@ -239,7 +255,10 @@ def compute_technical_indicators(
         result["risk_metrics"] = risk_metrics
 
         _enrich_interpretation(result)
-        result["technical_score"] = calculate_technical_score(result)
+        result["legacy_technical_score"] = calculate_technical_score(result)
+        pillar_result = calculate_five_pillar_score(result, risk_metrics)
+        result["signal_pillars"] = pillar_result
+        result["technical_score"] = pillar_result["score"]
 
         agent_state.log_source_result(f"technical:{ticker}", True)
         cache.set(cache_key, "info", result)

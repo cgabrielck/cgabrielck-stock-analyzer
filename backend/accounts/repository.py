@@ -536,11 +536,33 @@ class SupabaseAccountRepository:
     def record_alert_evaluation(
         self, alert_id: str, price: float, quote_time: str, armed: bool,
         triggered: bool, idempotency_key: str, event_data: Dict[str, Any],
-    ) -> None:
-        self._request("POST", "rpc/record_alert_evaluation", json={
+    ) -> Optional[str]:
+        rows = self._request("POST", "rpc/record_alert_evaluation", json={
             "p_alert_id": alert_id, "p_price": price, "p_quote_time": quote_time,
             "p_armed": armed, "p_triggered": triggered,
             "p_idempotency_key": idempotency_key, "p_event_data": event_data,
+        })
+        if isinstance(rows, str):
+            return rows
+        return rows[0] if isinstance(rows, list) and rows else None
+
+    def claim_pending_alert_deliveries(self, limit: int = 25) -> List[Dict[str, Any]]:
+        # Migration 006 retains email-prefixed database names for compatibility.
+        rows = self._request("POST", "rpc/claim_alert_email_deliveries", json={
+            "p_limit": limit,
+        })
+        return rows if isinstance(rows, list) else []
+
+    def record_alert_delivery(self, event_id: str, delivered: bool, error: Optional[str] = None) -> None:
+        payload: Dict[str, Any] = {
+            "email_status": "sent" if delivered else "failed",
+            "email_last_error": None if delivered else str(error or "delivery_failed")[:500],
+        }
+        if delivered:
+            payload["email_sent_at"] = datetime.now(timezone.utc).isoformat()
+        self._request("POST", "rpc/record_alert_email_delivery", json={
+            "p_event_id": event_id, "p_delivered": delivered,
+            "p_error": payload["email_last_error"],
         })
 
     @staticmethod

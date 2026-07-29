@@ -45,3 +45,21 @@ def get_account_settings() -> AccountSettings:
         supabase_url=normalize_supabase_url(_secret("SUPABASE_URL")),
         supabase_service_role_key=_secret("SUPABASE_SERVICE_ROLE_KEY"),
     )
+
+
+@dataclass(frozen=True)
+class TelegramSettings:
+    bot_token: str
+    chat_id: str
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.bot_token and self.chat_id)
+
+
+@lru_cache(maxsize=1)
+def get_telegram_settings() -> TelegramSettings:
+    return TelegramSettings(
+        bot_token=str(_secret("TELEGRAM_BOT_TOKEN") or ""),
+        chat_id=str(_secret("TELEGRAM_CHAT_ID") or ""),
+    )

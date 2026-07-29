@@ -9,6 +9,8 @@ import yfinance as yf
 from accounts.repository import SupabaseAccountRepository
 from alert_monitor import evaluate_alert_transition, event_idempotency_key, quote_is_fresh
 from config import get_account_settings
+from config import get_telegram_settings
+from telegram_notifier import send_alert_message
 from utils.price_utils import get_latest_quote
 
 
@@ -23,9 +25,10 @@ def check_alerts(repository: SupabaseAccountRepository) -> Dict[str, int]:
         ticker = rule.get("ticker")
         if not ticker:
             continue
-        if ticker not in quotes:
-            quotes[ticker] = get_latest_quote(yf.Ticker(ticker))
-        quote = quotes[ticker]
+        monitor_symbol = rule.get("rule_data", {}).get("monitor_symbol") or ticker
+        if monitor_symbol not in quotes:
+            quotes[monitor_symbol] = get_latest_quote(yf.Ticker(monitor_symbol))
+        quote = quotes[monitor_symbol]
         if not quote_is_fresh(quote):
             result["stale"] += 1
             continue
@@ -38,11 +41,33 @@ def check_alerts(repository: SupabaseAccountRepository) -> Dict[str, int]:
         repository.record_alert_evaluation(
             rule["id"], price, quote_time, transition["armed"], transition["triggered"],
             event_idempotency_key(rule["id"], quote_time, price),
-            {"source": quote.get("source"), "session": quote.get("session")},
+            {
+                "source": quote.get("source"), "session": quote.get("session"),
+                "instrument_type": rule.get("rule_data", {}).get("instrument_type", "stock"),
+                "monitor_symbol": monitor_symbol,
+                "option_type": rule.get("rule_data", {}).get("option_type"),
+            },
         )
         result["evaluated"] += 1
         result["triggered"] += int(transition["triggered"])
+    result["delivered"] = deliver_pending_alerts(repository)
     return result
+
+
+def deliver_pending_alerts(repository: SupabaseAccountRepository) -> int:
+    settings = get_telegram_settings()
+    if not settings.configured:
+        return 0
+    sent = 0
+    for event in repository.claim_pending_alert_deliveries():
+        try:
+            send_alert_message(settings, event)
+            repository.record_alert_delivery(event["id"], True)
+            sent += 1
+        except Exception as exc:
+            LOGGER.exception("Telegram delivery failed for event %s", event.get("id"))
+            repository.record_alert_delivery(event["id"], False, str(exc))
+    return sent
 
 
 def run_forever(interval_seconds: int = 60) -> None:
