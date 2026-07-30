@@ -286,3 +286,15 @@ point-in-time fundamental coverage limitations.
   not execute the module and therefore did not detect this.
 - Added the missing import and a runtime import/annotation test before pushing
   the worker hotfix.
+
+### 2026-07-30 - Option-safe worker production smoke test
+
+- Railway deployed hotfix commit `54598c2` successfully.
+- Two consecutive production cycles reported four owner-scoped rules, four
+  evaluations, zero stale/rejected quotes, zero triggers, and zero deliveries.
+- This confirms the migration 007 RPC contract, owner filtering, stock alert
+  regression path, fresh-quote evaluation, and worker runtime startup are
+  operating together in production.
+- Next checkpoint: create one non-production option plan, verify only
+  `option_entry` starts enabled, and exercise manual simulated-entry activation
+  before testing stop and targets.
