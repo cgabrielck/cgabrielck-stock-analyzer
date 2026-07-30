@@ -103,12 +103,9 @@ def _render_alert_rules(user_id: str, active, lang: str, repository: AccountRepo
                 key=f"alert_{active.plan_id}_{active.version}_{event_type}",
             ):
                 selected.append(event_type)
-        confirmed = st.checkbox(
-            t("alerts.confirm", lang), key=f"alerts_confirm_{active.plan_id}_{active.version}",
-        )
         if st.button(
             t("alerts.save", lang), key=f"alerts_save_{active.plan_id}_{active.version}",
-            width="stretch", disabled=not confirmed,
+            width="stretch",
         ):
             rules = [(event_type, alert_rule_data(active.plan_data, event_type)) for event_type in selected]
             try:

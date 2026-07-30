@@ -23,7 +23,7 @@ ACCOUNT_KEYS = {
     "saved_plan.field_stop", "saved_plan.field_target_1", "saved_plan.field_target_2",
     "saved_plan.entry", "saved_plan.stop", "saved_plan.targets", "alerts.title",
     "alerts.pending_worker", "alerts.monitoring_note", "alerts.entry_zone", "alerts.confirmation", "alerts.stop",
-    "alerts.target_1", "alerts.target_2", "alerts.confirm", "alerts.save", "alerts.saved_pending",
+    "alerts.target_1", "alerts.target_2", "alerts.save", "alerts.saved_pending",
     "alerts.saved_monitoring", "alerts.inbox", "alerts.inbox_empty", "alerts.inbox_event", "alerts.mark_read",
     "chart.pattern_status", "chart.download_pine",
     "chart.horizon", "chart.horizon_year", "chart.horizon_short", "chart.horizon_entry", "chart.horizon_today",

@@ -200,3 +200,15 @@ point-in-time fundamental coverage limitations.
   role key in repository files.
 - `.vscode/settings.json` is a local interpreter change and is intentionally
   excluded from the upgrade commit.
+
+### 2026-07-30 - Alert rule save UX
+
+- Removed the redundant alert-rule confirmation checkbox from the saved-plan
+  UI at user request.
+- Users can now select rules and click Save directly. Saving with no selected
+  rules remains supported and clears existing monitoring rules.
+- Removed the unused confirmation label from all three languages.
+- Updated the translation-key contract test to remove the retired
+  `alerts.confirm` key.
+- Verification passed: 208 tests and `git diff --check`. Deployment is pending
+  a commit and push; `.vscode/settings.json` remains excluded.
