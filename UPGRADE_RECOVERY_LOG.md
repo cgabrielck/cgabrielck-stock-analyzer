@@ -220,3 +220,59 @@ point-in-time fundamental coverage limitations.
   scheduler paths work while correctly rejecting quotes older than the
   20-minute alert-safety limit.
 - No alert was evaluated, triggered, or delivered from stale market data.
+
+### 2026-07-30 - Option safety core implementation started
+
+- Confirmed scope: option safety core plus auditable agent-stage trace.
+- Confirmed lifecycle policy: an option entry alert is an opportunity only;
+  stop and target monitoring starts only after the user confirms a simulated
+  fill price and quantity in the app.
+- Migration 007 will be append-only. It will expand allowed option event types,
+  add an owned `option_positions` lifecycle table, keep option exit rules
+  disabled before entry confirmation, and expose an atomic confirmation RPC.
+- The worker will use a contract-specific option-chain quote adapter rather
+  than the stock-session quote helper for OCC symbols.
+- `.vscode/settings.json` remains unrelated and must not be changed or staged.
+
+### 2026-07-30 - Option safety core implementation checkpoint
+
+- Added append-only migration 007 with option event types and a manual-entry
+  lifecycle. Entry opportunities disable themselves after one trigger; stop and
+  targets cannot run before user confirmation.
+- Stop is terminal, target one is one-shot, and target two closes the simulated
+  position. Open or entry-alerted positions block alert-rule and saved-plan
+  replacement so protective rules cannot be silently removed.
+- Added a contract-specific Yahoo option-chain adapter. Entry evaluates the ask,
+  exits evaluate the bid, zero-bid/overwide markets fail closed, and monitoring
+  is limited to regular US option-market hours. Yahoo's last-trade timestamp is
+  explicitly labeled as a proxy rather than a true bid/ask timestamp.
+- Added deterministic option stages for data, liquidity, volatility, payoff,
+  event risk, and risk judgment. Missing earnings-calendar evidence is shown as
+  skipped rather than inferred.
+- Added `ALERT_OWNER_USER_ID`; Railway filters both rules and Telegram delivery
+  claims to one account UUID, preventing cross-user alert disclosure.
+- Independent review identified lifecycle races and replacement hazards; all
+  high-severity findings were addressed before migration deployment.
+- Final concurrency review added shared option-position locking across entry,
+  stop, target, alert replacement, and saved-plan replacement. Mutually
+  exclusive terminal events cannot both insert after one closes the lifecycle.
+- Option monitoring now also requires Yahoo's underlying market state to be
+  `REGULAR`, preventing holiday and early-close alerts that fixed clock hours
+  alone would incorrectly allow.
+- Deployment ordering is deliberate: apply migration 007 and configure
+  `ALERT_OWNER_USER_ID` before pushing/redeploying the worker, because the new
+  worker fails closed when owner scoping is missing.
+
+### 2026-07-30 - Migration 007 deployed
+
+- User configured Railway `ALERT_OWNER_USER_ID` for the Stock Analyzer account
+  that owns the monitored plans.
+- `007_option_alert_lifecycle.sql` completed successfully in Supabase with
+  `Success. No rows returned`.
+- Production object verification is the final checkpoint before committing and
+  pushing the new option worker and UI.
+- Post-deployment verification passed for all five required objects: the
+  `option_positions` table, manual-entry RPC, evaluation RPC, owner-scoped
+  delivery RPC, and option event-type constraint.
+- The option safety release is ready to commit and push. Full local suite:
+  219 tests passed; compilation, diff, and secret checks passed.

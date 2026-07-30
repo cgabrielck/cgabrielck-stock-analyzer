@@ -10,6 +10,8 @@ from accounts.repository import SupabaseAccountRepository
 from alert_monitor import evaluate_alert_transition, event_idempotency_key, quote_is_fresh
 from config import get_account_settings
 from config import get_telegram_settings
+from agents.options_quote_adapter import fetch_option_quote
+from agents.options_risk_agent import evaluate_option_risk
 from telegram_notifier import send_alert_message
 from utils.price_utils import get_latest_quote
 
@@ -17,20 +19,29 @@ from utils.price_utils import get_latest_quote
 LOGGER = logging.getLogger(__name__)
 
 
-def check_alerts(repository: SupabaseAccountRepository) -> Dict[str, int]:
-    rules = repository.list_enabled_alerts()
-    quotes: Dict[str, Dict[str, Any]] = {}
-    result = {"rules": len(rules), "evaluated": 0, "triggered": 0, "stale": 0}
+def check_alerts(repository: SupabaseAccountRepository, owner_user_id: str) -> Dict[str, int]:
+    rules = repository.list_enabled_alerts(owner_user_id)
+    quotes: Dict[Any, Dict[str, Any]] = {}
+    result = {"rules": len(rules), "evaluated": 0, "triggered": 0, "stale": 0, "rejected": 0}
     for rule in rules:
         ticker = rule.get("ticker")
         if not ticker:
             continue
         monitor_symbol = rule.get("rule_data", {}).get("monitor_symbol") or ticker
-        if monitor_symbol not in quotes:
-            quotes[monitor_symbol] = get_latest_quote(yf.Ticker(monitor_symbol))
-        quote = quotes[monitor_symbol]
+        is_option = rule.get("rule_data", {}).get("instrument_type") == "option"
+        quote_key = (monitor_symbol, rule.get("event_type")) if is_option else monitor_symbol
+        if quote_key not in quotes:
+            quotes[quote_key] = (
+                fetch_option_quote(ticker, rule.get("rule_data", {}), rule.get("event_type", ""))
+                if is_option else get_latest_quote(yf.Ticker(monitor_symbol))
+            )
+        quote = quotes[quote_key]
         if not quote_is_fresh(quote):
             result["stale"] += 1
+            continue
+        risk = evaluate_option_risk(quote, rule.get("rule_data", {})) if is_option else None
+        if risk and not risk["hard_gate_passed"]:
+            result["rejected"] += 1
             continue
         price = float(quote["price"])
         transition = evaluate_alert_transition(
@@ -46,20 +57,25 @@ def check_alerts(repository: SupabaseAccountRepository) -> Dict[str, int]:
                 "instrument_type": rule.get("rule_data", {}).get("instrument_type", "stock"),
                 "monitor_symbol": monitor_symbol,
                 "option_type": rule.get("rule_data", {}).get("option_type"),
+                "bid": quote.get("bid"), "ask": quote.get("ask"),
+                "spread_pct": quote.get("spread_pct"),
+                "agent_trace": quote.get("agent_trace", []),
+                "risk_judge": risk,
             },
         )
         result["evaluated"] += 1
         result["triggered"] += int(transition["triggered"])
-    result["delivered"] = deliver_pending_alerts(repository)
+    result["delivered"] = deliver_pending_alerts(repository, owner_user_id)
     return result
 
 
-def deliver_pending_alerts(repository: SupabaseAccountRepository) -> int:
+def deliver_pending_alerts(repository: SupabaseAccountRepository, owner_user_id: Optional[str] = None) -> int:
     settings = get_telegram_settings()
     if not settings.configured:
         return 0
     sent = 0
-    for event in repository.claim_pending_alert_deliveries():
+    delivery_user_id = owner_user_id or settings.owner_user_id
+    for event in repository.claim_pending_alert_deliveries(delivery_user_id):
         try:
             send_alert_message(settings, event)
             repository.record_alert_delivery(event["id"], True)
@@ -75,10 +91,13 @@ def run_forever(interval_seconds: int = 60) -> None:
     if not settings.configured:
         raise RuntimeError("SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required")
     repository = SupabaseAccountRepository(settings.supabase_url, settings.supabase_service_role_key)
+    telegram = get_telegram_settings()
+    if not telegram.configured:
+        raise RuntimeError("Telegram settings and ALERT_OWNER_USER_ID are required")
     while True:
         started = time.monotonic()
         try:
-            LOGGER.info("Alert check completed: %s", check_alerts(repository))
+            LOGGER.info("Alert check completed: %s", check_alerts(repository, telegram.owner_user_id))
         except Exception:
             LOGGER.exception("Alert check failed")
         time.sleep(max(1, interval_seconds - int(time.monotonic() - started)))

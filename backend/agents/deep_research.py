@@ -456,6 +456,8 @@ def _decision_basis(
 
 
 def _build_options_plan(options: Dict[str, Any], trade_plan: Dict[str, Any]) -> Dict[str, Any]:
+    from agents.options_risk_agent import build_option_agent_trace
+
     stance = trade_plan.get("stance")
     if options.get("error") or stance not in {"bullish", "bearish"}:
         return {"action": "none", "reason": options.get("error") or "No directional edge"}
@@ -471,19 +473,27 @@ def _build_options_plan(options: Dict[str, Any], trade_plan: Dict[str, Any]) -> 
     if not liquid:
         return {"action": "none", "reason": "No sufficiently liquid near-the-money contract"}
     contract = liquid[0]
+    contract = {**contract, "option_type": option_type}
     entry = contract.get("mid") or contract.get("ask")
     if not entry:
         return {"action": "none", "reason": "Option premium unavailable"}
+    stop = round(float(entry) * 0.65, 2)
+    targets = [round(float(entry) * 1.35, 2), round(float(entry) * 1.7, 2)]
+    expiry = options.get("selected_expiry") or options.get("nearest_expiry")
+    max_entry = round(min(float(contract["ask"]), float(entry) * 1.05), 2)
     return {
         "action": "buy_to_open",
         "option_type": option_type,
-        "expiry": options.get("selected_expiry") or options.get("nearest_expiry"),
+        "expiry": expiry,
         "contract": contract,
-        "max_entry_premium": round(min(float(contract["ask"]), float(entry) * 1.05), 2),
-        "stop_premium": round(float(entry) * 0.65, 2),
-        "take_profit_premiums": [round(float(entry) * 1.35, 2), round(float(entry) * 1.7, 2)],
+        "max_entry_premium": max_entry,
+        "stop_premium": stop,
+        "take_profit_premiums": targets,
         "exit_rule": "Scale out at +35% and +70%; exit before expiry or on underlying invalidation",
         "underlying_invalidation": trade_plan.get("stop_loss"),
         "max_position_risk_pct": 1.0,
         "method": "Nearest liquid near-the-money contract with at least 21 DTE when available",
+        "agent_trace": build_option_agent_trace(
+            contract, expiry, max_entry, stop, targets, trade_plan.get("stop_loss"),
+        ),
     }

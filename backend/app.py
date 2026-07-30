@@ -1617,6 +1617,20 @@ def _render_deep_research_result(
                 }]
                 st.dataframe(pd.DataFrame(option_rows), hide_index=True, width="stretch")
                 st.caption(option.get("exit_rule", ""))
+                trace = option.get("agent_trace", [])
+                if trace:
+                    with st.expander(t("deep.option_agent_trace", lang), expanded=False):
+                        trace_rows = []
+                        for stage in trace:
+                            gaps = stage.get("data_gaps", [])
+                            warnings = stage.get("warnings", [])
+                            trace_rows.append({
+                                t("deep.option_stage", lang): t(f"option.stage.{stage.get('stage')}", lang),
+                                t("deep.option_stage_status", lang): stage.get("status", "N/A"),
+                                t("deep.option_stage_as_of", lang): stage.get("as_of") or "N/A",
+                                t("deep.option_stage_notes", lang): ", ".join([*warnings, *gaps]) or "-",
+                            })
+                        st.dataframe(pd.DataFrame(trace_rows), hide_index=True, width="stretch")
             else:
                 st.info(f"{t('deep.no_options_trade', lang)}: {option.get('reason', 'N/A')}")
         elif section == "evidence":

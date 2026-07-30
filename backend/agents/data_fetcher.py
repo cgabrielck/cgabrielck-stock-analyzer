@@ -1052,6 +1052,10 @@ def _option_contracts(chain: Any, spot: Optional[float], limit: int = 12) -> lis
             "implied_volatility": _finite_float(contract.get("impliedVolatility")),
             "in_the_money": bool(contract.get("inTheMoney", False)),
             "spread_pct": spread_pct,
+            "last_trade_time": (
+                contract.get("lastTradeDate").isoformat()
+                if hasattr(contract.get("lastTradeDate"), "isoformat") else None
+            ),
         })
     return rows
 

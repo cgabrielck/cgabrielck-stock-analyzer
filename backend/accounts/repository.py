@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional, Protocol, Sequence, Tuple
 
 import requests
 
-from accounts.models import AlertEvent, AlertRule, SavedPlanOutcome, SavedPlanVersion, User, UserPreferences
+from accounts.models import AlertEvent, AlertRule, OptionPosition, SavedPlanOutcome, SavedPlanVersion, User, UserPreferences
 
 
 def normalize_username(username: str) -> str:
@@ -59,6 +59,12 @@ class AccountRepository(Protocol):
 
     def list_alert_rules(self, user_id: str, plan_id: str) -> List[AlertRule]: ...
 
+    def get_option_position(self, user_id: str, plan_id: str, plan_version: int) -> Optional[OptionPosition]: ...
+
+    def confirm_option_position_entry(
+        self, user_id: str, plan_id: str, plan_version: int, entry_price: float, quantity: int,
+    ) -> OptionPosition: ...
+
     def list_alert_events(self, user_id: str, unread_only: bool = False) -> List[AlertEvent]: ...
 
     def mark_alert_event_read(self, user_id: str, event_id: str) -> None: ...
@@ -88,6 +94,7 @@ class InMemoryAccountRepository:
         self._alerts: Dict[Tuple[str, str], List[AlertRule]] = {}
         self._outcomes: Dict[Tuple[str, str, int, int, int], SavedPlanOutcome] = {}
         self._alert_events: Dict[str, Tuple[str, AlertEvent]] = {}
+        self._option_positions: Dict[Tuple[str, str, int], OptionPosition] = {}
 
     def register(self, username: str, pin: str) -> User:
         normalized = normalize_username(username)
@@ -169,6 +176,12 @@ class InMemoryAccountRepository:
         with self._lock:
             versions = self._plans.setdefault((user_id, symbol), [])
             plan_id = versions[0].plan_id if versions else str(uuid.uuid4())
+            unresolved = any(
+                position.saved_plan_id == plan_id and position.lifecycle_state in {"entry_alerted", "open"}
+                for position in self._option_positions.values()
+            )
+            if unresolved:
+                raise ValueError("option_position_unresolved")
             saved = SavedPlanVersion(
                 plan_id=plan_id, ticker=symbol, version=len(versions) + 1,
                 plan_data=copy.deepcopy(plan_data), analysis_timestamp=analysis_timestamp,
@@ -224,19 +237,74 @@ class InMemoryAccountRepository:
             )
             if not owned:
                 raise ValueError("plan_not_found")
+            position = self._option_positions.get((user_id, plan_id, plan_version))
+            if position and position.lifecycle_state in {"entry_alerted", "open"}:
+                raise ValueError("option_position_unresolved")
             saved = [
                 AlertRule(
                     id=str(uuid.uuid4()), saved_plan_id=plan_id, plan_version=plan_version,
-                    event_type=event_type, rule_data=rule_data, monitoring_enabled=True,
+                    event_type=event_type, rule_data=rule_data,
+                    monitoring_enabled=event_type not in {
+                        "option_stop", "option_target_1", "option_target_2",
+                    },
                 )
                 for event_type, rule_data in rules
             ]
             self._alerts[(user_id, plan_id)] = saved
+            option_entry = next((rule for rule in saved if rule.event_type == "option_entry"), None)
+            if option_entry:
+                data = option_entry.rule_data
+                self._option_positions[(user_id, plan_id, plan_version)] = OptionPosition(
+                    id=str(uuid.uuid4()), saved_plan_id=plan_id, plan_version=plan_version,
+                    underlying_ticker=next(
+                        version.ticker for versions in self._plans.values() for version in versions
+                        if version.plan_id == plan_id and version.version == plan_version
+                    ),
+                    contract_symbol=data["monitor_symbol"], lifecycle_state="watching_entry",
+                    planned_entry=float(data["price"]), option_type=data.get("option_type"),
+                    expiry=data.get("expiry"), strike=data.get("strike"),
+                )
             return saved
 
     def list_alert_rules(self, user_id: str, plan_id: str) -> List[AlertRule]:
         with self._lock:
             return list(self._alerts.get((user_id, plan_id), []))
+
+    def get_option_position(self, user_id: str, plan_id: str, plan_version: int) -> Optional[OptionPosition]:
+        with self._lock:
+            return copy.deepcopy(self._option_positions.get((user_id, plan_id, plan_version)))
+
+    def confirm_option_position_entry(
+        self, user_id: str, plan_id: str, plan_version: int, entry_price: float, quantity: int,
+    ) -> OptionPosition:
+        if entry_price <= 0 or quantity <= 0:
+            raise ValueError("invalid_option_entry")
+        key = (user_id, plan_id, plan_version)
+        with self._lock:
+            position = self._option_positions.get(key)
+            if not position or position.lifecycle_state != "entry_alerted":
+                raise ValueError("option_entry_not_alerted")
+            opened = OptionPosition(
+                **{
+                    **position.__dict__, "lifecycle_state": "open",
+                    "confirmed_entry": float(entry_price), "quantity": int(quantity),
+                    "entered_at": datetime.now(timezone.utc).isoformat(),
+                }
+            )
+            self._option_positions[key] = opened
+            rules = self._alerts.get((user_id, plan_id), [])
+            self._alerts[(user_id, plan_id)] = [
+                AlertRule(
+                    **{
+                        **rule.__dict__,
+                        "monitoring_enabled": rule.event_type in {
+                            "option_stop", "option_target_1", "option_target_2",
+                        } if rule.event_type.startswith("option_") else rule.monitoring_enabled,
+                    }
+                )
+                for rule in rules
+            ]
+            return copy.deepcopy(opened)
 
     def list_alert_events(self, user_id: str, unread_only: bool = False) -> List[AlertEvent]:
         with self._lock:
@@ -499,6 +567,32 @@ class SupabaseAccountRepository:
         })
         return [self._alert_rule(row) for row in rows]
 
+    def get_option_position(self, user_id: str, plan_id: str, plan_version: int) -> Optional[OptionPosition]:
+        rows = self._request("GET", "option_positions", params={
+            "user_id": f"eq.{user_id}", "saved_plan_id": f"eq.{plan_id}",
+            "plan_version": f"eq.{plan_version}",
+            "select": (
+                "id,saved_plan_id,plan_version,underlying_ticker,contract_symbol,option_type,"
+                "expiry,strike,lifecycle_state,planned_entry,confirmed_entry,quantity,"
+                "entry_alerted_at,entered_at"
+            ),
+            "limit": "1",
+        })
+        return self._option_position(rows[0]) if rows else None
+
+    def confirm_option_position_entry(
+        self, user_id: str, plan_id: str, plan_version: int, entry_price: float, quantity: int,
+    ) -> OptionPosition:
+        rows = self._request("POST", "rpc/confirm_option_position_entry", json={
+            "p_user_id": user_id, "p_saved_plan_id": plan_id,
+            "p_plan_version": plan_version, "p_entry_price": entry_price,
+            "p_quantity": quantity,
+        })
+        row = rows[0] if isinstance(rows, list) else rows
+        if not isinstance(row, dict):
+            raise AccountStorageError("invalid_option_position_response")
+        return self._option_position(row)
+
     def list_alert_events(self, user_id: str, unread_only: bool = False) -> List[AlertEvent]:
         params = {
             "user_id": f"eq.{user_id}",
@@ -521,13 +615,18 @@ class SupabaseAccountRepository:
             json={"read_at": datetime.now(timezone.utc).isoformat()},
         )
 
-    def list_enabled_alerts(self) -> List[Dict[str, Any]]:
-        rows = self._request("GET", "price_alerts", params={
+    def list_enabled_alerts(self, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        params = {
             "monitoring_enabled": "eq.true",
             "select": (
                 "id,user_id,saved_plan_id,plan_version,event_type,rule_data,armed,"
                 "last_price,last_quote_time,last_triggered_at,saved_plans!inner(ticker)"
             ),
+        }
+        if user_id:
+            params["user_id"] = f"eq.{user_id}"
+        rows = self._request("GET", "price_alerts", params={
+            **params,
         })
         for row in rows:
             row["ticker"] = row.get("saved_plans", {}).get("ticker")
@@ -546,10 +645,10 @@ class SupabaseAccountRepository:
             return rows
         return rows[0] if isinstance(rows, list) and rows else None
 
-    def claim_pending_alert_deliveries(self, limit: int = 25) -> List[Dict[str, Any]]:
+    def claim_pending_alert_deliveries(self, user_id: str, limit: int = 25) -> List[Dict[str, Any]]:
         # Migration 006 retains email-prefixed database names for compatibility.
         rows = self._request("POST", "rpc/claim_alert_email_deliveries", json={
-            "p_limit": limit,
+            "p_user_id": user_id, "p_limit": limit,
         })
         return rows if isinstance(rows, list) else []
 
@@ -571,4 +670,18 @@ class SupabaseAccountRepository:
             id=row["id"], saved_plan_id=row["saved_plan_id"], plan_version=int(row["plan_version"]),
             event_type=row["event_type"], rule_data=row["rule_data"],
             monitoring_enabled=bool(row.get("monitoring_enabled", False)),
+        )
+
+    @staticmethod
+    def _option_position(row: Dict[str, Any]) -> OptionPosition:
+        return OptionPosition(
+            id=row["id"], saved_plan_id=row["saved_plan_id"],
+            plan_version=int(row["plan_version"]),
+            underlying_ticker=row["underlying_ticker"], contract_symbol=row["contract_symbol"],
+            lifecycle_state=row["lifecycle_state"], planned_entry=float(row["planned_entry"]),
+            confirmed_entry=float(row["confirmed_entry"]) if row.get("confirmed_entry") is not None else None,
+            quantity=int(row["quantity"]) if row.get("quantity") is not None else None,
+            option_type=row.get("option_type"), expiry=row.get("expiry"),
+            strike=float(row["strike"]) if row.get("strike") is not None else None,
+            entry_alerted_at=row.get("entry_alerted_at"), entered_at=row.get("entered_at"),
         )

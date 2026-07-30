@@ -59,6 +59,24 @@ class AlertEvent:
 
 
 @dataclass(frozen=True)
+class OptionPosition:
+    id: str
+    saved_plan_id: str
+    plan_version: int
+    underlying_ticker: str
+    contract_symbol: str
+    lifecycle_state: str
+    planned_entry: float
+    confirmed_entry: Optional[float] = None
+    quantity: Optional[int] = None
+    option_type: Optional[str] = None
+    expiry: Optional[str] = None
+    strike: Optional[float] = None
+    entry_alerted_at: Optional[str] = None
+    entered_at: Optional[str] = None
+
+
+@dataclass(frozen=True)
 class SavedPlanOutcome:
     id: str
     saved_plan_id: str

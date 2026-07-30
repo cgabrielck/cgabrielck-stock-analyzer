@@ -168,3 +168,27 @@ def test_option_alerts_require_a_complete_positive_price_plan() -> None:
     assert result["targets"][1]["price"] == 7.0
     assert build_option_alert_levels({**complete, "take_profit_premiums": [5.0]}) == {}
     assert build_option_alert_levels({**complete, "stop_premium": -1}) == {}
+
+
+def test_option_exit_rules_remain_disabled_until_confirmed_entry() -> None:
+    repository = InMemoryAccountRepository()
+    user = repository.register("alice", "1")
+    result = _result()
+    result["options_plan"] = {
+        "action": "buy_to_open", "option_type": "call", "expiry": "2026-09-18",
+        "contract": {"contract_symbol": "LLY260918C01000000", "strike": 1000},
+        "max_entry_premium": 3.5, "stop_premium": 2.0,
+        "take_profit_premiums": [5.0, 7.0],
+    }
+    plan_data = build_saved_plan("LLY", result, "2026-07-30T00:00:00Z", "en")
+    plan = repository.save_plan(user.id, "LLY", plan_data, plan_data["analysis_timestamp"])
+    rules = repository.replace_alert_rules(user.id, plan.plan_id, plan.version, [
+        (event_type, alert_rule_data(plan_data, event_type))
+        for event_type in ("option_entry", "option_stop", "option_target_1", "option_target_2")
+    ])
+
+    enabled = {rule.event_type for rule in rules if rule.monitoring_enabled}
+    position = repository.get_option_position(user.id, plan.plan_id, plan.version)
+
+    assert enabled == {"option_entry"}
+    assert position.lifecycle_state == "watching_entry"

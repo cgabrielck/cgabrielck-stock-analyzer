@@ -38,7 +38,7 @@ def format_alert_message(event: Dict[str, Any]) -> str:
     instrument = _escape(details.get("instrument_type") or "stock")
     contract = _escape(details.get("monitor_symbol") or "N/A")
 
-    return "\n".join([
+    lines = [
         f"<b>Stock Analyzer: {signal}</b>",
         "",
         f"<b>Ticker:</b> {ticker}",
@@ -49,12 +49,21 @@ def format_alert_message(event: Dict[str, Any]) -> str:
         f"<b>Contract:</b> {contract}",
         "",
         "Research information only. Not an order or personalized financial advice.",
-    ])
+    ]
+    if event_type == "option_entry":
+        lines.extend([
+            "",
+            "<b>Entry opportunity only.</b> No fill or position was recorded.",
+            "Confirm the simulated fill in Saved Plans before stop and target alerts activate.",
+        ])
+    return "\n".join(lines)
 
 
 def _signal_label(event_type: str, event_data: Dict[str, Any]) -> str:
     option_type = str(event_data.get("option_type") or "").upper()
-    if event_type in {"entry_zone", "confirmation", "option_entry"}:
+    if event_type == "option_entry":
+        return "OPTION ENTRY OPPORTUNITY"
+    if event_type in {"entry_zone", "confirmation"}:
         return option_type or "BUY"
     if event_type in {"stop", "option_stop"}:
         return "EXIT / STOP"

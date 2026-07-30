@@ -80,6 +80,7 @@ def render_saved_plan_controls(
     if notice:
         st.success(notice)
     _render_alert_rules(context.user.id, active, lang, repository)
+    _render_option_position(context.user.id, active, lang, repository)
     versions = repository.list_plan_versions(context.user.id, ticker)
     _render_history(versions, lang)
     _render_outcome_journal(context.user.id, ticker, versions, lang, repository)
@@ -113,6 +114,51 @@ def _render_alert_rules(user_id: str, active, lang: str, repository: AccountRepo
                 st.success(t("alerts.saved_monitoring", lang, count=len(rules)))
             except AccountStorageError as exc:
                 st.error(t(f"account.storage_{exc.code}", lang))
+
+
+def _render_option_position(user_id: str, active, lang: str, repository: AccountRepository) -> None:
+    if not active.plan_data.get("alert_levels", {}).get("options"):
+        return
+    try:
+        position = repository.get_option_position(user_id, active.plan_id, active.version)
+    except AccountStorageError as exc:
+        st.error(t(f"account.storage_{exc.code}", lang))
+        return
+    if not position:
+        return
+    with st.expander(t("options.position.title", lang), expanded=position.lifecycle_state == "entry_alerted"):
+        st.caption(t(
+            "options.position.status", lang,
+            contract=position.contract_symbol,
+            status=t(f"options.position.state.{position.lifecycle_state}", lang),
+        ))
+        if position.lifecycle_state != "entry_alerted":
+            if position.lifecycle_state == "watching_entry":
+                st.info(t("options.position.waiting_entry", lang))
+            return
+        st.warning(t("options.position.confirm_note", lang))
+        col1, col2 = st.columns(2)
+        with col1:
+            entry_price = st.number_input(
+                t("options.position.entry_price", lang), min_value=0.01,
+                value=float(position.planned_entry), step=0.01,
+                key=f"option_entry_price_{position.id}",
+            )
+        with col2:
+            quantity = st.number_input(
+                t("options.position.quantity", lang), min_value=1, value=1, step=1,
+                key=f"option_entry_quantity_{position.id}",
+            )
+        if st.button(t("options.position.confirm", lang), key=f"option_confirm_{position.id}", width="stretch"):
+            try:
+                repository.confirm_option_position_entry(
+                    user_id, active.plan_id, active.version, float(entry_price), int(quantity),
+                )
+                st.success(t("options.position.opened", lang))
+                st.rerun()
+            except (AccountStorageError, ValueError) as exc:
+                code = exc.code if isinstance(exc, AccountStorageError) else str(exc)
+                st.error(t(f"account.storage_{code}", lang))
 
 
 def _render_history(versions: List[Any], lang: str) -> None:

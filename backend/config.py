@@ -51,10 +51,11 @@ def get_account_settings() -> AccountSettings:
 class TelegramSettings:
     bot_token: str
     chat_id: str
+    owner_user_id: str
 
     @property
     def configured(self) -> bool:
-        return bool(self.bot_token and self.chat_id)
+        return bool(self.bot_token and self.chat_id and self.owner_user_id)
 
 
 @lru_cache(maxsize=1)
@@ -62,4 +63,5 @@ def get_telegram_settings() -> TelegramSettings:
     return TelegramSettings(
         bot_token=str(_secret("TELEGRAM_BOT_TOKEN") or ""),
         chat_id=str(_secret("TELEGRAM_CHAT_ID") or ""),
+        owner_user_id=str(_secret("ALERT_OWNER_USER_ID") or ""),
     )

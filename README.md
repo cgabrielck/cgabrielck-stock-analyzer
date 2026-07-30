@@ -360,7 +360,7 @@ Every push to `main` triggers a Streamlit Cloud redeploy.
 Guest analysis works without account configuration. To enable persistent username/PIN accounts, Favorites, and preferences:
 
 1. Create a Supabase project.
-2. Run `backend/persistence/migrations/001_accounts.sql` through `006_alert_email_delivery.sql` in numeric order in the Supabase SQL editor. Migration 006 retains email-prefixed database column/function names as an internal compatibility layer, but the worker delivers through Telegram only.
+2. Run `backend/persistence/migrations/001_accounts.sql` through `007_option_alert_lifecycle.sql` in numeric order in the Supabase SQL editor. Migration 006 retains email-prefixed database column/function names as an internal compatibility layer, but the worker delivers through Telegram only. Migration 007 enables option event types and requires manual confirmation of a simulated option entry before stop and target rules begin monitoring.
 3. Add `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` to server-side Streamlit Secrets.
 4. Restart the app.
 
@@ -372,13 +372,13 @@ Authenticated users can save deterministic Deep Research plans, compare a re-ana
 
 ### Price alert worker
 
-Price alert rules are monitored outside Streamlit so checks continue after the browser closes. Deploy a long-running worker on Railway, Render, or another process host with `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `TELEGRAM_BOT_TOKEN`, and `TELEGRAM_CHAT_ID`, then run:
+Price alert rules are monitored outside Streamlit so checks continue after the browser closes. Deploy a long-running worker on Railway, Render, or another process host with `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, and `ALERT_OWNER_USER_ID`, then run:
 
 ```bash
 python backend/alert_worker.py
 ```
 
-The default interval is one minute. Set `ALERT_INTERVAL_SECONDS` to change it. The worker rejects stale Yahoo quotes, triggers only on directional crossings or entry-zone transitions, re-arms after price moves away from the level, stores duplicate-safe events in the signed-in user's in-app alert inbox, and sends claimed events to the configured Telegram chat with bounded retries. This is periodic/delayed monitoring, not exchange-grade real-time market data. Never commit the bot token, chat ID, or Supabase service-role key.
+The default interval is one minute. Set `ALERT_INTERVAL_SECONDS` to change it. `ALERT_OWNER_USER_ID` must be the UUID of the one Stock Analyzer account whose events belong in this Telegram chat; the worker filters rules and deliveries by that owner to prevent cross-user disclosure. The worker rejects stale Yahoo quotes, triggers only on directional crossings or entry-zone transitions, re-arms after price moves away from the level, stores duplicate-safe events in the signed-in user's in-app alert inbox, and sends claimed events to the configured Telegram chat with bounded retries. This is periodic/delayed monitoring, not exchange-grade real-time market data. Never commit the bot token, chat ID, owner UUID, or Supabase service-role key.
 
 Deep Research also includes bounded SEC filing evidence with direct EDGAR citations. Saved-plan outcome journals can be evaluated on demand at 5, 20, and 60 completed trading sessions using raw daily OHLC and exact-date SPY comparison. Outcome observations are educational research records, not brokerage fills. The model portfolio reports cash-aware covariance volatility, historical VaR, coverage, and transparent -10%/-20% equity stress scenarios.
 
