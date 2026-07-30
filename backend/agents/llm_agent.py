@@ -8,13 +8,18 @@ from dotenv import load_dotenv
 from openai import OpenAI
 
 from agents.auto_upgrader import agent_state
+from config import get_secret
 
 load_dotenv()
 
-_API_KEY: Optional[str] = os.getenv("LLM_API_KEY")
-_BASE_URL: Optional[str] = os.getenv("LLM_BASE_URL")
-_CHAT_MODEL: str = os.getenv("LLM_MODEL", "deepseek-chat")
-_REASONING_MODEL: str = os.getenv("LLM_REASONING_MODEL", "deepseek-reasoner")
+_API_KEY: Optional[str] = get_secret("LLM_API_KEY")
+_BASE_URL: Optional[str] = str(get_secret("LLM_BASE_URL") or "").strip() or None
+_CHAT_MODEL: str = str(get_secret("LLM_MODEL") or "deepseek-chat").strip() or "deepseek-chat"
+_REASONING_MODEL: str = str(get_secret("LLM_REASONING_MODEL") or "").strip() or _CHAT_MODEL
+try:
+    _LLM_TIMEOUT_SECONDS = min(120.0, max(1.0, float(get_secret("LLM_TIMEOUT_SECONDS") or "45")))
+except (TypeError, ValueError):
+    _LLM_TIMEOUT_SECONDS = 45.0
 
 _CLIENT: Optional[OpenAI] = None
 
@@ -25,7 +30,10 @@ def _get_client() -> Optional[OpenAI]:
         return _CLIENT
     if not _API_KEY or not _BASE_URL:
         return None
-    _CLIENT = OpenAI(api_key=_API_KEY, base_url=_BASE_URL, timeout=15.0, max_retries=0)
+    _CLIENT = OpenAI(
+        api_key=_API_KEY, base_url=_BASE_URL,
+        timeout=_LLM_TIMEOUT_SECONDS, max_retries=0,
+    )
     return _CLIENT
 
 
@@ -45,6 +53,8 @@ def get_public_config() -> Dict[str, Any]:
         "base_url": _BASE_URL,
         "chat_model": _CHAT_MODEL,
         "reasoning_model": _REASONING_MODEL,
+        "timeout_seconds": _LLM_TIMEOUT_SECONDS,
+        "uses_separate_reasoner": _REASONING_MODEL != _CHAT_MODEL,
     }
 
 

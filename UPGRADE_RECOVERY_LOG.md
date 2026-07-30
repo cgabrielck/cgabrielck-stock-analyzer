@@ -348,3 +348,23 @@ point-in-time fundamental coverage limitations.
   are cleared automatically and users are prompted to rerun the analysis.
 - The result page now displays the active research pipeline version so stale UI
   state can be distinguished from a provider response.
+
+### 2026-07-31 - zhi-api and commercial option providers
+
+- User confirmed `LLM_BASE_URL=https://zhi-api.com/v1` and
+  `LLM_MODEL=gpt-5.6-luna`, without a separate reasoning-model setting.
+- Root cause: strategy tasks still defaulted to `deepseek-reasoner`, which may
+  not exist at that provider, before falling back to Luna; the shared client
+  also enforced a hard 15-second timeout. The reasoner will now default to the
+  configured chat model unless explicitly overridden, with a configurable
+  timeout.
+- User selected the Yahoo -> Tradier -> Polygon/Massive -> Cboe provider plan.
+  Official pricing review corrected earlier assumptions: Tradier requires an
+  account/token; Massive Options Basic is free EOD, Starter is $29/month for
+  delayed snapshots, and Advanced is $199/month for real-time quotes.
+- Provider recency will be enforced from response metadata. EOD/delayed sources
+  may support research but cannot trigger actionable alerts.
+- Actionable commercial-provider quotes must be no more than two minutes old,
+  match the requested contract, contain a valid bid/ask market, and come from a
+  complete response. The alert worker also requires Yahoo to have confirmed a
+  regular market session before using a commercial quote fallback.

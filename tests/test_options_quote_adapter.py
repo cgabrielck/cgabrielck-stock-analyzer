@@ -62,11 +62,33 @@ def test_stale_last_trade_is_rejected(monkeypatch) -> None:
         "Ticker",
         lambda ticker: type("Ticker", (), {"info": {"marketState": "REGULAR"}, "option_chain": lambda self, expiry: _chain(last_trade=stale)})(),
     )
+    monkeypatch.setattr(options_quote_adapter, "fetch_tradier_option_contract", lambda *args: {"error": "unavailable"})
+    monkeypatch.setattr(options_quote_adapter, "fetch_polygon_option_contract", lambda *args: {"error": "unavailable"})
 
     quote = fetch_option_quote("LLY", _rule(), "option_entry", now=now)
 
     assert quote["available"] is False
     assert quote["stale_reason"] == "stale_option_trade"
+
+
+def test_stale_yahoo_quote_falls_back_to_tradier(monkeypatch) -> None:
+    now = _market_time()
+    stale = now - timedelta(minutes=30)
+    monkeypatch.setattr(
+        options_quote_adapter.yf,
+        "Ticker",
+        lambda ticker: type("Ticker", (), {"info": {"marketState": "REGULAR"}, "option_chain": lambda self, expiry: _chain(last_trade=stale)})(),
+    )
+    monkeypatch.setattr(options_quote_adapter, "fetch_tradier_option_contract", lambda symbol: {
+        "contract_symbol": symbol, "option_type": "call", "bid": 3.4, "ask": 3.6,
+        "last": 3.5, "quote_time": now.isoformat(), "volume": 50, "open_interest": 200,
+        "implied_volatility": 0.35, "actionable": True,
+    })
+
+    quote = fetch_option_quote("LLY", _rule(), "option_entry", now=now)
+
+    assert quote["available"] is True
+    assert quote["source"] == "tradier_options"
 
 
 def test_zero_bid_blocks_entry_and_exit_with_specific_reasons(monkeypatch) -> None:
@@ -148,4 +170,76 @@ def test_option_quote_does_not_use_delayed_cboe_for_alerts(monkeypatch) -> None:
     quote = fetch_option_quote("LLY", _rule(), "option_entry", now=now)
 
     assert quote["available"] is False
-    assert quote["stale_reason"] == "option_chain_unavailable"
+    assert quote["stale_reason"] == "actionable_option_quote_unavailable"
+
+
+def test_provider_fallback_requires_verified_regular_session(monkeypatch) -> None:
+    now = _market_time()
+
+    class BrokenTicker:
+        @property
+        def info(self):
+            raise RuntimeError("Yahoo failed")
+
+    monkeypatch.setattr(options_quote_adapter.yf, "Ticker", lambda ticker: BrokenTicker())
+    monkeypatch.setattr(
+        options_quote_adapter, "fetch_tradier_option_contract",
+        lambda *args: (_ for _ in ()).throw(AssertionError("provider should not be called")),
+    )
+
+    quote = fetch_option_quote("LLY", _rule(), "option_entry", now=now)
+
+    assert quote["available"] is False
+    assert quote["stale_reason"] == "option_market_state_unverified"
+
+
+def test_option_quote_uses_actionable_tradier_fallback(monkeypatch) -> None:
+    now = _market_time()
+    monkeypatch.setattr(
+        options_quote_adapter.yf,
+        "Ticker",
+        lambda ticker: type("Ticker", (), {
+            "info": {"marketState": "REGULAR"},
+            "option_chain": lambda self, expiry: (_ for _ in ()).throw(RuntimeError("Yahoo failed")),
+        })(),
+    )
+    monkeypatch.setattr(options_quote_adapter, "fetch_tradier_option_contract", lambda symbol: {
+        "contract_symbol": symbol, "option_type": "call", "bid": 3.4, "ask": 3.6,
+        "last": 3.5, "quote_time": "2026-07-29T15:00:00+00:00",
+        "volume": 50, "open_interest": 200, "implied_volatility": 0.35,
+        "actionable": True, "delayed": False,
+    })
+
+    quote = fetch_option_quote("LLY", _rule(), "option_entry", now=now)
+
+    assert quote["available"] is True
+    assert quote["source"] == "tradier_options"
+    assert quote["price"] == 3.6
+    assert quote["timestamp_semantics"] == "bid_ask_quote_time"
+
+
+def test_option_quote_skips_delayed_tradier_for_realtime_polygon(monkeypatch) -> None:
+    now = _market_time()
+    monkeypatch.setattr(
+        options_quote_adapter.yf,
+        "Ticker",
+        lambda ticker: type("Ticker", (), {
+            "info": {"marketState": "REGULAR"},
+            "option_chain": lambda self, expiry: (_ for _ in ()).throw(RuntimeError("Yahoo failed")),
+        })(),
+    )
+    monkeypatch.setattr(options_quote_adapter, "fetch_tradier_option_contract", lambda symbol: {
+        "actionable": False, "delayed": True,
+    })
+    monkeypatch.setattr(options_quote_adapter, "fetch_polygon_option_contract", lambda underlying, symbol: {
+        "contract_symbol": symbol, "option_type": "call", "bid": 3.3, "ask": 3.5,
+        "last": 3.4, "quote_time": "2026-07-29T15:00:00+00:00",
+        "volume": 60, "open_interest": 220, "implied_volatility": 0.34,
+        "actionable": True, "delayed": False,
+    })
+
+    quote = fetch_option_quote("LLY", _rule(), "option_target_1", now=now)
+
+    assert quote["available"] is True
+    assert quote["source"] == "polygon_options"
+    assert quote["price"] == 3.3

@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-def _secret(name: str) -> Optional[str]:
+def get_secret(name: str) -> Optional[str]:
     value = os.getenv(name)
     if value:
         return value
@@ -42,8 +42,8 @@ class AccountSettings:
 @lru_cache(maxsize=1)
 def get_account_settings() -> AccountSettings:
     return AccountSettings(
-        supabase_url=normalize_supabase_url(_secret("SUPABASE_URL")),
-        supabase_service_role_key=_secret("SUPABASE_SERVICE_ROLE_KEY"),
+        supabase_url=normalize_supabase_url(get_secret("SUPABASE_URL")),
+        supabase_service_role_key=get_secret("SUPABASE_SERVICE_ROLE_KEY"),
     )
 
 
@@ -61,7 +61,7 @@ class TelegramSettings:
 @lru_cache(maxsize=1)
 def get_telegram_settings() -> TelegramSettings:
     return TelegramSettings(
-        bot_token=str(_secret("TELEGRAM_BOT_TOKEN") or ""),
-        chat_id=str(_secret("TELEGRAM_CHAT_ID") or ""),
-        owner_user_id=str(_secret("ALERT_OWNER_USER_ID") or ""),
+        bot_token=str(get_secret("TELEGRAM_BOT_TOKEN") or ""),
+        chat_id=str(get_secret("TELEGRAM_CHAT_ID") or ""),
+        owner_user_id=str(get_secret("ALERT_OWNER_USER_ID") or ""),
     )

@@ -36,7 +36,7 @@ def _payload():
 
 
 def test_cboe_chain_normalizes_occ_contracts_and_greeks(monkeypatch) -> None:
-    monkeypatch.setattr(cboe_options, "_fetch_payload", lambda symbol: _payload())
+    monkeypatch.setattr(cboe_options, "_fetch_payload", lambda symbol, deadline=None: _payload())
 
     result = cboe_options.fetch_cboe_options_chain("tsla", 300)
 

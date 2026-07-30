@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import re
+import time
 from typing import Any, Callable, Dict, Optional
 from zoneinfo import ZoneInfo
 
@@ -20,6 +21,8 @@ from agents.alpha_vantage_data import fetch_fundamentals as fetch_alpha_fundamen
 from agents.alpha_vantage_data import is_configured as alpha_vantage_configured
 from agents.alpha_vantage_data import fetch_global_quote as fetch_alpha_global_quote
 from agents.cboe_options import fetch_cboe_options_chain
+from agents.tradier_options import fetch_tradier_options_chain
+from agents.polygon_options import fetch_polygon_options_chain
 try:
     from agents.china_data_fetcher import clear_provider_cache, fetch_china_data, fetch_china_daily
 except ImportError:
@@ -1109,25 +1112,51 @@ def _options_fallback(
     ticker: str, current_price: Optional[float], cache_key: str, cooldown_key: str,
     yahoo_reason: str,
 ) -> Dict[str, Any]:
-    result = fetch_cboe_options_chain(ticker, current_price)
-    if not result.get("error"):
-        result["fallback_from"] = "yfinance_options"
-        result["fallback_reason"] = yahoo_reason
-        cache.set(cache_key, "info", result, ttl=60)
-        return result
-    cboe_code = result.get("error_code", "provider_error")
-    if "rate_limit" in yahoo_reason or cboe_code == "rate_limit":
+    providers = (
+        ("tradier_options", fetch_tradier_options_chain),
+        ("polygon_options", fetch_polygon_options_chain),
+        ("cboe_delayed_options", fetch_cboe_options_chain),
+    )
+    failures = []
+    attempted = ["yfinance_options"]
+    deadline = time.monotonic() + 25
+    for provider, fetcher in providers:
+        attempted.append(provider)
+        try:
+            result = fetcher(ticker, current_price, deadline)
+        except Exception:
+            result = {
+                "error": "provider_unavailable", "error_code": "provider_error",
+                "provider_reason": "unexpected_failure", "source": provider,
+            }
+        if not result.get("error"):
+            result["fallback_from"] = "yfinance_options"
+            result["fallback_reason"] = yahoo_reason
+            result["providers_attempted"] = attempted
+            cache.set(cache_key, "info", result, ttl=60)
+            return result
+        failures.append({
+            "source": provider,
+            "error_code": result.get("error_code", "provider_error"),
+            "reason": result.get("provider_reason", "failed"),
+        })
+    if "rate_limit" in yahoo_reason or any(item["error_code"] == "rate_limit" for item in failures):
         error_code = "rate_limit"
-    elif yahoo_reason in {"empty_expirations", "empty_chain"} and cboe_code == "provider_incomplete":
+    elif yahoo_reason in {"empty_expirations", "empty_chain"} and all(
+        item["error_code"] in {"not_configured", "provider_incomplete"} for item in failures
+    ):
         error_code = "provider_incomplete"
     else:
         error_code = "provider_error"
     combined = _options_provider_error(
-        f"{yahoo_reason};cboe_{result.get('provider_reason', 'failed')}",
+        yahoo_reason,
         error_code=error_code,
         source="multi_source_options",
     )
-    combined["fallback_sources"] = ["yfinance_options", "cboe_delayed_options"]
+    combined["provider_failures"] = failures
+    combined["fallback_sources"] = [
+        "yfinance_options", "tradier_options", "polygon_options", "cboe_delayed_options",
+    ]
     cache.set(cooldown_key, "info", combined, ttl=300)
     return combined
 

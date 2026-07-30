@@ -168,7 +168,9 @@ def test_options_rate_limit_starts_cooldown_even_for_force_refresh(monkeypatch) 
     forced = data_fetcher.fetch_options_chain("LIMITED", 100, force_refresh=True)
 
     assert first["error_code"] == "rate_limit"
-    assert first["provider_reason"] == "yahoo_rate_limit;cboe_failed"
+    assert first["provider_reason"] == "yahoo_rate_limit"
+    assert first["source"] == "multi_source_options"
+    assert len(first["provider_failures"]) == 3
     assert first["retry_after_seconds"] == 300
     assert second["from_cache"] is True
     assert forced["from_cache"] is True
@@ -192,7 +194,8 @@ def test_options_provider_error_does_not_expose_raw_exception(monkeypatch) -> No
 
     assert result["error"] == "provider_unavailable"
     assert result["error_code"] == "provider_error"
-    assert result["provider_reason"] == "yahoo_request_failed;cboe_failed"
+    assert result["provider_reason"] == "yahoo_request_failed"
+    assert len(result["provider_failures"]) == 3
     assert "secret" not in str(result)
 
 
@@ -216,7 +219,8 @@ def test_empty_option_expirations_are_provider_incomplete_and_cached(monkeypatch
     second = data_fetcher.fetch_options_chain("EMPTY", 100, force_refresh=True)
 
     assert first["error_code"] == "provider_error"
-    assert first["provider_reason"] == "empty_expirations;cboe_failed"
+    assert first["provider_reason"] == "empty_expirations"
+    assert len(first["provider_failures"]) == 3
     assert second["from_cache"] is True
     assert calls == ["options"]
 
@@ -242,7 +246,8 @@ def test_empty_option_chain_is_provider_incomplete(monkeypatch) -> None:
     result = data_fetcher.fetch_options_chain("EMPTYCHAIN", 100)
 
     assert result["error_code"] == "provider_error"
-    assert result["provider_reason"] == "empty_chain;cboe_failed"
+    assert result["provider_reason"] == "empty_chain"
+    assert len(result["provider_failures"]) == 3
 
 
 def test_empty_yahoo_options_fall_back_to_cboe(monkeypatch) -> None:
@@ -254,6 +259,12 @@ def test_empty_yahoo_options_fall_back_to_cboe(monkeypatch) -> None:
         "source": "cboe_delayed_options", "from_cache": False,
     }
     monkeypatch.setattr(data_fetcher.yf, "Ticker", lambda *args, **kwargs: EmptyTicker())
+    monkeypatch.setattr(data_fetcher, "fetch_tradier_options_chain", lambda *args: {
+        "error": "provider_unavailable", "error_code": "not_configured", "provider_reason": "token_missing",
+    })
+    monkeypatch.setattr(data_fetcher, "fetch_polygon_options_chain", lambda *args: {
+        "error": "provider_unavailable", "error_code": "not_configured", "provider_reason": "api_key_missing",
+    })
     monkeypatch.setattr(data_fetcher, "fetch_cboe_options_chain", lambda *args: dict(cboe))
     data_fetcher.cache.delete("options_provider_cooldown_v2_TSLA_FALLBACK", "info")
     data_fetcher.cache.delete("options_v2_TSLA_FALLBACK_100.0", "info")
@@ -263,3 +274,49 @@ def test_empty_yahoo_options_fall_back_to_cboe(monkeypatch) -> None:
     assert result["source"] == "cboe_delayed_options"
     assert result["fallback_from"] == "yfinance_options"
     assert result["fallback_reason"] == "empty_expirations"
+
+
+def test_options_provider_priority_prefers_tradier_before_polygon_and_cboe(monkeypatch) -> None:
+    calls = []
+
+    class EmptyTicker:
+        options = ()
+
+    monkeypatch.setattr(data_fetcher.yf, "Ticker", lambda *args, **kwargs: EmptyTicker())
+    monkeypatch.setattr(data_fetcher, "fetch_tradier_options_chain", lambda *args: calls.append("tradier") or {
+        "ticker": "PRIORITY", "calls": [], "puts": [], "source": "tradier_options",
+    })
+    monkeypatch.setattr(data_fetcher, "fetch_polygon_options_chain", lambda *args: calls.append("polygon") or {})
+    monkeypatch.setattr(data_fetcher, "fetch_cboe_options_chain", lambda *args: calls.append("cboe") or {})
+    data_fetcher.cache.delete("options_provider_cooldown_v2_PRIORITY", "info")
+    data_fetcher.cache.delete("options_v2_PRIORITY_100.0", "info")
+
+    result = data_fetcher.fetch_options_chain("PRIORITY", 100)
+
+    assert result["source"] == "tradier_options"
+    assert calls == ["tradier"]
+    assert result["providers_attempted"][-1] == "tradier_options"
+
+
+def test_options_provider_priority_uses_polygon_after_tradier_failure(monkeypatch) -> None:
+    calls = []
+
+    class EmptyTicker:
+        options = ()
+
+    monkeypatch.setattr(data_fetcher.yf, "Ticker", lambda *args, **kwargs: EmptyTicker())
+    monkeypatch.setattr(data_fetcher, "fetch_tradier_options_chain", lambda *args: calls.append("tradier") or {
+        "error": "provider_unavailable", "error_code": "provider_error", "provider_reason": "failed",
+    })
+    monkeypatch.setattr(data_fetcher, "fetch_polygon_options_chain", lambda *args: calls.append("polygon") or {
+        "ticker": "PRIORITY2", "calls": [], "puts": [], "source": "polygon_options",
+    })
+    monkeypatch.setattr(data_fetcher, "fetch_cboe_options_chain", lambda *args: calls.append("cboe") or {})
+    data_fetcher.cache.delete("options_provider_cooldown_v2_PRIORITY2", "info")
+    data_fetcher.cache.delete("options_v2_PRIORITY2_100.0", "info")
+
+    result = data_fetcher.fetch_options_chain("PRIORITY2", 100)
+
+    assert result["source"] == "polygon_options"
+    assert calls == ["tradier", "polygon"]
+    assert result["providers_attempted"][-1] == "polygon_options"

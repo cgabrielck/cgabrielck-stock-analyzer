@@ -19,7 +19,7 @@ from utils.constants import STOCK_UNIVERSE
 
 
 ProgressCallback = Callable[[Dict[str, Any]], None]
-MARKET_DATA_TIMEOUT_SECONDS = 12.0
+MARKET_DATA_TIMEOUT_SECONDS = 30.0
 CORE_DATA_TIMEOUT_SECONDS = 35.0
 DEFAULT_BATCH_TIMEOUT_SECONDS = 150.0
 DEEP_RESEARCH_SCHEMA_VERSION = 3
@@ -485,7 +485,7 @@ def _build_options_plan(options: Dict[str, Any], trade_plan: Dict[str, Any]) -> 
         return {"action": "none", "reason": "No sufficiently liquid near-the-money contract"}
     contract = liquid[0]
     contract = {**contract, "option_type": option_type}
-    if options.get("delayed") or contract.get("delayed"):
+    if options.get("delayed") or contract.get("delayed") or options.get("actionable") is False:
         return {
             "action": "research_only",
             "reason": "Delayed fallback data is not eligible for an actionable option plan",

@@ -142,3 +142,25 @@ def test_stock_alert_path_does_not_call_option_adapter(monkeypatch) -> None:
 
     assert result["triggered"] == 1
     assert repository.evaluations[0][-1]["instrument_type"] == "stock"
+
+
+def test_broken_option_provider_does_not_abort_remaining_rules(monkeypatch) -> None:
+    option_rule = {
+        "id": "broken", "ticker": "LLY", "event_type": "option_entry",
+        "rule_data": {"instrument_type": "option", "monitor_symbol": "BROKEN", "expiry": "2026-09-18"},
+    }
+    stock_rule = {
+        "id": "stock", "ticker": "MSFT", "event_type": "target_1", "last_price": 99.0, "armed": True,
+        "rule_data": {"price": 100.0, "comparison": "at_or_above"},
+    }
+    repository = EvaluationRepository([option_rule, stock_rule])
+    monkeypatch.setattr(alert_worker, "fetch_option_quote", lambda *args: (_ for _ in ()).throw(RuntimeError("bad provider")))
+    monkeypatch.setattr(alert_worker, "get_latest_quote", lambda stock: {
+        "price": 101.0, "quote_time": datetime.now(timezone.utc).isoformat(), "stale": False,
+    })
+    monkeypatch.setattr(alert_worker, "deliver_pending_alerts", lambda repository, user_id: 0)
+
+    result = alert_worker.check_alerts(repository, "user-1")
+
+    assert result["stale"] == 1
+    assert result["evaluated"] == 1

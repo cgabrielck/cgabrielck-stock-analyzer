@@ -296,15 +296,17 @@ LLM analysis is optional. Configure an OpenAI-compatible provider in `.env` loca
 
 ```env
 LLM_API_KEY=your-api-key
-LLM_BASE_URL=https://api.example.com/v1
-LLM_MODEL=deepseek-chat
-LLM_REASONING_MODEL=deepseek-reasoner
+LLM_BASE_URL=https://zhi-api.com/v1
+LLM_MODEL=gpt-5.6-luna
+LLM_TIMEOUT_SECONDS=45
+TRADIER_API_TOKEN=your-production-token
+POLYGON_API_KEY=your-polygon-or-massive-key
 ALPHA_VANTAGE_API_KEY=your-alpha-vantage-key
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=your-server-side-service-role-key
 ```
 
-`deepseek-chat` handles batch scoring and structured JSON tasks. `deepseek-reasoner` is reserved for on-demand single-stock strategy analysis, where deeper reasoning is worth the additional latency and cost.
+`LLM_MODEL` handles all tasks by default. Set `LLM_REASONING_MODEL` only when the provider offers a separate reasoning model. The timeout defaults to 45 seconds and is capped at 120 seconds.
 
 Do not commit `.env` or API keys. The repository ignores `.env`, virtual environments, caches, portfolio state, and trade journals.
 
@@ -339,9 +341,11 @@ git diff --check
 ```toml
 ALPHA_VANTAGE_API_KEY = "replace-with-a-new-key"
 LLM_API_KEY = "your-llm-key"
-LLM_BASE_URL = "https://api.example.com/v1"
-LLM_MODEL = "deepseek-chat"
-LLM_REASONING_MODEL = "deepseek-reasoner"
+LLM_BASE_URL = "https://zhi-api.com/v1"
+LLM_MODEL = "gpt-5.6-luna"
+LLM_TIMEOUT_SECONDS = "45"
+TRADIER_API_TOKEN = "your-production-token"
+POLYGON_API_KEY = "your-polygon-or-massive-key"
 SUPABASE_URL = "https://your-project.supabase.co"
 SUPABASE_SERVICE_ROLE_KEY = "your-server-side-service-role-key"
 ```
@@ -379,6 +383,8 @@ python backend/alert_worker.py
 ```
 
 The default interval is one minute. Set `ALERT_INTERVAL_SECONDS` to change it. `ALERT_OWNER_USER_ID` must be the UUID of the one Stock Analyzer account whose events belong in this Telegram chat; the worker filters rules and deliveries by that owner to prevent cross-user disclosure. The worker rejects stale Yahoo quotes, triggers only on directional crossings or entry-zone transitions, re-arms after price moves away from the level, stores duplicate-safe events in the signed-in user's in-app alert inbox, and sends claimed events to the configured Telegram chat with bounded retries. This is periodic/delayed monitoring, not exchange-grade real-time market data. Never commit the bot token, chat ID, owner UUID, or Supabase service-role key.
+
+Option-chain research uses Yahoo first, then configured Tradier and Polygon/Massive providers, then Cboe delayed data as a research-only fallback. Set `TRADIER_API_TOKEN` for Tradier production market data and/or `POLYGON_API_KEY` for Polygon/Massive. Provider response metadata controls safety: delayed/EOD data can display contracts and Greeks but cannot create actionable option alerts. Only fresh, regular-session Yahoo quotes, Tradier production quotes, or Polygon/Massive `REAL-TIME` quotes can drive the option alert worker.
 
 Deep Research also includes bounded SEC filing evidence with direct EDGAR citations. Saved-plan outcome journals can be evaluated on demand at 5, 20, and 60 completed trading sessions using raw daily OHLC and exact-date SPY comparison. Outcome observations are educational research records, not brokerage fills. The model portfolio reports cash-aware covariance volatility, historical VaR, coverage, and transparent -10%/-20% equity stress scenarios.
 

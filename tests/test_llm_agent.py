@@ -29,6 +29,8 @@ def test_public_config_never_exposes_api_key() -> None:
 
     assert config["provider"] == "openai-compatible"
     assert "api_key" not in config
+    assert config["timeout_seconds"] > 0
+    assert config["uses_separate_reasoner"] == (config["reasoning_model"] != config["chat_model"])
 
 
 def test_reasoner_failure_falls_back_to_chat(monkeypatch) -> None:

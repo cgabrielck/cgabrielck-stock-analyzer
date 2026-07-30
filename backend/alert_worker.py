@@ -31,10 +31,14 @@ def check_alerts(repository: SupabaseAccountRepository, owner_user_id: str) -> D
         is_option = rule.get("rule_data", {}).get("instrument_type") == "option"
         quote_key = (monitor_symbol, rule.get("event_type")) if is_option else monitor_symbol
         if quote_key not in quotes:
-            quotes[quote_key] = (
-                fetch_option_quote(ticker, rule.get("rule_data", {}), rule.get("event_type", ""))
-                if is_option else get_latest_quote(yf.Ticker(monitor_symbol))
-            )
+            try:
+                quotes[quote_key] = (
+                    fetch_option_quote(ticker, rule.get("rule_data", {}), rule.get("event_type", ""))
+                    if is_option else get_latest_quote(yf.Ticker(monitor_symbol))
+                )
+            except Exception:
+                LOGGER.exception("Quote fetch failed for %s", monitor_symbol)
+                quotes[quote_key] = {"available": False, "stale": True, "stale_reason": "quote_fetch_failed"}
         quote = quotes[quote_key]
         if not quote_is_fresh(quote):
             result["stale"] += 1

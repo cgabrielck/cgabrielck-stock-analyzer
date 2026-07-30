@@ -16,10 +16,12 @@ _PAYLOAD_CACHE_LOCK = threading.Lock()
 _PAYLOAD_CACHE_TTL_SECONDS = 30
 
 
-def fetch_cboe_options_chain(ticker: str, current_price: Optional[float] = None) -> Dict[str, Any]:
+def fetch_cboe_options_chain(
+    ticker: str, current_price: Optional[float] = None, deadline: Optional[float] = None,
+) -> Dict[str, Any]:
     """Fetch and normalize Cboe's public delayed option-chain snapshot."""
     symbol = ticker.strip().upper()
-    payload_or_error = _fetch_payload(symbol)
+    payload_or_error = _fetch_payload(symbol, deadline)
     if payload_or_error.get("error"):
         return payload_or_error
     payload = payload_or_error
@@ -111,17 +113,20 @@ def fetch_cboe_option_contract(ticker: str, contract_symbol: str) -> Dict[str, A
     return _error("provider_incomplete", "contract_not_found")
 
 
-def _fetch_payload(symbol: str) -> Dict[str, Any]:
+def _fetch_payload(symbol: str, deadline: Optional[float] = None) -> Dict[str, Any]:
     now = time.monotonic()
     with _PAYLOAD_CACHE_LOCK:
         cached = _PAYLOAD_CACHE.get(symbol)
         if cached and now - cached[0] < _PAYLOAD_CACHE_TTL_SECONDS:
             return cached[1]
+    remaining = (deadline - time.monotonic()) if deadline else 7.0
+    if remaining <= 0:
+        return _error("provider_error", "provider_timeout")
     try:
         response = requests.get(
             CBOE_OPTIONS_URL.format(ticker=symbol),
             headers={"User-Agent": "stock-analyzer/1.0"},
-            timeout=20,
+            timeout=(min(3.05, remaining), min(7.0, remaining)),
         )
     except requests.RequestException:
         return _error("provider_error", "request_failed")

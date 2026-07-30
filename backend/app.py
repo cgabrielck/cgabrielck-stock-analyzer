@@ -1608,6 +1608,10 @@ def _render_deep_research_result(
                     t("deep.total_debit", lang),
                     _currency(float(option.get("max_entry_premium", contract.get("ask") or 0)) * 100),
                 )
+                st.caption(t(
+                    "deep.options_source", lang,
+                    source=option.get("data_source") or contract.get("source") or "N/A",
+                ))
                 option_rows = [{
                     t("deep.mid_spread", lang): f"{_currency(contract.get('mid'))} / {contract.get('spread_pct', 'N/A')}%",
                     t("deep.iv", lang): f"{float(contract.get('implied_volatility')) * 100:.1f}%" if contract.get("implied_volatility") is not None else "N/A",
