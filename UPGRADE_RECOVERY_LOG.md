@@ -276,3 +276,13 @@ point-in-time fundamental coverage limitations.
   delivery RPC, and option event-type constraint.
 - The option safety release is ready to commit and push. Full local suite:
   219 tests passed; compilation, diff, and secret checks passed.
+
+### 2026-07-30 - Worker runtime import hotfix
+
+- Post-push Railway inspection showed logs from the prior deployment while the
+  new commit was propagating.
+- A runtime-only annotation issue was found proactively: `alert_worker.py`
+  referenced `Optional` without importing it. Static bytecode compilation did
+  not execute the module and therefore did not detect this.
+- Added the missing import and a runtime import/annotation test before pushing
+  the worker hotfix.

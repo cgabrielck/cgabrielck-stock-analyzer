@@ -7,6 +7,10 @@ import alert_worker
 from config import TelegramSettings
 
 
+def test_alert_worker_imports_with_runtime_annotations() -> None:
+    assert alert_worker.deliver_pending_alerts.__annotations__["owner_user_id"] is not None
+
+
 class FakeRepository:
     def __init__(self):
         self.deliveries = []
