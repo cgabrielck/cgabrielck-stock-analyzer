@@ -157,7 +157,10 @@ def test_options_rate_limit_starts_cooldown_even_for_force_refresh(monkeypatch) 
             raise RuntimeError("Too Many Requests. Rate limited. Try after a while.")
 
     monkeypatch.setattr(data_fetcher.yf, "Ticker", lambda *args, **kwargs: RateLimitedTicker())
-    data_fetcher.cache.delete("options_rate_limit_LIMITED", "info")
+    monkeypatch.setattr(data_fetcher, "fetch_cboe_options_chain", lambda *args: {
+        "error": "provider_unavailable", "error_code": "provider_error", "provider_reason": "failed",
+    })
+    data_fetcher.cache.delete("options_provider_cooldown_v2_LIMITED", "info")
     data_fetcher.cache.delete("options_v2_LIMITED_100.0", "info")
 
     first = data_fetcher.fetch_options_chain("LIMITED", 100)
@@ -165,6 +168,7 @@ def test_options_rate_limit_starts_cooldown_even_for_force_refresh(monkeypatch) 
     forced = data_fetcher.fetch_options_chain("LIMITED", 100, force_refresh=True)
 
     assert first["error_code"] == "rate_limit"
+    assert first["provider_reason"] == "yahoo_rate_limit;cboe_failed"
     assert first["retry_after_seconds"] == 300
     assert second["from_cache"] is True
     assert forced["from_cache"] is True
@@ -178,11 +182,84 @@ def test_options_provider_error_does_not_expose_raw_exception(monkeypatch) -> No
             raise RuntimeError("secret provider detail")
 
     monkeypatch.setattr(data_fetcher.yf, "Ticker", lambda *args, **kwargs: BrokenTicker())
-    data_fetcher.cache.delete("options_rate_limit_BROKEN", "info")
+    monkeypatch.setattr(data_fetcher, "fetch_cboe_options_chain", lambda *args: {
+        "error": "provider_unavailable", "error_code": "provider_error", "provider_reason": "failed",
+    })
+    data_fetcher.cache.delete("options_provider_cooldown_v2_BROKEN", "info")
     data_fetcher.cache.delete("options_v2_BROKEN_100.0", "info")
 
     result = data_fetcher.fetch_options_chain("BROKEN", 100)
 
     assert result["error"] == "provider_unavailable"
     assert result["error_code"] == "provider_error"
+    assert result["provider_reason"] == "yahoo_request_failed;cboe_failed"
     assert "secret" not in str(result)
+
+
+def test_empty_option_expirations_are_provider_incomplete_and_cached(monkeypatch) -> None:
+    calls = []
+
+    class EmptyTicker:
+        @property
+        def options(self):
+            calls.append("options")
+            return ()
+
+    monkeypatch.setattr(data_fetcher.yf, "Ticker", lambda *args, **kwargs: EmptyTicker())
+    monkeypatch.setattr(data_fetcher, "fetch_cboe_options_chain", lambda *args: {
+        "error": "provider_unavailable", "error_code": "provider_error", "provider_reason": "failed",
+    })
+    data_fetcher.cache.delete("options_provider_cooldown_v2_EMPTY", "info")
+    data_fetcher.cache.delete("options_v2_EMPTY_100.0", "info")
+
+    first = data_fetcher.fetch_options_chain("EMPTY", 100)
+    second = data_fetcher.fetch_options_chain("EMPTY", 100, force_refresh=True)
+
+    assert first["error_code"] == "provider_error"
+    assert first["provider_reason"] == "empty_expirations;cboe_failed"
+    assert second["from_cache"] is True
+    assert calls == ["options"]
+
+
+def test_empty_option_chain_is_provider_incomplete(monkeypatch) -> None:
+    class EmptyChain:
+        calls = pd.DataFrame()
+        puts = pd.DataFrame()
+
+    class EmptyChainTicker:
+        options = ["2026-08-21"]
+
+        def option_chain(self, expiry):
+            return EmptyChain()
+
+    monkeypatch.setattr(data_fetcher.yf, "Ticker", lambda *args, **kwargs: EmptyChainTicker())
+    monkeypatch.setattr(data_fetcher, "fetch_cboe_options_chain", lambda *args: {
+        "error": "provider_unavailable", "error_code": "provider_error", "provider_reason": "failed",
+    })
+    data_fetcher.cache.delete("options_provider_cooldown_v2_EMPTYCHAIN", "info")
+    data_fetcher.cache.delete("options_v2_EMPTYCHAIN_100.0", "info")
+
+    result = data_fetcher.fetch_options_chain("EMPTYCHAIN", 100)
+
+    assert result["error_code"] == "provider_error"
+    assert result["provider_reason"] == "empty_chain;cboe_failed"
+
+
+def test_empty_yahoo_options_fall_back_to_cboe(monkeypatch) -> None:
+    class EmptyTicker:
+        options = ()
+
+    cboe = {
+        "ticker": "TSLA", "calls": [{"contract_symbol": "TSLA_CALL"}], "puts": [],
+        "source": "cboe_delayed_options", "from_cache": False,
+    }
+    monkeypatch.setattr(data_fetcher.yf, "Ticker", lambda *args, **kwargs: EmptyTicker())
+    monkeypatch.setattr(data_fetcher, "fetch_cboe_options_chain", lambda *args: dict(cboe))
+    data_fetcher.cache.delete("options_provider_cooldown_v2_TSLA_FALLBACK", "info")
+    data_fetcher.cache.delete("options_v2_TSLA_FALLBACK_100.0", "info")
+
+    result = data_fetcher.fetch_options_chain("TSLA_FALLBACK", 100)
+
+    assert result["source"] == "cboe_delayed_options"
+    assert result["fallback_from"] == "yfinance_options"
+    assert result["fallback_reason"] == "empty_expirations"

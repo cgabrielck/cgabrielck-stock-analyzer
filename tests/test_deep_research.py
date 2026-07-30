@@ -157,6 +157,31 @@ def test_options_plan_selects_liquid_contract_and_sets_premium_exits() -> None:
     assert plan["stop_premium"] < plan["max_entry_premium"] < plan["take_profit_premiums"][0]
 
 
+def test_options_plan_marks_delayed_fallback_source() -> None:
+    options = {
+        "selected_expiry": "2026-08-21",
+        "source": "cboe_delayed_options",
+        "delayed": True,
+        "calls": [{
+            "contract_symbol": "TSLA260821C00300000", "strike": 300,
+            "bid": 10.0, "ask": 10.5, "mid": 10.25,
+            "open_interest": 500, "volume": 100, "spread_pct": 4.9,
+            "source": "cboe_delayed_options", "delayed": True,
+            "last_trade_time": "2026-07-30T09:45:00",
+        }],
+        "puts": [],
+    }
+
+    plan = _build_options_plan(options, {"stance": "bullish", "stop_loss": 290})
+
+    assert plan["action"] == "research_only"
+    assert plan["data_source"] == "cboe_delayed_options"
+    assert plan["delayed_data"] is True
+    assert "delayed_option_data" in plan["agent_trace"][0]["warnings"]
+    assert plan["agent_trace"][-1]["hard_gate_passed"] is False
+    assert "delayed_data_not_actionable" in plan["agent_trace"][-1]["violations"]
+
+
 def test_options_plan_preserves_provider_error_classification() -> None:
     plan = _build_options_plan({
         "error": "rate_limited", "error_code": "rate_limit", "retry_after_seconds": 300,
@@ -168,6 +193,17 @@ def test_options_plan_preserves_provider_error_classification() -> None:
         "error_code": "rate_limit",
         "retry_after_seconds": 300,
     }
+
+
+def test_options_plan_preserves_incomplete_provider_response() -> None:
+    plan = _build_options_plan({
+        "error": "provider_incomplete", "error_code": "provider_incomplete",
+        "provider_reason": "empty_expirations", "retry_after_seconds": 300,
+    }, {"stance": "bullish"})
+
+    assert plan["action"] == "none"
+    assert plan["error_code"] == "provider_incomplete"
+    assert plan["retry_after_seconds"] == 300
 
 
 def test_analyze_tickers_keeps_partial_failures(monkeypatch) -> None:

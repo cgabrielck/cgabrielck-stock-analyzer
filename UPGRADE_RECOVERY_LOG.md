@@ -307,3 +307,34 @@ point-in-time fundamental coverage limitations.
 - Added stable provider error codes, a five-minute per-ticker rate-limit
   cooldown that also applies to forced refreshes, and dedicated three-language
   provider warnings. Rate limiting is no longer classified as no trade.
+
+### 2026-07-30 - Empty Yahoo option response classification
+
+- TSLA returned `no_options` in the cloud even though a local Yahoo request
+  returned 21 expiration dates, confirming an incomplete provider response
+  rather than an actual absence of listed options.
+- Empty expiration lists and empty chains now fail closed as
+  `provider_incomplete` and start a five-minute per-ticker cooldown. They no
+  longer appear as a liquidity-screen failure and never create a trade plan.
+
+### 2026-07-30 - Cboe delayed option fallback
+
+- Added Cboe's public delayed option-chain endpoint as the automatic fallback
+  for Yahoo rate limits, empty expiration lists, empty chains, and request
+  failures.
+- A live TSLA verification normalized 6,388 contracts across 25 expirations,
+  including bid/ask, volume, open interest, IV, and Greeks.
+- Cboe data is explicitly labeled delayed in the plan, Agent trace, and UI.
+  Entry still uses ask, exits use bid, and all freshness/liquidity hard gates
+  remain enforced. If both providers fail, the ticker enters a five-minute
+  cooldown rather than creating a plan.
+- Security review tightened the boundary: Cboe fallback is research-only and
+  can show contracts and Greeks, but it cannot create a saved option plan or
+  trigger Railway alerts. Only Yahoo's verifiable regular-session chain remains
+  eligible for actionable option monitoring.
+- Added a 30-second in-memory Cboe payload cache to avoid repeatedly downloading
+  the multi-megabyte chain, consistent put/call field semantics, option-contract
+  change detection, invalid-market rejection, and prior-session warnings.
+- Live TSLA verification returned 185 calls and 185 puts for the selected
+  expiration with Delta/Gamma/Theta/Vega, and correctly marked the snapshot as
+  delayed and prior-session. Full suite: 233 tests passed.

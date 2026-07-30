@@ -19,6 +19,7 @@ from agents.sec_analyzer import ticker_to_cik
 from agents.alpha_vantage_data import fetch_fundamentals as fetch_alpha_fundamentals
 from agents.alpha_vantage_data import is_configured as alpha_vantage_configured
 from agents.alpha_vantage_data import fetch_global_quote as fetch_alpha_global_quote
+from agents.cboe_options import fetch_cboe_options_chain
 try:
     from agents.china_data_fetcher import clear_provider_cache, fetch_china_data, fetch_china_daily
 except ImportError:
@@ -949,7 +950,7 @@ def fetch_financials_history(ticker: str) -> dict[str, list[float]]:
 def fetch_options_chain(
     ticker: str, current_price: Optional[float] = None, force_refresh: bool = False,
 ) -> Dict[str, Any]:
-    cooldown_key = f"options_rate_limit_{ticker}"
+    cooldown_key = f"options_provider_cooldown_v2_{ticker}"
     cooldown = cache.get(cooldown_key, "info", ttl=300)
     if cooldown is not None:
         return {**cooldown, "from_cache": True}
@@ -964,14 +965,14 @@ def fetch_options_chain(
         stock = yf.Ticker(ticker)
         expirations = stock.options
         if not expirations:
-            return {"error": "no_options"}
+            return _options_fallback(ticker, current_price, cache_key, cooldown_key, "empty_expirations")
         nearest = expirations[0]
         selected_expiry = _select_option_expiry(expirations)
         chain = stock.option_chain(selected_expiry)
         calls = chain.calls
         puts = chain.puts
         if calls.empty and puts.empty:
-            return {"error": "empty_chain"}
+            return _options_fallback(ticker, current_price, cache_key, cooldown_key, "empty_chain")
         atm_strike = None
         spot = current_price or get_latest_price(stock)[0]
         if spot:
@@ -1005,24 +1006,8 @@ def fetch_options_chain(
         return result
     except Exception as exc:
         message = str(exc)
-        if _is_rate_limit_error(message):
-            result = {
-                "error": "rate_limited",
-                "error_code": "rate_limit",
-                "retry_after_seconds": 300,
-                "source": "yfinance_options",
-                "fetched_at": _now_str(),
-                "from_cache": False,
-            }
-            cache.set(cooldown_key, "info", result, ttl=300)
-            return result
-        return {
-            "error": "provider_unavailable",
-            "error_code": "provider_error",
-            "source": "yfinance_options",
-            "fetched_at": _now_str(),
-            "from_cache": False,
-        }
+        reason = "yahoo_rate_limit" if _is_rate_limit_error(message) else "yahoo_request_failed"
+        return _options_fallback(ticker, current_price, cache_key, cooldown_key, reason)
 
 
 def fetch_trading_session_ranges(ticker: str, force_refresh: bool = False) -> Dict[str, Any]:
@@ -1104,6 +1089,47 @@ def _finite_float(value: Any) -> Optional[float]:
 def _is_rate_limit_error(message: str) -> bool:
     normalized = message.casefold()
     return "too many requests" in normalized or "rate limit" in normalized or "429" in normalized
+
+
+def _options_provider_error(
+    reason: str, error_code: str = "provider_incomplete", source: str = "yfinance_options",
+) -> Dict[str, Any]:
+    return {
+        "error": "rate_limited" if error_code == "rate_limit" else "provider_unavailable",
+        "error_code": error_code,
+        "provider_reason": reason,
+        "retry_after_seconds": 300,
+        "source": source,
+        "fetched_at": _now_str(),
+        "from_cache": False,
+    }
+
+
+def _options_fallback(
+    ticker: str, current_price: Optional[float], cache_key: str, cooldown_key: str,
+    yahoo_reason: str,
+) -> Dict[str, Any]:
+    result = fetch_cboe_options_chain(ticker, current_price)
+    if not result.get("error"):
+        result["fallback_from"] = "yfinance_options"
+        result["fallback_reason"] = yahoo_reason
+        cache.set(cache_key, "info", result, ttl=60)
+        return result
+    cboe_code = result.get("error_code", "provider_error")
+    if "rate_limit" in yahoo_reason or cboe_code == "rate_limit":
+        error_code = "rate_limit"
+    elif yahoo_reason in {"empty_expirations", "empty_chain"} and cboe_code == "provider_incomplete":
+        error_code = "provider_incomplete"
+    else:
+        error_code = "provider_error"
+    combined = _options_provider_error(
+        f"{yahoo_reason};cboe_{result.get('provider_reason', 'failed')}",
+        error_code=error_code,
+        source="multi_source_options",
+    )
+    combined["fallback_sources"] = ["yfinance_options", "cboe_delayed_options"]
+    cache.set(cooldown_key, "info", combined, ttl=300)
+    return combined
 
 
 def suggest_options_fallback(ticker: str, technical_data: Dict[str, Any], current_price: float) -> Dict[str, Any]:

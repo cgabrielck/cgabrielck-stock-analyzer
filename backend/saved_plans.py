@@ -158,6 +158,14 @@ def plan_changes(previous: Dict[str, Any], current: Dict[str, Any]) -> List[Dict
         "stop": ("levels", "stop_loss"),
         "target_1": ("levels", "targets", 0),
         "target_2": ("levels", "targets", 1),
+        "option_contract": ("option_plan", "contract", "contract_symbol"),
+        "option_expiry": ("option_plan", "expiry"),
+        "option_entry": ("option_plan", "max_entry_premium"),
+        "option_stop": ("option_plan", "stop_premium"),
+        "option_target_1": ("option_plan", "take_profit_premiums", 0),
+        "option_target_2": ("option_plan", "take_profit_premiums", 1),
+        "option_source": ("option_plan", "data_source"),
+        "option_delayed": ("option_plan", "delayed_data"),
     }
     changes = []
     for label, path in paths.items():

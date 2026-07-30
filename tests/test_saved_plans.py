@@ -103,6 +103,26 @@ def test_plan_diff_reports_only_changed_execution_fields() -> None:
     assert fields == {"entry_low", "entry_high", "confirmation", "stop", "target_1", "target_2"}
 
 
+def test_plan_diff_reports_changed_option_contract_and_premiums() -> None:
+    first = build_saved_plan("TEST", _result(), "2026-07-23T12:00:00Z", "en")
+    second = json.loads(json.dumps(first))
+    first["option_plan"] = {
+        "contract": {"contract_symbol": "TEST_CALL_1"}, "expiry": "2026-08-21",
+        "max_entry_premium": 2.5, "stop_premium": 1.6,
+        "take_profit_premiums": [3.4, 4.2], "data_source": "yfinance_options",
+        "delayed_data": False,
+    }
+    second["option_plan"] = {
+        **first["option_plan"],
+        "contract": {"contract_symbol": "TEST_CALL_2"},
+        "max_entry_premium": 2.8,
+    }
+
+    fields = {change["field"] for change in plan_changes(first, second)}
+
+    assert fields == {"option_contract", "option_entry"}
+
+
 def test_confirmed_alert_rules_replace_previous_rules_and_enable_monitoring() -> None:
     repository = InMemoryAccountRepository()
     user = repository.register("alice", "1")

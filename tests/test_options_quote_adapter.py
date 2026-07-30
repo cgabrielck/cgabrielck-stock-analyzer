@@ -132,3 +132,20 @@ def test_yahoo_non_regular_state_fails_closed(monkeypatch) -> None:
     quote = fetch_option_quote("LLY", _rule(), "option_entry", now=_market_time())
 
     assert quote["stale_reason"] == "option_market_not_regular"
+
+
+def test_option_quote_does_not_use_delayed_cboe_for_alerts(monkeypatch) -> None:
+    now = _market_time()
+    monkeypatch.setattr(
+        options_quote_adapter.yf,
+        "Ticker",
+        lambda ticker: type("Ticker", (), {
+            "info": {"marketState": "REGULAR"},
+            "option_chain": lambda self, expiry: (_ for _ in ()).throw(RuntimeError("Yahoo failed")),
+        })(),
+    )
+
+    quote = fetch_option_quote("LLY", _rule(), "option_entry", now=now)
+
+    assert quote["available"] is False
+    assert quote["stale_reason"] == "option_chain_unavailable"

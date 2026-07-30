@@ -473,7 +473,9 @@ def _build_options_plan(options: Dict[str, Any], trade_plan: Dict[str, Any]) -> 
     liquid = [
         contract for contract in candidates
         if contract.get("ask") and contract.get("ask") > 0
-        and contract.get("bid") is not None
+        and contract.get("bid") is not None and contract.get("bid") >= 0
+        and contract.get("ask") >= contract.get("bid")
+        and contract.get("market_valid", True)
         and (contract.get("open_interest", 0) >= 100 or contract.get("volume", 0) >= 25)
         and (contract.get("spread_pct") is None or contract["spread_pct"] <= 20)
     ]
@@ -481,6 +483,25 @@ def _build_options_plan(options: Dict[str, Any], trade_plan: Dict[str, Any]) -> 
         return {"action": "none", "reason": "No sufficiently liquid near-the-money contract"}
     contract = liquid[0]
     contract = {**contract, "option_type": option_type}
+    if options.get("delayed") or contract.get("delayed"):
+        return {
+            "action": "research_only",
+            "reason": "Delayed fallback data is not eligible for an actionable option plan",
+            "option_type": option_type,
+            "expiry": options.get("selected_expiry") or options.get("nearest_expiry"),
+            "contract": contract,
+            "data_source": contract.get("source") or options.get("source"),
+            "delayed_data": True,
+            "snapshot_stale": bool(options.get("snapshot_stale")),
+            "agent_trace": build_option_agent_trace(
+                contract,
+                options.get("selected_expiry") or options.get("nearest_expiry"),
+                float(contract.get("ask") or contract.get("mid") or 0),
+                0,
+                [],
+                trade_plan.get("stop_loss"),
+            ),
+        }
     entry = contract.get("mid") or contract.get("ask")
     if not entry:
         return {"action": "none", "reason": "Option premium unavailable"}
@@ -493,6 +514,8 @@ def _build_options_plan(options: Dict[str, Any], trade_plan: Dict[str, Any]) -> 
         "option_type": option_type,
         "expiry": expiry,
         "contract": contract,
+        "data_source": contract.get("source") or options.get("source"),
+        "delayed_data": bool(contract.get("delayed") or options.get("delayed")),
         "max_entry_premium": max_entry,
         "stop_premium": stop,
         "take_profit_premiums": targets,

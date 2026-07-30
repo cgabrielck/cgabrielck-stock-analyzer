@@ -6,6 +6,7 @@ import yfinance as yf
 from zoneinfo import ZoneInfo
 
 
+
 MAX_OPTION_QUOTE_AGE_MINUTES = 20
 MAX_OPTION_SPREAD_PCT = 20.0
 EASTERN = ZoneInfo("America/New_York")
@@ -31,6 +32,7 @@ def fetch_option_quote(
         return _unavailable(symbol, "option_market_closed", trace)
     trace.append(_stage("market_session", "done", session="regular"))
 
+    market_state = "UNKNOWN"
     try:
         stock = yf.Ticker(underlying)
         market_state = str((stock.info or {}).get("marketState") or "").upper()
@@ -38,22 +40,25 @@ def fetch_option_quote(
             trace[-1] = _stage("market_session", "failed", warning="option_market_not_regular", market_state=market_state or "UNKNOWN")
             return _unavailable(symbol, "option_market_not_regular", trace)
         chain = stock.option_chain(expiry)
+        contract = _find_contract(chain.calls, symbol)
+        side = "call"
+        if contract is None:
+            contract = _find_contract(chain.puts, symbol)
+            side = "put"
+        if contract is None:
+            return _unavailable(symbol, "contract_not_found", trace)
     except Exception:
         return _unavailable(symbol, "option_chain_unavailable", trace)
-    trace.append(_stage("quote_fetch", "done", source="yfinance_option_chain"))
 
-    contract = _find_contract(chain.calls, symbol)
-    side = "call"
-    if contract is None:
-        contract = _find_contract(chain.puts, symbol)
-        side = "put"
-    if contract is None:
-        return _unavailable(symbol, "contract_not_found", trace)
-
+    source = "yfinance_option_chain"
     bid = _number(contract.get("bid"))
     ask = _number(contract.get("ask"))
     last = _number(contract.get("lastPrice"))
     quote_time = _timestamp(contract.get("lastTradeDate"))
+    volume = int(contract.get("volume") or 0)
+    open_interest = int(contract.get("openInterest") or 0)
+    implied_volatility = _number(contract.get("impliedVolatility"))
+    trace.append(_stage("quote_fetch", "done", source=source))
     trace.append(_stage(
         "freshness", "done" if quote_time else "failed",
         as_of=quote_time.isoformat() if quote_time else None,
@@ -107,16 +112,17 @@ def fetch_option_quote(
         "retrieved_at": current_time.isoformat(),
         "age_minutes": round(age_minutes, 2),
         "spread_pct": round(spread_pct, 1) if spread_pct is not None else None,
-        "source": "yfinance_option_chain",
+        "source": source,
+        "delayed": False,
         "session": "option_market",
         "market_state": market_state,
         "timestamp_semantics": "last_trade_proxy_for_quote",
         "stale": False,
         "contract_symbol": symbol,
         "option_type": side,
-        "volume": int(contract.get("volume") or 0),
-        "open_interest": int(contract.get("openInterest") or 0),
-        "implied_volatility": _number(contract.get("impliedVolatility")),
+        "volume": volume,
+        "open_interest": open_interest,
+        "implied_volatility": implied_volatility,
         "agent_trace": trace,
     }
 
@@ -155,13 +161,13 @@ def _number(value: Any) -> Optional[float]:
         return None
 
 
-def _timestamp(value: Any) -> Optional[datetime]:
+def _timestamp(value: Any, assumed_timezone: ZoneInfo = ZoneInfo("UTC")) -> Optional[datetime]:
     try:
         timestamp = pd.Timestamp(value)
         if pd.isna(timestamp):
             return None
         if timestamp.tzinfo is None:
-            timestamp = timestamp.tz_localize("UTC")
+            timestamp = timestamp.tz_localize(assumed_timezone)
         return timestamp.to_pydatetime().astimezone(timezone.utc)
     except (TypeError, ValueError):
         return None

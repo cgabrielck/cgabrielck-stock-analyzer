@@ -6,6 +6,7 @@ def evaluate_option_risk(quote: Dict[str, Any], rule_data: Dict[str, Any]) -> Di
     checks = {
         "quote_available": bool(quote.get("available")),
         "quote_fresh": not bool(quote.get("stale")),
+        "not_delayed": not bool(quote.get("delayed")),
         "spread_acceptable": (
             quote.get("spread_pct") is not None and float(quote["spread_pct"]) <= 20
         ),
@@ -13,7 +14,7 @@ def evaluate_option_risk(quote: Dict[str, Any], rule_data: Dict[str, Any]) -> Di
         "volume_acceptable": int(quote.get("volume") or 0) >= 25,
         "contract_matches": quote.get("contract_symbol") == rule_data.get("monitor_symbol"),
     }
-    violations: List[str] = [name for name in ("quote_available", "quote_fresh", "spread_acceptable", "contract_matches") if not checks[name]]
+    violations: List[str] = [name for name in ("quote_available", "quote_fresh", "not_delayed", "spread_acceptable", "contract_matches") if not checks[name]]
     warnings: List[str] = []
     if not checks["open_interest_acceptable"] and not checks["volume_acceptable"]:
         warnings.append("low_option_liquidity")
@@ -38,6 +39,8 @@ def build_option_agent_trace(
     volume = int(contract.get("volume") or 0)
     iv = contract.get("implied_volatility")
     quote_time = contract.get("last_trade_time")
+    source = contract.get("source") or "yfinance_option_chain"
+    delayed = bool(contract.get("delayed"))
     liquidity_warnings = []
     if spread is None or float(spread) > 20:
         liquidity_warnings.append("spread_unacceptable")
@@ -50,13 +53,17 @@ def build_option_agent_trace(
     if strike is not None:
         breakeven = round(float(strike) + entry, 2) if option_type == "call" else round(float(strike) - entry, 2)
 
+    hard_violations = list(liquidity_warnings)
+    if delayed:
+        hard_violations.append("delayed_data_not_actionable")
     return [
         {
             "stage": "option_data",
             "status": "done" if quote_time else "warning",
             "as_of": quote_time,
-            "source": "yfinance_option_chain",
+            "source": source,
             "data_gaps": [] if quote_time else ["contract_quote_time_unavailable"],
+            "warnings": ["delayed_option_data"] if delayed else [],
         },
         {
             "stage": "liquidity_agent",
@@ -90,9 +97,9 @@ def build_option_agent_trace(
         },
         {
             "stage": "risk_judge",
-            "status": "approved_with_warnings" if liquidity_warnings or not quote_time else "approved",
-            "hard_gate_passed": not liquidity_warnings,
-            "violations": liquidity_warnings,
+            "status": "rejected" if hard_violations else "approved_with_warnings" if not quote_time else "approved",
+            "hard_gate_passed": not hard_violations,
+            "violations": hard_violations,
             "warnings": ["manual_entry_confirmation_required"],
         },
     ]

@@ -1596,7 +1596,7 @@ def _render_deep_research_result(
             st.dataframe(pd.DataFrame(session_rows), hide_index=True, width="stretch")
             st.caption(t("deep.session_note", lang))
         elif section == "options":
-            if option.get("action") == "buy_to_open":
+            if option.get("action") in {"buy_to_open", "research_only"}:
                 contract = option.get("contract", {})
                 expiry = option.get("expiry")
                 dte = max(0, (pd.Timestamp(expiry).date() - pd.Timestamp.now().date()).days) if expiry else None
@@ -1604,7 +1604,10 @@ def _render_deep_research_result(
                 option_cols[0].metric(t("deep.contract", lang), contract.get("contract_symbol") or f"{option.get('option_type', '').upper()} {contract.get('strike', 'N/A')}")
                 option_cols[1].metric(t("deep.expiry", lang), f"{expiry} · {dte} DTE" if dte is not None else "N/A")
                 option_cols[2].metric(t("deep.bid_ask", lang), f"{_currency(contract.get('bid'))} / {_currency(contract.get('ask'))}")
-                option_cols[3].metric(t("deep.total_debit", lang), _currency(float(option.get("max_entry_premium", 0)) * 100))
+                option_cols[3].metric(
+                    t("deep.total_debit", lang),
+                    _currency(float(option.get("max_entry_premium", contract.get("ask") or 0)) * 100),
+                )
                 option_rows = [{
                     t("deep.mid_spread", lang): f"{_currency(contract.get('mid'))} / {contract.get('spread_pct', 'N/A')}%",
                     t("deep.iv", lang): f"{float(contract.get('implied_volatility')) * 100:.1f}%" if contract.get("implied_volatility") is not None else "N/A",
@@ -1616,6 +1619,11 @@ def _render_deep_research_result(
                     t("deep.underlying_invalidation", lang): _currency(option.get("underlying_invalidation")),
                 }]
                 st.dataframe(pd.DataFrame(option_rows), hide_index=True, width="stretch")
+                if option.get("delayed_data"):
+                    st.warning(t("deep.options_delayed_source", lang, source=option.get("data_source", "Cboe")))
+                    st.info(t("deep.options_research_only", lang))
+                    if option.get("snapshot_stale"):
+                        st.warning(t("deep.options_prior_session", lang))
                 st.caption(option.get("exit_rule", ""))
                 trace = option.get("agent_trace", [])
                 if trace:
@@ -1635,6 +1643,8 @@ def _render_deep_research_result(
                 error_code = option.get("error_code")
                 if error_code == "rate_limit":
                     st.warning(t("deep.options_rate_limited", lang, minutes=5))
+                elif error_code == "provider_incomplete":
+                    st.warning(t("deep.options_provider_incomplete", lang, minutes=5))
                 elif error_code:
                     st.warning(t("deep.options_provider_unavailable", lang))
                 else:
