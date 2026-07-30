@@ -949,6 +949,10 @@ def fetch_financials_history(ticker: str) -> dict[str, list[float]]:
 def fetch_options_chain(
     ticker: str, current_price: Optional[float] = None, force_refresh: bool = False,
 ) -> Dict[str, Any]:
+    cooldown_key = f"options_rate_limit_{ticker}"
+    cooldown = cache.get(cooldown_key, "info", ttl=300)
+    if cooldown is not None:
+        return {**cooldown, "from_cache": True}
     spot_key = f"{round(float(current_price), 1):.1f}" if current_price else "auto"
     cache_key = f"options_v2_{ticker}_{spot_key}"
     cached = None if force_refresh else cache.get(cache_key, "info", ttl=60)
@@ -999,8 +1003,26 @@ def fetch_options_chain(
         }
         cache.set(cache_key, "info", result, ttl=60)
         return result
-    except Exception as e:
-        return {"error": str(e)}
+    except Exception as exc:
+        message = str(exc)
+        if _is_rate_limit_error(message):
+            result = {
+                "error": "rate_limited",
+                "error_code": "rate_limit",
+                "retry_after_seconds": 300,
+                "source": "yfinance_options",
+                "fetched_at": _now_str(),
+                "from_cache": False,
+            }
+            cache.set(cooldown_key, "info", result, ttl=300)
+            return result
+        return {
+            "error": "provider_unavailable",
+            "error_code": "provider_error",
+            "source": "yfinance_options",
+            "fetched_at": _now_str(),
+            "from_cache": False,
+        }
 
 
 def fetch_trading_session_ranges(ticker: str, force_refresh: bool = False) -> Dict[str, Any]:
@@ -1077,6 +1099,11 @@ def _finite_float(value: Any) -> Optional[float]:
         return number if number == number and number not in (float("inf"), float("-inf")) else None
     except (TypeError, ValueError):
         return None
+
+
+def _is_rate_limit_error(message: str) -> bool:
+    normalized = message.casefold()
+    return "too many requests" in normalized or "rate limit" in normalized or "429" in normalized
 
 
 def suggest_options_fallback(ticker: str, technical_data: Dict[str, Any], current_price: float) -> Dict[str, Any]:

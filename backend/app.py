@@ -1632,7 +1632,13 @@ def _render_deep_research_result(
                             })
                         st.dataframe(pd.DataFrame(trace_rows), hide_index=True, width="stretch")
             else:
-                st.info(f"{t('deep.no_options_trade', lang)}: {option.get('reason', 'N/A')}")
+                error_code = option.get("error_code")
+                if error_code == "rate_limit":
+                    st.warning(t("deep.options_rate_limited", lang, minutes=5))
+                elif error_code:
+                    st.warning(t("deep.options_provider_unavailable", lang))
+                else:
+                    st.info(f"{t('deep.no_options_trade', lang)}: {option.get('reason', 'N/A')}")
         elif section == "evidence":
             tech_cols = st.columns(4)
             tech_cols[0].metric("RSI 14", _number(technical.get("rsi_14")))

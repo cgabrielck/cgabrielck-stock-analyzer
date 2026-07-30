@@ -145,3 +145,44 @@ def test_options_cache_and_force_refresh(monkeypatch) -> None:
     data_fetcher.fetch_options_chain("TEST", 100, force_refresh=True)
 
     assert len(calls) == 2
+
+
+def test_options_rate_limit_starts_cooldown_even_for_force_refresh(monkeypatch) -> None:
+    calls = []
+
+    class RateLimitedTicker:
+        @property
+        def options(self):
+            calls.append("options")
+            raise RuntimeError("Too Many Requests. Rate limited. Try after a while.")
+
+    monkeypatch.setattr(data_fetcher.yf, "Ticker", lambda *args, **kwargs: RateLimitedTicker())
+    data_fetcher.cache.delete("options_rate_limit_LIMITED", "info")
+    data_fetcher.cache.delete("options_v2_LIMITED_100.0", "info")
+
+    first = data_fetcher.fetch_options_chain("LIMITED", 100)
+    second = data_fetcher.fetch_options_chain("LIMITED", 100)
+    forced = data_fetcher.fetch_options_chain("LIMITED", 100, force_refresh=True)
+
+    assert first["error_code"] == "rate_limit"
+    assert first["retry_after_seconds"] == 300
+    assert second["from_cache"] is True
+    assert forced["from_cache"] is True
+    assert calls == ["options"]
+
+
+def test_options_provider_error_does_not_expose_raw_exception(monkeypatch) -> None:
+    class BrokenTicker:
+        @property
+        def options(self):
+            raise RuntimeError("secret provider detail")
+
+    monkeypatch.setattr(data_fetcher.yf, "Ticker", lambda *args, **kwargs: BrokenTicker())
+    data_fetcher.cache.delete("options_rate_limit_BROKEN", "info")
+    data_fetcher.cache.delete("options_v2_BROKEN_100.0", "info")
+
+    result = data_fetcher.fetch_options_chain("BROKEN", 100)
+
+    assert result["error"] == "provider_unavailable"
+    assert result["error_code"] == "provider_error"
+    assert "secret" not in str(result)

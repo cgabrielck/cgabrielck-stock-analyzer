@@ -459,8 +459,15 @@ def _build_options_plan(options: Dict[str, Any], trade_plan: Dict[str, Any]) -> 
     from agents.options_risk_agent import build_option_agent_trace
 
     stance = trade_plan.get("stance")
-    if options.get("error") or stance not in {"bullish", "bearish"}:
-        return {"action": "none", "reason": options.get("error") or "No directional edge"}
+    if options.get("error"):
+        return {
+            "action": "none",
+            "reason": options.get("error"),
+            "error_code": options.get("error_code", "provider_error"),
+            "retry_after_seconds": options.get("retry_after_seconds"),
+        }
+    if stance not in {"bullish", "bearish"}:
+        return {"action": "none", "reason": "No directional edge"}
     option_type = "call" if stance == "bullish" else "put"
     candidates = options.get("calls" if option_type == "call" else "puts", [])
     liquid = [

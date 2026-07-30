@@ -157,6 +157,19 @@ def test_options_plan_selects_liquid_contract_and_sets_premium_exits() -> None:
     assert plan["stop_premium"] < plan["max_entry_premium"] < plan["take_profit_premiums"][0]
 
 
+def test_options_plan_preserves_provider_error_classification() -> None:
+    plan = _build_options_plan({
+        "error": "rate_limited", "error_code": "rate_limit", "retry_after_seconds": 300,
+    }, {"stance": "bullish"})
+
+    assert plan == {
+        "action": "none",
+        "reason": "rate_limited",
+        "error_code": "rate_limit",
+        "retry_after_seconds": 300,
+    }
+
+
 def test_analyze_tickers_keeps_partial_failures(monkeypatch) -> None:
     def analyze(ticker, **kwargs):
         if ticker == "BAD":

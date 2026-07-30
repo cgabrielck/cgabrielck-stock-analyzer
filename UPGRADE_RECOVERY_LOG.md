@@ -298,3 +298,12 @@ point-in-time fundamental coverage limitations.
 - Next checkpoint: create one non-production option plan, verify only
   `option_entry` starts enabled, and exercise manual simulated-entry activation
   before testing stop and targets.
+
+### 2026-07-30 - Yahoo options rate-limit handling
+
+- A Deep Research option-chain request returned Yahoo `Too Many Requests`.
+- The UI previously appended the provider exception to the no-liquidity text,
+  incorrectly implying that the contract screen had completed successfully.
+- Added stable provider error codes, a five-minute per-ticker rate-limit
+  cooldown that also applies to forced refreshes, and dedicated three-language
+  provider warnings. Rate limiting is no longer classified as no trade.
