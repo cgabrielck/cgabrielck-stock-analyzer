@@ -212,3 +212,11 @@ point-in-time fundamental coverage limitations.
   `alerts.confirm` key.
 - Verification passed: 208 tests and `git diff --check`. Deployment is pending
   a commit and push; `.vscode/settings.json` remains excluded.
+
+### 2026-07-30 - Production worker smoke check
+
+- Railway successfully loaded four enabled LLY alert rules from Supabase.
+- Worker logs reported `rules: 4` and `stale: 4`, confirming the database and
+  scheduler paths work while correctly rejecting quotes older than the
+  20-minute alert-safety limit.
+- No alert was evaluated, triggered, or delivered from stale market data.
