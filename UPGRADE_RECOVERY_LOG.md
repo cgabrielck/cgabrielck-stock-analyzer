@@ -338,3 +338,13 @@ point-in-time fundamental coverage limitations.
 - Live TSLA verification returned 185 calls and 185 puts for the selected
   expiration with Delta/Gamma/Theta/Vega, and correctly marked the snapshot as
   delayed and prior-session. Full suite: 233 tests passed.
+
+### 2026-07-30 - Stale Deep Research session invalidation
+
+- The deployed page continued to display the legacy `no_options` result even
+  though that return path no longer existed in source or GitHub commit
+  `62a84c5`, identifying a persisted Streamlit session result.
+- Added a versioned Deep Research result schema. Results from older deployments
+  are cleared automatically and users are prompted to rerun the analysis.
+- The result page now displays the active research pipeline version so stale UI
+  state can be distinguished from a provider response.

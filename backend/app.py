@@ -2182,6 +2182,8 @@ def _backtest_request_signature(
 
 
 def render_our_picks_page(lang: str, force_refresh: bool = False) -> None:
+    from agents.deep_research import DEEP_RESEARCH_SCHEMA_VERSION
+
     st.subheader(t("deep.pool_title", lang))
     st.caption(t("deep.pool_desc_independent", lang, n=len(STOCK_UNIVERSE)))
     stock_by_ticker = {stock["ticker"]: stock for stock in STOCK_UNIVERSE}
@@ -2259,6 +2261,17 @@ def render_our_picks_page(lang: str, force_refresh: bool = False) -> None:
         finally:
             progress.empty()
     results = st.session_state.get("picks_results", {})
+    if results and any(
+        "options_plan" in result
+        and result.get("schema_version") != DEEP_RESEARCH_SCHEMA_VERSION
+        for result in results.values()
+    ):
+        st.session_state.picks_results = {}
+        st.session_state.picks_errors = {}
+        st.session_state.picks_analyzed_tickers = []
+        st.session_state.picks_status = "idle"
+        st.warning(t("deep.results_version_expired", lang))
+        return
     if results:
         analyzed = st.session_state.get("picks_analyzed_tickers", [])
         if set(selected) != set(analyzed):
@@ -2267,6 +2280,7 @@ def render_our_picks_page(lang: str, force_refresh: bool = False) -> None:
         st.subheader(t("deep.results", lang))
         if st.session_state.get("picks_analyzed_at"):
             st.caption(t("deep.analyzed_at", lang, time=st.session_state.picks_analyzed_at))
+        st.caption(t("deep.pipeline_version", lang, version=DEEP_RESEARCH_SCHEMA_VERSION))
         for ticker, result in results.items():
             _render_deep_research_result(ticker, result, lang, force_refresh=force_refresh)
 

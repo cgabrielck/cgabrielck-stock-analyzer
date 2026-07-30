@@ -298,6 +298,7 @@ def test_market_data_timeout_keeps_core_result(monkeypatch) -> None:
     result = deep_research.analyze_selected_stock(stock, technical=technical)
 
     assert result["ticker"] == "AAPL"
+    assert result["schema_version"] == deep_research.DEEP_RESEARCH_SCHEMA_VERSION
     assert result["options"]["error"] == "provider_timeout"
     assert result["trade_plan"]["action"] == "buy"
 

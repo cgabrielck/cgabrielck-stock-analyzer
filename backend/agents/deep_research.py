@@ -22,6 +22,7 @@ ProgressCallback = Callable[[Dict[str, Any]], None]
 MARKET_DATA_TIMEOUT_SECONDS = 12.0
 CORE_DATA_TIMEOUT_SECONDS = 35.0
 DEFAULT_BATCH_TIMEOUT_SECONDS = 150.0
+DEEP_RESEARCH_SCHEMA_VERSION = 3
 
 
 def analyze_ticker(
@@ -231,6 +232,7 @@ def analyze_selected_stock(
     strategy_ms = round((time.monotonic() - strategy_started) * 1000)
     _emit(progress_callback, ticker, "strategy", "failed" if strategy.get("error") else "completed")
     return {
+        "schema_version": DEEP_RESEARCH_SCHEMA_VERSION,
         "ticker": ticker,
         "short_term": {
             "score": short_score,
