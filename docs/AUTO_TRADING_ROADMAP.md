@@ -77,7 +77,10 @@ Goal: execute the complete lifecycle against a broker paper account.
 
 Goal: generate and risk-approve realistic order intents without submitting them to the broker.
 - ✅ `ShadowTradingEngine` implemented to intercept Risk-Approved orders and simulate fills.
+- ✅ **ShadowTradingEngine 2.0**: market orders fill at next-bar open ± slippage; limit orders fill only when price crosses the limit; records `filled_avg_price`/`slippage_pct`; supports partial fills.
 - ✅ UI integration for manual shadow signal injection.
+- ✅ Standalone worker CLI (`python -m backend.trading.engine.worker`) with live-account guard and heartbeat.
+- ✅ Strategy backtest engine (`backend/backtesting/strategy_backtest.py`) with realistic fills.
 - 🔄 (Pending) Connect automated strategy signals to the `SignalProcessor` running in shadow mode.
 - 🔄 (Pending) Multi-month evaluation window.
 

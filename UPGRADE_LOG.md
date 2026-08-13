@@ -137,6 +137,7 @@ Streamlit UI (frontend)
 | 2026-08-12 | Session 1 | Fixed alpaca-trade-api→alpaca-py migration (websockets conflict), fixed `from backend.xxx` import path for Streamlit, fixed scan.ready i18n missing zh_cn key, added K-line indicator selector panel |
 | 2026-08-12 | Session 2 | **Phase 1:** Strategy engine (Stable + Aggressive), VCP detection, Kelly sizing, RiskEngine 2.0, Worker signal polling, Trading UI strategy panel |
 | 2026-08-13 | Session 3 | **平台與部署策略：** 記錄 Alpaca vs Futu 費用比較、PLAN 1–4（Basic 驗證 / Alpaca Plus / FutuBroker / 多用戶部署）、4GB→8GB 升級路徑、多用戶限制與業務風險 |
+| 2026-08-13 | Session 4 | **Phase 2 工程：** 獨立 Worker CLI（含 live 保護 + heartbeat）、Shadow 2.0 真實成交模擬（下一根 K 開盤 ± 滑點 / 限價觸及）、策略回測引擎（Win%/PF/Sharpe/DD）。全套件 335 測試通過 |
 
 ### Session: 2026-08-12 — Alpaca Paper Connection Verification
 
@@ -223,3 +224,44 @@ Streamlit UI (frontend)
 - Phase 2：策略驗證後再決定——單人（Alpaca Basic 一直免費）vs 3–4 人產品（那時認真做 FutuBroker；多人場景 Futu 數據成本優勢真實）
 - 保持 `BrokerAdapter` 抽象，讓 Alpaca / Futu / IBKR 可替換
 - 等 3 年回測完成後再重訪此決定
+
+---
+
+## Session: 2026-08-13 — Phase 2 執行（獨立 Worker / Shadow 2.0 / 策略回測）
+
+**目標：** 執行 PLAN 1 驗證路徑的前三項工程，全部 $0 數據費。
+
+### 已完成
+1. **獨立 TradingWorker CLI**（`python -m backend.trading.engine.worker`）
+   - 新增 `main()`：`--strategy / --interval / --tickers / --heartbeat-file / --allow-live / --once`
+   - 優雅處理 SIGTERM/SIGINT；heartbeat JSON 供 systemd/監控輪詢
+   - **Live 保護**：`APCA_PAPER != true` 且未加 `--allow-live` 時拒絕啟動
+   - 新增測試 `tests/trading/engine/test_worker_cli.py`（6 個）
+2. **ShadowTradingEngine 2.0**（`backend/trading/engine/shadow.py`）
+   - 市價單：下一根 K 開盤價 ± 滑點（預設 5bps）
+   - 限價買：後續 K 線 Low ≤ 限價才成交；限價賣：High ≥ 限價才成交；未觸及 → CANCELLED
+   - 記錄 `filled_avg_price` / `slippage_pct` 到 Order（models.py 新增欄位）
+   - 支持部分成交（`quantity_touched`）與無前向資料回退
+   - 新增測試 `tests/trading/engine/test_shadow_v2.py`（8 個）
+3. **策略回測引擎**（`backend/backtesting/strategy_backtest.py`）
+   - 每日頻率，對 Stable/Aggressive/Hybrid 逐一執行 generate_signal / check_exit
+   - 成交使用 Shadow 2.0 模型；輸出 Win% / Profit Factor / Sharpe / Max DD / 交易數
+   - 使用 yfinance 現有數據 + 250 日 warmup；**已知局限：current-universe 存活者偏差、基本面中性分數**（point-in-time 基本面免費源不可得，已記錄）
+   - 新增測試 `tests/backtesting/test_strategy_backtest.py`（6 個）
+
+### 驗證
+- 完整測試套件：**335 passed**（新增 21 個）
+
+### 真實 3 年冒煙測試（5 隻：AAPL/MSFT/NVDA/AMZN/GOOGL，2023-08 → 2026-08）
+| 策略 | 交易數 | 總回報 | 勝率 | 獲利因子 | Sharpe | 最大回撤 |
+|---|---|---|---|---|---|---|
+| stable | 17 | +2.13% | 70.6% | 2.92 | 1.14 | 0.87% |
+| aggressive | 11 | -0.76% | 27.3% | 0.67 | -0.28 | 2.08% |
+| hybrid | 51 | -0.10% | 58.8% | 1.23 | -0.07 | 1.17% |
+- 註：Aggressive 在此 5 隻大盤股 + 3 年區間表現不佳——真實結果，說明需更廣股票池或參數調優（這正是回測的用途）。已知局限：current-universe 存活者偏差、基本面中性分數。
+
+### 待辦（下一步）
+- [ ] 用真實 3 年數據跑三個策略回測，輸出報告
+- [ ] 將結果寫入 README / docs 作為策略門檻依據
+- [ ] 部署層：systemd service 檔 + VPS（DigitalOcean 4GB 或 Hetzner 4GB）
+- [ ] 決定：單人維持 Alpaca Basic 免費 vs 多用戶做 FutuBroker

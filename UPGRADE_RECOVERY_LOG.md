@@ -368,3 +368,17 @@ point-in-time fundamental coverage limitations.
   match the requested contract, contain a valid bid/ask market, and come from a
   complete response. The alert worker also requires Yahoo to have confirmed a
   regular market session before using a commercial quote fallback.
+
+### 2026-08-13 - Phase 2 工程 checkpoint (獨立 Worker / Shadow 2.0 / 策略回測)
+
+- 目標：PLAN 1（Alpaca Basic 免費）驗證路徑的三項工程，全部 $0 數據費。
+- 獨立 Worker CLI：`python -m backend.trading.engine.worker`。新增 `main()` 支援
+  `--strategy/--interval/--tickers/--heartbeat-file/--allow-live/--once`；SIGTERM/SIGINT
+  優雅關閉；`APCA_PAPER!=true` 且無 `--allow-live` 時拒絕啟動（Live 保護）。
+- Shadow 2.0：市價單用下一根 K 開盤 ± 5bps 滑點；限價買 Low≤limit 成交、限價賣
+  High≥limit 成交、未觸及→CANCELLED；記錄 filled_avg_price/slippage_pct；支援部分成交。
+- 策略回測引擎：`backend/backtesting/strategy_backtest.py`，每日頻率，輸出
+  Win%/Profit Factor/Sharpe/Max DD。已知局限：current-universe 存活者偏差、基本面中性
+  分數（point-in-time 免費源不可得）。
+- 驗證：全套件 335 passed（新增 21 測試）。
+- 未做：真實 3 年數據回測報告、systemd/VPS 部署、FutuBroker。

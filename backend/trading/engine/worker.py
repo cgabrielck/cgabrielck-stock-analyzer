@@ -440,3 +440,136 @@ class TradingWorker:
             logger.info("SELL submitted: %s ×%.0f @ %.4f (%s)", symbol, quantity, price, reason)
         except Exception as exc:
             logger.error("SELL submission failed for %s: %s", symbol, exc)
+
+
+# ---------------------------------------------------------------------------
+# CLI entry point — run as:  python -m backend.trading.engine.worker
+# ---------------------------------------------------------------------------
+
+def _build_worker(strategy_id: str, ticker_universe: Optional[List[str]]) -> TradingWorker:
+    """Build a fully wired TradingWorker from environment configuration."""
+    from dotenv import load_dotenv
+
+    load_dotenv()
+
+    from backend.trading.alpaca_broker import AlpacaBroker
+    from backend.trading.storage import JSONOrderStore
+    from backend.trading.reconciliation.service import ReconciliationService
+    from backend.trading.engine.order_manager import OrderManager
+
+    broker = AlpacaBroker()
+    store = JSONOrderStore()
+    manager = OrderManager(broker=broker, store=store)
+    reconciler = ReconciliationService(broker)
+
+    return TradingWorker(
+        broker=broker,
+        store=store,
+        manager=manager,
+        reconciler=reconciler,
+        strategy_id=strategy_id,
+        ticker_universe=ticker_universe,
+    )
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    """Standalone TradingWorker daemon entry point.
+
+    Design notes:
+      - Worker runs in a daemon thread (same as the Streamlit path) while the
+        main thread blocks on a shutdown Event so SIGTERM/SIGINT exit cleanly.
+      - Heartbeat is written to a JSON file (--heartbeat-file) so systemd or a
+        monitoring loop can detect a hung worker.
+      - Refuses to start with live credentials unless --allow-live is passed,
+        guarding against accidental real-money trading during validation.
+    """
+    import argparse
+    import json
+    import signal
+
+    parser = argparse.ArgumentParser(description="ALPHA//DESK standalone trading worker")
+    parser.add_argument("--strategy", default="stable", choices=["stable", "aggressive", "hybrid"],
+                        help="Strategy to run (default: stable)")
+    parser.add_argument("--interval", type=int, default=60,
+                        help="Polling interval in seconds (default: 60)")
+    parser.add_argument("--tickers", nargs="*", default=None,
+                        help="Override ticker universe (default: STOCK_UNIVERSE)")
+    parser.add_argument("--heartbeat-file", default=None,
+                        help="Write a JSON heartbeat file each loop for external monitoring")
+    parser.add_argument("--allow-live", action="store_true",
+                        help="Allow running against a live (non-paper) Alpaca account")
+    parser.add_argument("--once", action="store_true",
+                        help="Run a single strategy cycle and exit (for smoke tests)")
+    args = parser.parse_args(argv)
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
+
+    from dotenv import load_dotenv
+    load_dotenv()
+
+    import os
+    is_paper = os.getenv("APCA_PAPER", "true").lower() == "true"
+    if not is_paper and not args.allow_live:
+        logger.error("APCA_PAPER is not 'true'. Refusing to start standalone worker "
+                     "without --allow-live. This protects against accidental live trading.")
+        return 2
+
+    worker = _build_worker(args.strategy, args.tickers)
+    logger.info("Worker initialized: strategy=%s universe=%d interval=%ds paper=%s",
+                args.strategy, len(worker.ticker_universe), args.interval, is_paper)
+
+    def _write_heartbeat() -> None:
+        if not args.heartbeat_file:
+            return
+        try:
+            payload = {
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "running": worker.running,
+                "market_hours": worker.is_market_hours,
+                "last_run": worker.last_run_utc.isoformat() if worker.last_run_utc else None,
+                "last_signals": worker.last_signal_summary[-10:],
+            }
+            with open(args.heartbeat_file, "w") as fh:
+                json.dump(payload, fh, default=str)
+        except Exception as exc:  # pragma: no cover - best-effort monitoring
+            logger.error("Heartbeat write failed: %s", exc)
+
+    if args.once:
+        worker.is_market_hours = True
+        worker._sync_orders()
+        account = worker._safe_get_account()
+        if account:
+            worker._run_strategy_signals(account)
+        _write_heartbeat()
+        logger.info("Single-cycle run complete.")
+        return 0
+
+    shutdown = threading.Event()
+
+    def _signal_handler(_signum, _frame):  # pragma: no cover - exercised by OS signals
+        logger.info("Shutdown signal received, stopping worker...")
+        shutdown.set()
+
+    signal.signal(signal.SIGTERM, _signal_handler)
+    signal.signal(signal.SIGINT, _signal_handler)
+
+    worker.start(interval_seconds=args.interval)
+
+    # Report heartbeat periodically even during off-hours so monitors know we are alive.
+    try:
+        while not shutdown.is_set():
+            _write_heartbeat()
+            shutdown.wait(timeout=min(30, args.interval))
+    finally:
+        worker.stop()
+        _write_heartbeat()
+        logger.info("Worker exited cleanly.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+

@@ -45,6 +45,8 @@ class Order(AuditableModel):
     failed_at: Optional[datetime] = Field(None, description="Timestamp when the order failed")
     error_message: Optional[str] = Field(None, description="Error message if the order failed")
     idempotency_key: str = Field(..., description="Idempotency key to prevent duplicate orders")
+    filled_avg_price: Optional[float] = Field(None, description="Average fill price (simulated or real)")
+    slippage_pct: Optional[float] = Field(None, description="Simulated slippage as a fraction of reference price")
 
 class Fill(AuditableModel):
     order_id: str = Field(..., description="The ID of the order this fill belongs to")
