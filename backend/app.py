@@ -3,8 +3,15 @@ import shutil
 import os
 import io
 import html
+import sys
 import time
 from typing import Any, Dict, List, Optional
+
+# Ensure project root is on sys.path so `from backend.xxx import` works when
+# launched via `streamlit run backend/app.py` (Streamlit only adds backend/ itself).
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
 
 import streamlit as st
 import pandas as pd
@@ -160,10 +167,23 @@ def _inject_apple_css() -> None:
     .landing-title { color:var(--text); font-size:2.5rem; line-height:1.08; letter-spacing:-.045em; font-weight:780; margin:.45rem 0 .7rem; }
     .landing-copy { color:var(--muted); font-size:.95rem; line-height:1.6; max-width:680px; }
     .entry-card { min-height:235px; padding:1.25rem; border:1px solid var(--line-hot); border-radius:12px; background:linear-gradient(145deg,rgba(34,211,197,.08),var(--panel)); }
+    .entry-card-beta { border-color:rgba(251,191,36,.4); background:linear-gradient(145deg,rgba(251,191,36,.08),var(--panel)); }
+    .entry-card-beta .entry-label { color:rgba(251,191,36,.9); }
     .entry-label { color:var(--cyan); font:700 .64rem var(--mono); letter-spacing:.12em; text-transform:uppercase; }
     .entry-title { color:var(--text); font-size:1.35rem; font-weight:750; margin:.5rem 0; }
     .entry-copy { color:var(--muted); font-size:.78rem; line-height:1.55; min-height:76px; }
     .entry-meta { color:var(--faint); font:.66rem var(--mono); margin-top:.9rem; }
+    .empty-state { text-align:center; padding:2.2rem 1rem; border:1px dashed var(--line-hot); border-radius:10px; background:var(--panel); color:var(--muted); font-size:.82rem; }
+    .empty-state .empty-icon { font-size:1.6rem; margin-bottom:.4rem; opacity:.7; }
+    .trading-banner { display:flex; align-items:center; gap:.6rem; padding:.55rem .9rem; border-radius:8px; font-family:var(--mono); font-size:.72rem; font-weight:700; letter-spacing:.05em; text-transform:uppercase; margin-bottom:1rem; }
+    .trading-banner.paper { background:rgba(34,211,197,.1); border:1px solid rgba(34,211,197,.35); color:var(--cyan); }
+    .trading-banner.live { background:rgba(251,113,133,.12); border:1px solid rgba(251,113,133,.4); color:var(--red); }
+    .trading-banner .banner-dot { width:7px; height:7px; border-radius:50%; background:currentColor; box-shadow:0 0 10px currentColor; flex:0 0 auto; }
+    .status-pill { display:inline-flex; align-items:center; gap:.35rem; font-family:var(--mono); font-size:.66rem; font-weight:700; letter-spacing:.04em; text-transform:uppercase; padding:.22rem .55rem; border-radius:5px; white-space:nowrap; }
+    .status-pill.st-filled { background:rgba(52,211,153,.12); color:var(--green); border:1px solid rgba(52,211,153,.35); }
+    .status-pill.st-submitted, .status-pill.st-accepted, .status-pill.st-partially_filled, .status-pill.st-risk_approved, .status-pill.st-draft { background:rgba(96,165,250,.12); color:var(--blue); border:1px solid rgba(96,165,250,.35); }
+    .status-pill.st-rejected, .status-pill.st-cancelled, .status-pill.st-expired, .status-pill.st-reconciliation_error { background:rgba(251,113,133,.12); color:var(--red); border:1px solid rgba(251,113,133,.35); }
+    .risk-note { display:flex; gap:.55rem; align-items:flex-start; padding:.7rem .85rem; border-radius:8px; background:var(--panel-2); border:1px solid var(--line); font-size:.76rem; color:var(--muted); line-height:1.5; margin:.6rem 0; }
     .proof-strip { display:grid; grid-template-columns:repeat(4,1fr); gap:.65rem; margin:1.2rem 0; }
     .proof-item { padding:.9rem; border:1px solid var(--line); border-radius:8px; background:var(--panel); }
     .proof-value { color:var(--text); font:750 1.2rem var(--mono); }
@@ -2104,7 +2124,7 @@ def render_home_tab(lang: str) -> None:
         f"<div class='landing-copy'>{t('landing.copy', lang)}</div></div>",
         unsafe_allow_html=True,
     )
-    deep_col, scan_col, portfolio_col = st.columns(3)
+    deep_col, scan_col, portfolio_col, trading_col = st.columns(4)
     with deep_col:
         st.markdown(
             f"<div class='entry-card'><div class='entry-label'>01 · {t('landing.primary', lang)}</div><div class='entry-title'>{t('landing.picks_title', lang)}</div>"
@@ -2133,6 +2153,17 @@ def render_home_tab(lang: str) -> None:
         if st.button(t("landing.portfolio_action", lang), type="secondary", width="stretch", key="landing_portfolio"):
             st.session_state.deep_workspace = "portfolio"
             st.session_state.app_route = "picks"
+            st.rerun()
+    with trading_col:
+        st.markdown(
+            f"<div class='entry-card entry-card-beta'><div class='entry-label'>04 · BETA</div>"
+            f"<div class='entry-title'>{t('landing.trading_title', lang)}</div>"
+            f"<div class='entry-copy'>{t('landing.trading_copy', lang)}</div>"
+            f"<div class='entry-meta'>{t('landing.trading_meta', lang)}</div></div>",
+            unsafe_allow_html=True,
+        )
+        if st.button(t("landing.trading_action", lang), type="secondary", width="stretch", key="landing_trading"):
+            st.session_state.app_route = "trading"
             st.rerun()
     st.markdown(
         f"<div class='proof-strip'><div class='proof-item'><div class='proof-value'>{len(STOCK_UNIVERSE)}</div><div class='proof-label'>{t('landing.stocks', lang)}</div></div>"
@@ -2934,11 +2965,12 @@ def build_minimal_sidebar() -> Dict[str, Any]:
 
 
 def render_primary_navigation(lang: str) -> None:
-    home, picks, scan = st.columns(3)
+    home, picks, scan, trading = st.columns(4)
     actions = [
-        (home, "home", t("nav.home", lang)),
-        (picks, "picks", t("nav.picks", lang)),
-        (scan, "scan", t("nav.scan", lang)),
+        (home,    "home",    t("nav.home", lang)),
+        (picks,   "picks",   t("nav.picks", lang)),
+        (scan,    "scan",    t("nav.scan", lang)),
+        (trading, "trading", t("nav.trading", lang)),
     ]
     for column, route, label in actions:
         with column:
@@ -2952,6 +2984,49 @@ def render_primary_navigation(lang: str) -> None:
                 if route == "picks":
                     st.session_state.deep_workspace = "research"
                 st.rerun()
+
+
+def render_trading_page(lang: str) -> None:
+    """Trading page — gated on Alpaca credentials being configured."""
+    if not (os.getenv("APCA_API_KEY_ID") and os.getenv("APCA_API_SECRET_KEY")):
+        st.markdown(
+            f"<div class='brand-kicker'>{t('nav.trading', lang)}</div>"
+            f"<p class='app-title' style='font-size:1.55rem;margin-bottom:.2rem;'>{t('trading.title', lang)}</p>",
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            f"<div class='empty-state'>"
+            f"<div class='empty-icon'>🔑</div>"
+            f"<div>{html.escape(t('trading.not_configured.title', lang))}</div>"
+            f"<div style='margin-top:.35rem;font-size:.78rem;max-width:520px;margin-inline:auto;'>"
+            f"{html.escape(t('trading.not_configured.desc', lang))}</div>"
+            f"<div style='margin-top:.6rem;font-size:.7rem;color:var(--faint);'>"
+            f"{html.escape(t('trading.not_configured.hint', lang))}</div></div>",
+            unsafe_allow_html=True,
+        )
+        return
+
+    try:
+        from backend.trading.ui.dashboard import render_trading_dashboard
+        from backend.trading.alpaca_broker import AlpacaBroker
+        from backend.trading.storage import JSONOrderStore
+        from backend.trading.reconciliation.service import ReconciliationService
+
+        if "trading_broker" not in st.session_state:
+            st.session_state.trading_broker = AlpacaBroker()
+        if "trading_store" not in st.session_state:
+            st.session_state.trading_store = JSONOrderStore()
+        if "trading_reconciler" not in st.session_state:
+            st.session_state.trading_reconciler = ReconciliationService(st.session_state.trading_broker)
+
+        render_trading_dashboard(
+            st.session_state.trading_broker,
+            st.session_state.trading_store,
+            st.session_state.trading_reconciler,
+            lang=lang,
+        )
+    except Exception as e:
+        st.error(t("app.error", lang, msg=str(e)))
 
 
 def render_scan_page(params: Dict[str, Any], lang: str) -> None:
@@ -3052,6 +3127,9 @@ try {
     elif route == "picks":
         params = build_minimal_sidebar()
         render_deep_workspace(lang, force_refresh=params["force_refresh"])
+    elif route == "trading":
+        build_minimal_sidebar()
+        render_trading_page(lang)
     else:
         build_minimal_sidebar()
         render_home_tab(lang)

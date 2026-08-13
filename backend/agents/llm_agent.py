@@ -14,7 +14,7 @@ load_dotenv()
 
 _API_KEY: Optional[str] = get_secret("LLM_API_KEY")
 _BASE_URL: Optional[str] = str(get_secret("LLM_BASE_URL") or "").strip() or None
-_CHAT_MODEL: str = str(get_secret("LLM_MODEL") or "deepseek-chat").strip() or "deepseek-chat"
+_CHAT_MODEL: str = str(get_secret("LLM_MODEL") or "熊猫-特供-按量-满血逆-claude-sonnet-4.6").strip() or "熊猫-特供-按量-满血逆-claude-sonnet-4.6"
 _REASONING_MODEL: str = str(get_secret("LLM_REASONING_MODEL") or "").strip() or _CHAT_MODEL
 try:
     _LLM_TIMEOUT_SECONDS = min(120.0, max(1.0, float(get_secret("LLM_TIMEOUT_SECONDS") or "45")))

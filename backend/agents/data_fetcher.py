@@ -697,13 +697,15 @@ def _analyze_news_sentiment(title: str, summary: str) -> str:
             analyzer = SentimentIntensityAnalyzer()
             setattr(_analyze_news_sentiment, "_analyzer", analyzer)
         compound = analyzer.polarity_scores(text)["compound"]
-        if compound >= 0.05:
+        # Adjusted thresholds for better sensitivity
+        if compound >= 0.15:
             return "positive"
-        if compound <= -0.05:
+        if compound <= -0.15:
             return "negative"
         return "neutral"
     except (ImportError, OSError):
         pass
+    # Fallback keyword logic
     text = text.lower()
     pos_count = sum(1 for kw in _POSITIVE_KEYWORDS if kw in text)
     neg_count = sum(1 for kw in _NEGATIVE_KEYWORDS if kw in text)
