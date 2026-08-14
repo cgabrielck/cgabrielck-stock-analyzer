@@ -44,6 +44,16 @@ class StableStrategy(StrategyBase):
     STOP_LOSS_PCT   = 0.05
     MAX_HOLD_DAYS   = 15
 
+    def __init__(self, **overrides):
+        """Allow per-instance parameter overrides for tuning/backtesting.
+
+        Example: StableStrategy(rsi_entry=30, stop_loss_pct=0.06)
+        """
+        for key, value in overrides.items():
+            attr = key.upper()
+            if hasattr(self, attr):
+                setattr(self, attr, float(value) if isinstance(value, (int, float)) else value)
+
     def populate_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
         df = df.copy()
         df["rsi"]      = self._rsi(df["Close"])

@@ -32,6 +32,7 @@ from backend.utils.constants import STOCK_UNIVERSE
 WARMUP_DAYS = 250
 MAX_POSITIONS = 10
 STARTING_CAPITAL = 100_000.0
+BACKTEST_FETCH_WORKERS = 12
 
 
 class StrategyBacktestResult:
@@ -70,9 +71,16 @@ def run_strategy_backtest(
     transaction_cost_bps: float = 10.0,
     max_positions: int = MAX_POSITIONS,
     initial_capital: float = STARTING_CAPITAL,
+    max_workers: int = BACKTEST_FETCH_WORKERS,
+    strategy_params: Optional[Dict[str, Any]] = None,
 ) -> StrategyBacktestResult:
-    """Run a daily-frequency backtest of a single strategy over *start*..*end*."""
-    strategy = get_strategy(strategy_id)
+    """Run a daily-frequency backtest of a single strategy over *start*..*end*.
+
+    Args:
+        strategy_params: Optional dict of parameter overrides passed to the
+            strategy constructor (e.g. {"rsi_entry": 30, "volume_surge": 2.0}).
+    """
+    strategy = get_strategy(strategy_id, **(strategy_params or {}))
     result = StrategyBacktestResult()
 
     if tickers is None:
@@ -87,7 +95,7 @@ def run_strategy_backtest(
     # SMA200 / SMA50 etc. have enough history on day one.
     fetch_start = (pd.Timestamp(start) - pd.DateOffset(days=WARMUP_DAYS + 60)).strftime("%Y-%m-%d")
     fetch_end = (pd.Timestamp(end_date) + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
-    price_data = fetch_price_data(tickers, fetch_start, fetch_end)
+    price_data = fetch_price_data(tickers, fetch_start, fetch_end, max_workers=max_workers)
 
     missing = [t for t in tickers if t not in price_data]
     if missing:
@@ -118,15 +126,59 @@ def run_strategy_backtest(
         result.warnings.append("Too few trading dates for a meaningful backtest.")
         return result
 
-    # Positions: {ticker: {entry_price, qty, stop, target, entry_date, meta}}
+    # Positions: {ticker: {entry_price, qty, stop, target, entry_date, entry_day_idx, meta}}
     positions: Dict[str, Dict[str, Any]] = {}
+    # Signals fire on a bar's close but fill on the NEXT bar's open (no same-bar
+    # look-ahead), matching the ShadowTradingEngine market-order model.
+    pending_entries: Dict[str, Any] = {}
     cash = initial_capital
     trade_records: List[Dict[str, Any]] = []
     equity_curve: List[Dict[str, Any]] = []
 
-    shadow = ShadowTradingEngine(order_manager=None, slippage_bps=DEFAULT_SLIPPAGE_BPS)
+    slippage = DEFAULT_SLIPPAGE_BPS / 10000.0
+    time_stop_days = getattr(strategy, "MAX_HOLD_DAYS", None)
 
     for day_idx, day in enumerate(all_dates):
+        # 0. Fill entries signalled on the previous bar at today's open + slippage.
+        for ticker in list(pending_entries.keys()):
+            signal = pending_entries[ticker]
+            if ticker not in aligned:
+                del pending_entries[ticker]
+                continue
+            try:
+                row = aligned[ticker].loc[day]
+                if isinstance(row, pd.DataFrame):
+                    row = row.iloc[-1]
+            except KeyError:
+                continue  # ticker not trading today; keep waiting for its next bar
+            if len(positions) >= max_positions or ticker in positions:
+                del pending_entries[ticker]
+                continue
+            fill_price = float(row["Open"]) * (1 + slippage)
+            if fill_price <= 0:
+                del pending_entries[ticker]
+                continue
+            alloc = cash * 0.05  # fixed 5% slice for determinism
+            qty = max(1, int(alloc / fill_price))
+            cost = qty * fill_price
+            if cost > cash:
+                qty = max(1, int(cash / fill_price))
+                cost = qty * fill_price
+            if qty <= 0 or cost <= 0 or cost > cash:
+                del pending_entries[ticker]
+                continue
+            cash -= cost * (1 + transaction_cost_bps / 10000.0)
+            positions[ticker] = {
+                "entry_price": fill_price,
+                "qty": qty,
+                "stop": signal.stop_loss_price,
+                "target": signal.take_profit_price,
+                "entry_date": day.strftime("%Y-%m-%d"),
+                "entry_day_idx": day_idx,
+                "meta": signal.meta,
+            }
+            del pending_entries[ticker]
+
         # 1. Check exits before entries (respect stop/target on the bar's OHLC).
         for ticker in list(positions.keys()):
             if ticker not in aligned:
@@ -167,6 +219,14 @@ def run_strategy_backtest(
                         exit_reason = es.reason
                         exit_price = es.exit_price
 
+            # Time stop: close after MAX_HOLD_DAYS trading days if still open
+            # (strategy exit rule D — documented but not enforced in check_exit).
+            if exit_reason is None and time_stop_days:
+                held_days = day_idx - pos.get("entry_day_idx", day_idx)
+                if held_days >= int(time_stop_days):
+                    exit_reason = "time_stop"
+                    exit_price = close
+
             if exit_reason:
                 proceeds = pos["qty"] * exit_price * (1 - transaction_cost_bps / 10000.0)
                 cash += proceeds
@@ -187,13 +247,17 @@ def run_strategy_backtest(
                 })
                 del positions[ticker]
 
-        # 2. Entries — only if we have room and capital.
-        if len(positions) < max_positions and cash > 500:
+        # 2. Entries — signal on this close, queue for a next-bar-open fill.
+        # Reserve slots for both open positions and already-queued signals so we
+        # never over-commit beyond max_positions.
+        committed = len(positions) + len(pending_entries)
+        if committed < max_positions and cash > 500:
             current_pos_list = [{"symbol": t, "quantity": p["qty"]} for t, p in positions.items()]
+            current_pos_list += [{"symbol": t, "quantity": 0} for t in pending_entries]
             for ticker in sorted(aligned.keys()):
-                if len(positions) >= max_positions:
+                if committed >= max_positions:
                     break
-                if ticker in positions:
+                if ticker in positions or ticker in pending_entries:
                     continue
                 hist = _history_through(aligned[ticker], day)
                 if hist is None or len(hist) < 30:
@@ -211,28 +275,11 @@ def run_strategy_backtest(
                 )
                 if signal is None:
                     continue
-                # Sizing: allocate a slice of available cash, capped by strategy's
-                # max concentration (Kelly floor), at most one unit per signal.
-                alloc = cash * 0.05  # fixed 5% slice for determinism
-                qty = max(1, int(alloc / signal.entry_price)) if signal.entry_price else 0
-                if qty <= 0:
-                    continue
-                cost = qty * signal.entry_price
-                if cost > cash:
-                    qty = max(1, int(cash / signal.entry_price)) if signal.entry_price else 0
-                    cost = qty * signal.entry_price
-                if qty <= 0 or cost <= 0:
-                    continue
-                cash -= cost * (1 + transaction_cost_bps / 10000.0)
-                positions[ticker] = {
-                    "entry_price": signal.entry_price,
-                    "qty": qty,
-                    "stop": signal.stop_loss_price,
-                    "target": signal.take_profit_price,
-                    "entry_date": day.strftime("%Y-%m-%d"),
-                    "meta": signal.meta,
-                }
-                current_pos_list.append({"symbol": ticker, "quantity": qty})
+                # Queue for a next-bar-open fill (actual price + slippage applied
+                # when the next trading bar for this ticker arrives).
+                pending_entries[ticker] = signal
+                current_pos_list.append({"symbol": ticker, "quantity": 0})
+                committed += 1
 
         # 3. Mark-to-market equity.
         equity = cash

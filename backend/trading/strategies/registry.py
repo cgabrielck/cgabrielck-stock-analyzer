@@ -26,9 +26,11 @@ class HybridStrategy(StrategyBase):
     expected_win_pct   = 0.10
     expected_loss_pct  = 0.06
 
-    def __init__(self):
-        self._stable     = StableStrategy()
-        self._aggressive = AggressiveStrategy()
+    def __init__(self, **overrides):
+        stable_overrides = {k: v for k, v in overrides.items() if hasattr(StableStrategy(), k.upper())}
+        aggr_overrides = {k: v for k, v in overrides.items() if hasattr(AggressiveStrategy(), k.upper())}
+        self._stable     = StableStrategy(**stable_overrides)
+        self._aggressive = AggressiveStrategy(**aggr_overrides)
 
     def populate_indicators(self, df):
         return df  # each sub-strategy does its own
@@ -56,6 +58,16 @@ _INSTANCES: Dict[str, StrategyBase] = {
 STRATEGY_REGISTRY: Dict[str, StrategyBase] = _INSTANCES
 
 
-def get_strategy(strategy_id: str) -> StrategyBase:
-    """Return a strategy instance by ID.  Defaults to 'stable' if unknown."""
+def get_strategy(strategy_id: str, **overrides) -> StrategyBase:
+    """Return a strategy instance by ID.  Defaults to 'stable' if unknown.
+
+    Args:
+        **overrides: Parameter overrides applied to a fresh instance. When
+            provided, a new instance is built (the shared singleton is left
+            untouched) so backtests can sweep parameters safely.
+    """
+    if overrides:
+        cls_map = {"stable": StableStrategy, "aggressive": AggressiveStrategy, "hybrid": HybridStrategy}
+        cls = cls_map.get(strategy_id, StableStrategy)
+        return cls(**overrides)
     return _INSTANCES.get(strategy_id, _INSTANCES["stable"])

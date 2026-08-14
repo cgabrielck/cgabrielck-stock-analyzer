@@ -52,7 +52,8 @@ def test_reasoner_failure_falls_back_to_chat(monkeypatch) -> None:
     monkeypatch.setattr(llm_agent, "_CHAT_MODEL", "chat")
 
     assert llm_agent._create_completion(Client(), "strategy", messages=[]) == "ok"
-    assert calls == ["reasoner", "chat"]
+    # New behavior: retry reasoner 3 times before falling back to chat
+    assert calls == ["reasoner", "reasoner", "reasoner", "chat"]
 
 
 def test_news_impact_normalization_rejects_invalid_enums_and_bounds_confidence() -> None:

@@ -60,12 +60,27 @@ def get_public_config() -> Dict[str, Any]:
 
 def _create_completion(client: OpenAI, task: str, **kwargs: Any) -> Any:
     primary_model = get_model_for_task(task)
-    try:
-        return client.chat.completions.create(model=primary_model, **kwargs)
-    except Exception:
-        if primary_model == _CHAT_MODEL:
-            raise
-        return client.chat.completions.create(model=_CHAT_MODEL, **kwargs)
+    max_retries = 3
+    
+    for attempt in range(max_retries):
+        try:
+            response = client.chat.completions.create(model=primary_model, **kwargs)
+            # OpenAI python client wraps the response; ensure it's not empty
+            if not response or not response.choices:
+                raise ValueError("Received null or empty choices from API")
+            return response
+        except Exception as e:
+            if attempt == max_retries - 1:
+                # If we've exhausted retries, try the fallback model if applicable, else raise
+                if primary_model != _CHAT_MODEL:
+                    try:
+                        return client.chat.completions.create(model=_CHAT_MODEL, **kwargs)
+                    except Exception:
+                        pass
+                raise e
+            
+            # Wait a bit before retrying, exponential backoff (2s, 4s...)
+            _time.sleep(2 ** attempt)
 
 
 _SYSTEM_PROMPT = """You are a professional equity analyst. Given fundamental data and technical indicators for a stock, rate it from 0-100 and provide concise analysis.

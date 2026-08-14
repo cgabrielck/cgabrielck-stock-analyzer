@@ -89,10 +89,11 @@ def fetch_price_data(
     tickers: List[str],
     start: str = DEFAULT_START,
     end: Optional[str] = None,
+    max_workers: int = MAX_WORKERS,
 ) -> Dict[str, pd.DataFrame]:
     end = end or datetime.now().strftime("%Y-%m-%d")
     results: Dict[str, pd.DataFrame] = {}
-    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {executor.submit(_fetch_single_price, t, start, end): t for t in tickers}
         for future in as_completed(futures):
             t = futures[future]

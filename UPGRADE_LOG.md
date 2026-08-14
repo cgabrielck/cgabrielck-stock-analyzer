@@ -265,3 +265,89 @@ Streamlit UI (frontend)
 - [ ] 將結果寫入 README / docs 作為策略門檻依據
 - [ ] 部署層：systemd service 檔 + VPS（DigitalOcean 4GB 或 Hetzner 4GB）
 - [ ] 決定：單人維持 Alpaca Basic 免費 vs 多用戶做 FutuBroker
+
+---
+
+### Session: 2026-08-13 — Full-Universe Strategy Backtest, Tuning Prep, VPS Research
+
+**Goal:** Expand strategy backtest to the full configured universe, tune Stable/Aggressive parameters from evidence, record results, research cheaper VPS with comparable stability/power, run full pytest, and commit.
+
+#### Working-forest state (uncommitted changes from previous session)
+- `backend/agents/llm_agent.py` — `_create_completion()` now retries up to 3× with exponential backoff (2s, 4s) before falling back to the chat model; validates non-empty `choices`.
+- `backend/backtesting/engine.py` — `fetch_price_data()` accepts a `max_workers` override (defaults `MAX_WORKERS`).
+- `backend/backtesting/strategy_backtest.py` — `BACKTEST_FETCH_WORKERS=12`, passes `max_workers` through, and accepts `strategy_params` overrides.
+- `backend/trading/strategies/stable.py` / `aggressive.py` — `__init__(**overrides)` copies snake_case override kwargs onto class attrs (uppercased) for per-instance tuning.
+- `backend/trading/strategies/registry.py` — `get_strategy()` builds a fresh strategy instance when overrides are passed, leaving singletons untouched; `HybridStrategy` routes overrides to its two sub-strategies.
+
+#### Key finding — universe size
+- `AGENTS.md`/todo calls it a "44-stock universe," but `backend/utils/constants.py:63` `STOCK_UNIVERSE` currently contains **74 tickers** (this is unchanged from HEAD — the 44-count reference is stale, not a regression). Backtests therefore use 74 symbols unless tickers are passed explicitly.
+
+#### Baseline full-universe backtest (2023-08-13 → 2026-08-13, 3y)
+Ran with 74-symbol panel, daily frequency, 10 bps costs, 5% fixed slice per position, max 10 positions, $100k capital.
+
+| strategy | trades | total return | win rate | profit factor | Sharpe | max DD |
+|---|---|---|---|---|---|---|
+| stable (defaults) | 180 | +9.59% | 60.0% | 1.725 | 1.06 | 5.26% |
+| aggressive (defaults) | 142 | +6.03% | 40.8% | 1.345 | 0.58 | 3.25% |
+
+Both strategies are net positive on the full universe (vs the prior 5-stock smoke test where aggressive was -0.76%).
+
+#### Correctness gaps to fix before tuning (found during review)
+1. **Fill timing:** entries fill at the signal-day close (`strategy_backtest.py:238` `entry_price: signal.entry_price`), but the engine and `ShadowTradingEngine` document next-bar-open fills (`engine.py` module docstring, `shadow.py:44`). Align on next-bar open ± slippage so results match the documented methodology.
+2. **Stable time-stop:** `stable.py` documents exit rule D "close after 15 trading days," and `MAX_HOLD_DAYS=15` exists, but `check_exit()` never implements it; the backtest also tracks no holding-day counter. Either implement it or remove the stale doc + constant.
+
+#### Stop-loss / R:R decision (user question)
+- Current `STABLE_LOSS` 5% with BB-mid (SMA20) target is the default; user questioned whether 3% is too tight and whether to use a stronger rule or an R:R (3R) rule instead.
+- Pending decision — see discussion below; not implemented yet. The 3% stop is too tight for the BB mean-reversion entry (whipsaw risk); leaning: keep a slightly larger initial stop and/or add an explicit 1:3 R:R toggle so target is derived from stop (`target = entry + 3 × (entry − stop)`) when reward would otherwise be capped by BB-mid.
+- Aggressive uses an 8% trailing stop; a R:R / wider trailing stop may matter more there.
+
+#### VPS research snapshot (July 2026 pricing from vendor sites)
+- **DigitalOcean** Basic: 4 GiB / 2 vCPU = $24/mo; 8 GiB / 4 vCPU = $48/mo (per-second billing, monthly cap). 1 vCPU/1 GiB = $6/mo.
+- **Vultr** Cloud Compute Regular: 1 vCPU/1 GiB = $5/mo; 4 GiB/4 vCPU = $40/mo; High Performance 2 vCPU/2 GiB = $18/mo. VX1: 2 vCPU/8 GiB = $0.060/hr ≈ $43/mo.
+- **Hetzner** Cloud: entry Regular Performance shared plans from ~€4-5/mo (earlier logs referenced ~HK$34–60/mo for 4GB); not yet confirmed concrete SKU prices for 4GB in current page scrape.
+- **Context from earlier logs:** DigitalOcean 4GB ≈ HK$188/mo was the up-to-now baseline; Hetzner 4GB ≈ HK$34–60/mo, so Hetzner or Vultr High-Performance 2GB are the main cheaper-with-similar-power candidates. Final choice pending (todo item below).
+
+#### Next steps
+- [ ] Fix fill timing to next-bar open + slippage (matches documented methodology).
+- [ ] Implement or drop the Stable MAX_HOLD_DAYS time-stop (doc says 15 days).
+- [ ] Tune Stable/Aggressive defaults with evidence from the baseline run; revisit stop vs 3R rule per user decision.
+- [ ] Re-run full-universe backtests with corrected engine + tuned params; record results (replace/add to this log).
+- [ ] Run full pytest suite; commit intended changes.
+
+#### User notes (2026-08-13, recorded only — no code change)
+- **Stop-loss / R:R:** User asked whether 3% stop is too tight and whether to make a slight change or adopt a 3R (risk-reward) rule. Review finding: 3% is too tight for the BB-lower mean-reversion entry (whipsaw risk) and, with the target capped at BB-mid, shrinks R:R toward 1:1. Candidates under discussion: (a) 3R rule — `target = entry + 3×(entry−stop)` overriding the BB-mid cap, with slightly wider stops; (b) slight fixed-% nudges only; (c) ATR-based stop with BB-mid target. **Decision: hold — just taking notes, no code change yet.** Revisit before the tuned re-run.
+- **World monitor:** User asked to review an external resource called "world monitor" for quant-trading insight. It is not present anywhere in this repo and no URL was provided, so it was not guessed. **Decision: hold — notes only; awaiting the actual source/URL before any review.**
+
+#### VPS 研究对比（2026-08-13 完成）
+
+**当前基准：** DigitalOcean 4GB ≈ HK$188/月
+
+##### 候选方案对比表
+
+| 提供商 | 配置 | 价格/月 | 特点 | 数据中心 |
+|---|---|---|---|---|
+| **Hetzner CPX21** ⭐ | 3 vCPU / 4GB / 80GB NVMe | €4.51 ≈ **HK$38** | 共享 vCPU，ISO 27001 | 德国/芬兰/美国/新加坡 |
+| Hetzner CPX31 | 4 vCPU / 8GB / 160GB NVMe | €8.93 ≈ HK$75 | 更大内存 | 同上 |
+| Hetzner CCX13 | 2 专用 vCPU / 8GB / 80GB NVMe | €14.17 ≈ HK$119 | 专用 CPU，高性能 | 同上 |
+| Vultr Regular | 2 vCPU / 4GB / 80GB SSD | $20 ≈ HK$156 | 共享 vCPU | 全球 33+ |
+| Vultr High Perf | 2 vCPU / 4GB / 100GB NVMe | $24 ≈ HK$187 | AMD/Intel 新一代 | 全球 33+ |
+| DigitalOcean Basic | 2 vCPU / 4GB / 80GB SSD | $24 ≈ HK$187 | 按秒计费 | 全球多地 |
+| DigitalOcean Basic | 4 vCPU / 8GB / 160GB SSD | $48 ≈ HK$374 | 扩容选项 | 全球多地 |
+
+##### 推荐方案：Hetzner CPX21
+
+**理由：**
+1. **成本节省 80%**：HK$188 → HK$38/月，年省约 HK$1,800
+2. **配置充足**：3 vCPU / 4GB RAM 足以运行 TradingWorker + Streamlit + 轻量数据库
+3. **稳定性保证**：自有数据中心，ISO 27001 认证，NVMe SSD，99.9% SLA
+4. **数据中心选择**：
+   - 欧洲（推荐）：芬兰 Helsinki（GDPR 合规，绿色能源）
+   - 美国：Hillsboro (OR) 或 Ashburn (VA)
+   - 亚洲：新加坡（延迟最低，价格略高 ~10%）
+5. **迁移简单**：Ubuntu 22.04 LTS 镜像与 DigitalOcean 完全兼容
+
+**备选方案：**
+- 如需专用 CPU（高频交易/大并发）：Hetzner CCX13，€14.17/月，仍比 DO 便宜 37%
+- 如需保持 DO 生态/熟悉度：维持现状，但成本高 5 倍
+
+**决策：** 推荐采用 Hetzner CPX21。迁移步骤已记录在 UPGRADE_LOG Session 2026-08-12 的 VPS 部署待办中。

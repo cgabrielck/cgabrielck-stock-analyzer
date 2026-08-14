@@ -42,6 +42,16 @@ class AggressiveStrategy(StrategyBase):
     RSI_OVERBOUGHT     = 80
     MIN_FUND_SCORE     = 50.0      # lower bar — momentum can override weak fundamentals
 
+    def __init__(self, **overrides):
+        """Allow per-instance parameter overrides for tuning/backtesting.
+
+        Example: AggressiveStrategy(volume_surge=2.0, trailing_stop_pct=0.10)
+        """
+        for key, value in overrides.items():
+            attr = key.upper()
+            if hasattr(self, attr):
+                setattr(self, attr, float(value) if isinstance(value, (int, float)) else value)
+
     def populate_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
         df = df.copy()
         df["sma50"]     = df["Close"].rolling(50).mean()
