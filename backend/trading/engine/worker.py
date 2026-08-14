@@ -93,6 +93,8 @@ class TradingWorker:
         self.last_run_utc: Optional[datetime] = None
         self.last_signal_summary: List[Dict[str, Any]] = []
         self.is_market_hours: bool = False
+        # Latest market regime (SPY+VIX) — gates total exposure by target allocation
+        self.last_regime: Optional[Dict[str, Any]] = None
 
     # ------------------------------------------------------------------
     # Public control API
@@ -182,6 +184,11 @@ class TradingWorker:
         # 2. Fetch VIX for dampening
         vix_level = self._fetch_vix()
 
+        # 2b. Detect market regime (SPY + VIX) — gates total exposure.
+        regime = self._detect_regime()
+        self.last_regime = regime
+        target_allocation = float(regime.get("target_allocation", 0.70)) if regime else 0.70
+
         # 3. Clean expired cooldowns
         now = datetime.now(timezone.utc)
         self._cooldown = {
@@ -239,7 +246,31 @@ class TradingWorker:
             for p in account.positions
         ]
 
+        # Regime exposure gate: don't open new positions beyond the regime's
+        # target allocation (e.g. bear/high-vol caps total invested at 40%).
+        portfolio_value = float(getattr(account, "portfolio_value", 0.0) or 0.0)
+        invested_value = 0.0
+        for p in account.positions:
+            px = price_history.get(p.symbol)
+            mark = float(px["Close"].iloc[-1]) if px is not None and len(px) else float(p.average_entry_price)
+            invested_value += mark * float(p.quantity)
+        exposure_ratio = invested_value / portfolio_value if portfolio_value > 0 else 0.0
+        allow_new_entries = exposure_ratio < target_allocation
+        if not allow_new_entries:
+            logger.info(
+                "Regime=%s exposure gate: invested %.0f%% >= target %.0f%% — no new entries.",
+                (regime or {}).get("regime", "n/a"), exposure_ratio * 100, target_allocation * 100,
+            )
+            summary_rows.append({
+                "action": "REGIME_GATE",
+                "regime": (regime or {}).get("regime", "n/a"),
+                "exposure_pct": round(exposure_ratio * 100, 1),
+                "target_pct": round(target_allocation * 100, 1),
+            })
+
         for ticker, df in price_history.items():
+            if not allow_new_entries:
+                break
             if ticker in open_positions:
                 continue  # already holding
 
@@ -406,6 +437,20 @@ class TradingWorker:
         except Exception:
             pass
         return None
+
+    def _detect_regime(self) -> Optional[Dict[str, Any]]:
+        """Detect the global market regime (SPY + VIX).
+
+        Returns the regime dict from market_regime.detect_global_market_regime(),
+        which includes a `target_allocation` used to gate total exposure. On any
+        failure we return None and the caller falls back to a neutral 0.70 cap.
+        """
+        try:
+            from backend.agents.market_regime import detect_global_market_regime
+            return detect_global_market_regime()
+        except Exception as exc:
+            logger.debug("Regime detection failed: %s", exc)
+            return None
 
     def _get_fundamental_score(self, ticker: str) -> float:
         """

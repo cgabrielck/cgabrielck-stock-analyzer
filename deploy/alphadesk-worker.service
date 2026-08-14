@@ -1,0 +1,58 @@
+[Unit]
+Description=ALPHA//DESK auto-trading worker (paper trading)
+Documentation=https://github.com/anomalyco/opencode
+# Wait for the network to be routable before starting (yfinance + Alpaca need it).
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+
+# --- Run identity ---------------------------------------------------------
+# Create a dedicated non-login user first:  sudo adduser --system --group alphadesk
+User=alphadesk
+Group=alphadesk
+
+# --- Paths ----------------------------------------------------------------
+# Adjust if you clone somewhere other than /opt/stock-analyzer.
+WorkingDirectory=/opt/stock-analyzer
+# Secrets live in an EnvironmentFile that is NOT world-readable (chmod 600).
+# It must contain APCA_API_KEY_ID / APCA_API_SECRET_KEY / APCA_PAPER=true / LLM_API_KEY etc.
+EnvironmentFile=/opt/stock-analyzer/.env
+# Ensure `from backend.xxx import` resolves and `from utils.xxx` (used by
+# agents.market_regime) resolves via the backend/ dir, matching pytest.ini.
+Environment=PYTHONPATH=/opt/stock-analyzer:/opt/stock-analyzer/backend
+Environment=PYTHONUNBUFFERED=1
+
+# --- Command --------------------------------------------------------------
+# Default strategy is stable; override by editing this line (stable/aggressive/hybrid).
+# Heartbeat file is polled by WatchdogSec-style external monitors.
+ExecStart=/opt/stock-analyzer/.venv312/bin/python -m backend.trading.engine.worker \
+    --strategy stable \
+    --interval 60 \
+    --heartbeat-file /run/alphadesk/heartbeat.json
+
+# Create /run/alphadesk owned by the service user for the heartbeat file.
+RuntimeDirectory=alphadesk
+RuntimeDirectoryMode=0750
+
+# --- Lifecycle ------------------------------------------------------------
+Restart=on-failure
+RestartSec=15
+# Give the worker time to finish its loop and flush the heartbeat on stop.
+TimeoutStopSec=30
+# SIGTERM is handled gracefully by the worker (see worker.main()).
+KillSignal=SIGTERM
+
+# --- Hardening ------------------------------------------------------------
+# Least-privilege sandbox. The worker only needs to read the repo, write the
+# order ledger (trading_orders.json) and the heartbeat.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+# The order ledger is written into the working directory; allow it explicitly.
+ReadWritePaths=/opt/stock-analyzer /run/alphadesk
+
+[Install]
+WantedBy=multi-user.target

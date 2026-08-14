@@ -351,3 +351,40 @@ Both strategies are net positive on the full universe (vs the prior 5-stock smok
 - 如需保持 DO 生态/熟悉度：维持现状，但成本高 5 倍
 
 **决策：** 推荐采用 Hetzner CPX21。迁移步骤已记录在 UPGRADE_LOG Session 2026-08-12 的 VPS 部署待办中。
+
+---
+
+### Session: 2026-08-15 — 自动交易就绪度强化 + 部署准备
+
+**目标：** 完善交易心态/策略，确保系统具备自动交易就绪度，为 VPS 迁移做准备。
+
+#### 交易专家止损/3R 心态研究（记录用）
+- **Mark Minervini（VCP 原创者）：** 初始止损 7-10%；盈利 +5% 移至保本；最低 2:1、理想 3:1 R:R。
+- **Van Tharp（R 系统理论）：** R = 每笔初始风险；target = entry + R×(entry−stop)；突破型策略最适合 3R。
+- **Larry Connors（RSI 均值回归）：** 不用固定百分比止损，靠高胜率×小盈利；均值回归**不适合**高 R:R。
+- **结论：** Aggressive（突破）→ 采用 3R；Stable（均值回归）→ 维持高胜率×固定止损模型。
+
+#### 已完成变更
+1. **Aggressive 跟踪止损更新（已验证）：** Worker 每 tick 用 `trailing_high×(1−8%)` 更新 `stop_loss_price`，回写 meta。
+2. **Worker → SignalProcessor → RiskEngine 链路验证：** 入场经 `RiskEngine.evaluate_order()`（含 VIX/相关性/冷却期 2.0 参数）→ `OrderManager.submit_new_order()`；退出（卖出）不经风控门（正确——平仓永不应被阻挡）。
+3. **Aggressive 目标 2R → 3R：** 新增 `REWARD_RISK_RATIO = 3.0`，`target = entry + 3×(entry−stop)`。
+4. **市场机制过滤器接入 Worker：** 新增 `_detect_regime()` + 曝险门控，按 regime `target_allocation`（bull 0.90 / neutral 0.70 / bear·high_vol 0.40）限制新入场，超限只出不进。
+5. **Stable ATR 动态止损：** 已实现并回测，**证据不支持**（回报/胜率/Sharpe 全面小幅退步），已**回退**至固定 5%。
+6. **部署文件：** `deploy/alphadesk-worker.service`（systemd，含 sandbox 硬化）+ `deploy/README.md`（runbook）+ `.env.example` 补 Alpaca 变量。
+7. **新增测试（7 个）：** `test_strategy_params.py`（5：3R 目标/参数覆盖）+ `test_worker_regime_gate.py`（2：曝险门控）。
+
+#### 回测对比（74 股，3 年，2023-08-13 → 2026-08-13）
+| 策略 | 交易 | 回报 | 胜率 | PF | Sharpe | MaxDD |
+|---|---|---|---|---|---|---|
+| stable（固定 5%，采用） | 180 | +8.62% | 59.4% | 1.66 | 0.99 | 3.81% |
+| stable-ATR（已回退） | 182 | +8.30% | 56.6% | 1.64 | 0.90 | 4.16% |
+| aggressive-2R（旧） | 142 | +4.93% | 42.3% | 1.30 | 0.50 | 3.30% |
+| **aggressive-3R（采用）** | 131 | **+7.80%** | 41.2% | **1.46** | **0.72** | 3.55% |
+
+#### 验证
+- 完整测试套件：**342 passed**（335 + 新增 7），0 失败。
+
+#### VPS 迁移前就绪度评估
+- ✅ 就绪：Broker/OrderManager/RiskEngine 2.0/Kelly/Shadow 2.0/Worker CLI/回测引擎/342 测试/systemd + runbook。
+- ⚠️ 未达成（非阻塞，属流程门槛）：30 天 Paper Trading（Sharpe>1.0）验证窗口——按 AUTO_TRADING_ROADMAP，实盘前必须完成。
+- 结论：**具备迁移到 Hetzner VPS 做 Paper Trading 长跑验证的条件。**

@@ -10,6 +10,10 @@ Entry logic (ALL conditions must be met):
   6. LLM signal is "bullish" or None (not explicitly bearish)
   7. Not already holding this ticker
 
+Target:
+  Take-profit = entry + REWARD_RISK_RATIO × (entry − stop)  (3R rule,
+  Van Tharp / Minervini). Initial risk = entry − stop = TRAILING_STOP_PCT.
+
 Exit logic:
   A. Trailing stop 8% below the highest close since entry
   B. Price closes below SMA50  (trend break)
@@ -41,6 +45,7 @@ class AggressiveStrategy(StrategyBase):
     TRAILING_STOP_PCT  = 0.08
     RSI_OVERBOUGHT     = 80
     MIN_FUND_SCORE     = 50.0      # lower bar — momentum can override weak fundamentals
+    REWARD_RISK_RATIO  = 3.0       # 3R rule (Minervini/Van Tharp): target = 3× initial risk
 
     def __init__(self, **overrides):
         """Allow per-instance parameter overrides for tuning/backtesting.
@@ -116,8 +121,10 @@ class AggressiveStrategy(StrategyBase):
             return None
 
         stop = round(close * (1 - self.TRAILING_STOP_PCT), 4)
-        # Target = 2× the depth of the last contraction (Minervini rule)
-        target = round(close * (1 + self.TRAILING_STOP_PCT * 2), 4)
+        # 3R rule (Van Tharp / Minervini): target = entry + R × (entry - stop).
+        # The initial risk is (entry - stop); reward is REWARD_RISK_RATIO × that risk.
+        initial_risk = close - stop
+        target = round(close + self.REWARD_RISK_RATIO * initial_risk, 4)
 
         reason = (
             f"VCP breakout at {breakout_level:.2f}, "
