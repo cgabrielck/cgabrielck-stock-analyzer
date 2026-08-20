@@ -28,6 +28,8 @@ from backend.trading.risk.gates import RiskEngine, RiskLimits
 from backend.trading.risk.position_sizer import shares_to_buy
 from backend.trading.strategies.base import StrategyBase
 from backend.trading.strategies.registry import get_strategy
+from backend.trading.safety import audit, kill_switch
+from backend.trading.safety.mandate import MandateGate, TradingMandate, load_mandate
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +61,7 @@ class TradingWorker:
         strategy_id: str = "stable",
         risk_limits: Optional[RiskLimits] = None,
         ticker_universe: Optional[List[str]] = None,
+        mandate: Optional[TradingMandate] = None,
     ):
         self.broker      = broker
         self.store       = store
@@ -67,6 +70,9 @@ class TradingWorker:
         self.strategy: StrategyBase = get_strategy(strategy_id)
         self.risk_engine = RiskEngine(risk_limits or RiskLimits())
         self.signal_processor = SignalProcessor(broker, self.risk_engine, manager)
+        # Mandate gate: declarative authorization envelope loaded from
+        # config/mandate.json (permissive default preserves legacy behaviour).
+        self.mandate_gate = MandateGate(mandate or load_mandate())
 
         # Default universe — can be overridden
         if ticker_universe is None:
@@ -93,6 +99,7 @@ class TradingWorker:
         self.last_run_utc: Optional[datetime] = None
         self.last_signal_summary: List[Dict[str, Any]] = []
         self.is_market_hours: bool = False
+        self.is_halted: bool = False  # Kill switch state (checked every tick)
         # Latest market regime (SPY+VIX) — gates total exposure by target allocation
         self.last_regime: Optional[Dict[str, Any]] = None
 
@@ -169,6 +176,16 @@ class TradingWorker:
     def _run_strategy_signals(self, account) -> None:
         """Core auto-trading: fetch data, check exits, generate entries."""
         summary_rows: List[Dict[str, Any]] = []
+
+        # 0. Kill switch — highest-priority manual override.
+        # When engaged, we still run EXITS (must be able to close positions)
+        # but block ALL new entries. This is the emergency brake.
+        self.is_halted = kill_switch.is_halted()
+        halt_reason = kill_switch.get_reason() if self.is_halted else None
+        audit.log_kill_switch_check(self.is_halted, halt_reason)
+        if self.is_halted:
+            logger.warning("KILL SWITCH ENGAGED (%s) — new entries blocked, exits still active.",
+                           halt_reason)
 
         # 1. Fetch price history for the universe (last 250 trading days)
         price_history: Dict[str, pd.DataFrame] = {}
@@ -291,6 +308,36 @@ class TradingWorker:
 
             logger.info("ENTRY signal for %s via %s: %s", ticker, signal.strategy_id, signal.reason)
 
+            # Kill switch gate (blocks BUYs only; exits still work)
+            if self.is_halted:
+                logger.info("BLOCKED %s: kill switch engaged", ticker)
+                audit.log_mandate_decision(ticker, "buy", approved=False,
+                                           reason="kill_switch_engaged")
+                summary_rows.append({"ticker": ticker, "action": "BLOCKED", "reason": "kill_switch"})
+                continue
+
+            # Mandate gate (authorization check before committing capital)
+            # Draft order for notional calc
+            draft_for_mandate = Order(
+                id=f"draft-{ticker}",
+                symbol=ticker,
+                side=OrderSide.BUY,
+                order_type=OrderType.LIMIT,
+                quantity=1,  # placeholder — real qty computed next via Kelly
+                limit_price=signal.entry_price,
+                idempotency_key=f"mandate-check-{ticker}",
+            )
+            mandate_decision = self.mandate_gate.evaluate(draft_for_mandate, signal.entry_price)
+            audit.log_mandate_decision(
+                ticker, "buy", mandate_decision.approved, mandate_decision.reason,
+                notional=signal.entry_price,
+            )
+            if not mandate_decision.approved:
+                logger.info("BLOCKED %s: %s", ticker, mandate_decision.reason)
+                summary_rows.append({"ticker": ticker, "action": "BLOCKED",
+                                    "reason": mandate_decision.reason})
+                continue
+
             # Kelly position sizing
             vix_mult = self.risk_engine.vix_size_multiplier(vix_level)
             qty = shares_to_buy(
@@ -338,13 +385,26 @@ class TradingWorker:
                 cooldown_tickers=cooldown_tickers,
             )
 
+            # Audit the risk decision
+            audit.log_risk_decision(ticker, "buy", qty, decision.approved, decision.reason)
+
             if not decision.approved:
                 logger.info("BLOCKED %s: %s", ticker, decision.reason)
                 summary_rows.append({"ticker": ticker, "action": "BLOCKED", "reason": decision.reason})
                 continue
 
+            # Record this order against the mandate's daily limit
+            self.mandate_gate.record_order()
+
             # Submit via order manager
             result = self.manager.submit_new_order(draft)
+            
+            # Audit the submission result
+            audit.log_order_submission(
+                ticker, "buy", qty, signal.entry_price,
+                result.id, result.status.value,
+            )
+
             if result.status not in (OrderStatus.REJECTED,):
                 self._position_meta[ticker] = {
                     "stop_loss_price":   signal.stop_loss_price,
@@ -545,12 +605,35 @@ def main(argv: Optional[List[str]] = None) -> int:
                         help="Allow running against a live (non-paper) Alpaca account")
     parser.add_argument("--once", action="store_true",
                         help="Run a single strategy cycle and exit (for smoke tests)")
+    parser.add_argument("--halt", metavar="REASON", nargs="?", const="Manual halt via CLI",
+                        help="Engage the kill switch (blocks new BUYs) and exit")
+    parser.add_argument("--resume", action="store_true",
+                        help="Disengage the kill switch and exit")
+    parser.add_argument("--status", action="store_true",
+                        help="Print kill switch status and exit")
     args = parser.parse_args(argv)
 
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
+
+    # Kill switch control commands — no worker/credentials needed.
+    from backend.trading.safety import kill_switch as _ks
+    if args.halt is not None:
+        _ks.engage(args.halt)
+        logger.warning("KILL SWITCH ENGAGED: %s", args.halt)
+        return 0
+    if args.resume:
+        _ks.disengage()
+        logger.info("Kill switch disengaged — normal trading resumes.")
+        return 0
+    if args.status:
+        if _ks.is_halted():
+            logger.warning("Kill switch is ENGAGED: %s", _ks.get_reason())
+        else:
+            logger.info("Kill switch is DISENGAGED (normal trading).")
+        return 0
 
     from dotenv import load_dotenv
     load_dotenv()
