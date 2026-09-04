@@ -9,6 +9,11 @@ import yfinance as yf
 
 from agents.risk_analyzer import calculate_portfolio_risk, fetch_risk_metrics
 from backtesting.calibration import load_calibration_snapshot, probability_from_snapshot
+from agents.reflection_agent import (
+    capture_thesis,
+    log_outcome,
+    complete_trade_cycle,
+)
 
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "data")
@@ -169,17 +174,104 @@ def _save_portfolio_state(state: Dict[str, Any]) -> None:
         json.dump(state, f, indent=2, ensure_ascii=False)
 
 
-def log_trade(ticker: str, action: str, price: float, shares: int, reason: str = "") -> None:
+def log_trade(
+    ticker: str,
+    action: str,
+    price: float,
+    shares: int,
+    reason: str = "",
+    thesis: Optional[Dict[str, Any]] = None,
+) -> None:
+    """
+    Log a trade to the journal. Optionally attach thesis data for later reflection.
+    
+    Args:
+        ticker: stock symbol
+        action: "buy", "sell", "reset"
+        price: trade price
+        shares: quantity
+        reason: human-readable explanation
+        thesis: optional thesis dict from reflection_agent.capture_thesis()
+    """
     entries = _load_journal()
-    entries.append({
+    entry = {
         "date": datetime.now().isoformat(),
         "ticker": ticker,
         "action": action,
         "price": round(price, 2),
         "shares": shares,
         "reason": reason,
-    })
+    }
+    if thesis:
+        entry["thesis"] = thesis
+    entries.append(entry)
     _save_journal(entries)
+
+
+def _reflect_on_exits(
+    exited_tickers: List[str],
+    old_positions: Dict[str, Any],
+    journal: List[Dict[str, Any]],
+) -> None:
+    """
+    Trigger reflection on positions that were closed (exited from the portfolio).
+    
+    For each exit, try to find the entry in the journal (with thesis), compute outcome,
+    and run the LLM reflection cycle. This is the core self-learning loop.
+    """
+    for ticker in exited_tickers:
+        old = old_positions.get(ticker, {})
+        entry_price = old.get("entry_price")
+        entry_date = old.get("entry_date")
+        
+        if not entry_price or not entry_date:
+            continue
+        
+        # Find the entry in the journal with thesis data
+        entry_record = None
+        for record in reversed(journal):
+            if (record.get("ticker") == ticker and 
+                record.get("action") == "buy" and 
+                "thesis" in record):
+                entry_record = record
+                break
+        
+        if not entry_record or "thesis" not in entry_record:
+            # No thesis captured at entry, can't reflect
+            continue
+        
+        # Fetch current price for exit
+        try:
+            ticker_obj = yf.Ticker(ticker)
+            hist = ticker_obj.history(period="1d")
+            if hist.empty:
+                continue
+            exit_price = float(hist["Close"].iloc[-1])
+        except Exception:
+            continue
+        
+        # Log the exit to journal
+        journal.append({
+            "date": datetime.now().isoformat(),
+            "ticker": ticker,
+            "action": "sell",
+            "price": round(exit_price, 2),
+            "shares": 0,
+            "reason": "Rebalance exit (dropped from top recommendations)",
+        })
+        
+        # Build outcome
+        outcome = log_outcome(
+            ticker=ticker,
+            exit_price=exit_price,
+            exit_trigger="rebalance",
+            entry_date=entry_date,
+            entry_price=entry_price,
+            narrative=f"Position closed during rebalancing. Entry ${entry_price:.2f} → Exit ${exit_price:.2f}.",
+        )
+        
+        # Complete the reflection cycle (LLM reflect + save + append to TRADE_JOURNAL.md)
+        complete_trade_cycle(entry_record["thesis"], outcome, append_to_markdown=True)
 
 
 def build_portfolio(
@@ -197,6 +289,13 @@ def build_portfolio(
 
     weights, weighting_method = calculate_portfolio_weights(recommendations, target_allocation=target_allocation)
 
+    # Detect exits: tickers that were held but are no longer recommended (or dropped to zero weight).
+    # Each exit triggers a reflection cycle so the system learns from the closed trade.
+    new_tickers = {r["ticker"] for r in recommendations if weights.get(r["ticker"], 0) > 0}
+    exited_tickers = [t for t in old_positions if t not in new_tickers]
+    if exited_tickers:
+        _reflect_on_exits(exited_tickers, old_positions, updated_journal)
+
     positions: List[Dict[str, Any]] = []
     for r in recommendations:
         ticker = r["ticker"]
@@ -212,13 +311,6 @@ def build_portfolio(
         entry_price = old.get("entry_price", price)
         entry_date = old.get("entry_date", datetime.now().isoformat())
 
-        if not old:
-            updated_journal.append({
-                "date": datetime.now().isoformat(), "ticker": ticker, "action": "buy",
-                "price": round(price, 2), "shares": shares,
-                "reason": f"Portfolio allocation {weight*100:.1f}%",
-            })
-
         target = r.get("target_mean_price")
         beta = r.get("beta")
         if beta and beta > 0:
@@ -226,6 +318,24 @@ def build_portfolio(
         else:
             stop_loss_pct = DEFAULT_STOP_LOSS_PCT
         stop_loss = round(entry_price * (1 - stop_loss_pct), 2)
+
+        if not old:
+            # Capture the full scoring thesis at entry so we can reflect when the position closes.
+            thesis = capture_thesis(
+                ticker=ticker,
+                entry_price=price,
+                recommendation=r,
+                regime=r.get("regime"),
+                position_size_pct=weight,
+                stop_price=stop_loss,
+                target_price=target,
+            )
+            updated_journal.append({
+                "date": datetime.now().isoformat(), "ticker": ticker, "action": "buy",
+                "price": round(price, 2), "shares": shares,
+                "reason": f"Portfolio allocation {weight*100:.1f}%",
+                "thesis": thesis,
+            })
 
         pnl = (price - entry_price) * shares
         pnl_pct = ((price / entry_price) - 1) * 100 if entry_price > 0 else 0

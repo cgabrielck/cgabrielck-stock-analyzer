@@ -1,6 +1,6 @@
 import logging
-from typing import Dict, Optional, Protocol
-from datetime import datetime
+from typing import Dict, List, Optional, Protocol
+from datetime import datetime, timezone
 
 from backend.trading.models import Order, OrderStatus
 from backend.trading.broker import BrokerAdapter
@@ -12,6 +12,7 @@ class OrderStore(Protocol):
     def save_order(self, order: Order) -> None: ...
     def get_order_by_idempotency_key(self, key: str) -> Optional[Order]: ...
     def get_order(self, order_id: str) -> Optional[Order]: ...
+    def get_recent_orders(self, limit: int = 50) -> List[Order]: ...
 
 class InMemoryOrderStore:
     """A simple in-memory store for development and testing."""
@@ -28,6 +29,12 @@ class InMemoryOrderStore:
 
     def get_order(self, order_id: str) -> Optional[Order]:
         return self._orders_by_id.get(order_id)
+
+    def get_recent_orders(self, limit: int = 50) -> List[Order]:
+        """Return the most recent orders (by updated_at, descending)."""
+        all_orders = list(self._orders_by_id.values())
+        all_orders.sort(key=lambda o: o.updated_at or o.created_at, reverse=True)
+        return all_orders[:limit]
 
 
 class OrderManager:
@@ -67,7 +74,7 @@ class OrderManager:
             logger.error(f"Failed to submit order to broker: {str(e)}")
             draft_order.status = OrderStatus.REJECTED
             draft_order.error_message = f"Broker Adapter Error: {str(e)}"
-            draft_order.failed_at = datetime.utcnow()
+            draft_order.failed_at = datetime.now(timezone.utc)
             self.store.save_order(draft_order)
             return draft_order
 

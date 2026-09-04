@@ -38,24 +38,46 @@ class AlpacaBroker(BrokerAdapter):
     """
 
     def __init__(self):
+        # Read configuration only. No network I/O in the constructor so the
+        # adapter can be instantiated in tests and non-trading contexts without
+        # valid credentials. The client is created lazily on first use.
         self.api_key_id = os.getenv("APCA_API_KEY_ID")
         self.api_secret_key = os.getenv("APCA_API_SECRET_KEY")
         self.is_paper = os.getenv("APCA_PAPER", "true").lower() == "true"
+        self._api: Optional[TradingClient] = None
+        self._verified = False
+
+    def _ensure_connected(self) -> None:
+        """Lazily create the Alpaca client and verify the account, once.
+
+        Credential validation and the account-status check are deferred here so
+        constructing the adapter never touches the network. Raises if creds are
+        missing or the account is blocked from trading.
+        """
+        if self._verified:
+            return
 
         if not self.api_key_id or not self.api_secret_key:
             raise ValueError("Alpaca API credentials (APCA_API_KEY_ID, APCA_API_SECRET_KEY) are not set.")
 
-        self.api = TradingClient(
-            api_key=self.api_key_id,
-            secret_key=self.api_secret_key,
-            paper=self.is_paper,
-        )
+        if self._api is None:
+            self._api = TradingClient(
+                api_key=self.api_key_id,
+                secret_key=self.api_secret_key,
+                paper=self.is_paper,
+            )
 
-        account = self.api.get_account()
-        if not account.trading_blocked:
-            print("Alpaca account is ready for trading.")
-        else:
+        account = self._api.get_account()
+        if account.trading_blocked:
             raise Exception("Alpaca account is currently blocked from trading.")
+        self._verified = True
+
+    @property
+    def api(self) -> TradingClient:
+        """The Alpaca client, connecting/verifying lazily on first access."""
+        self._ensure_connected()
+        assert self._api is not None  # guaranteed by _ensure_connected
+        return self._api
 
     def get_account_summary(self) -> AccountSummary:
         """Retrieves the current account summary from Alpaca."""

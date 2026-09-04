@@ -1,0 +1,21 @@
+{
+  "_comment": "Trading mandate configuration — authorization constraints for the automated worker.",
+  "_usage": "cp config/mandate.example.json config/mandate.json && edit to taste. If absent, a permissive mandate is used (all symbols, no caps).",
+
+  "allowed_symbols": [
+    "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA", "BRK.B", "V", "JNJ"
+  ],
+  "_allowed_symbols_note": "If non-empty, only these tickers may be bought. Empty [] allows all. SELL orders always bypass this list (you must be able to close a position).",
+
+  "blocked_symbols": [],
+  "_blocked_symbols_note": "Hard deny-list, overrides allowed_symbols. Example: [\"GME\", \"AMC\"] would block meme stocks.",
+
+  "max_notional_per_order": 50000.0,
+  "_max_notional_note": "Max $ notional per single order. The RiskEngine applies its own cap (default 25% of equity), so this is a second, coarser gate. Null = no cap.",
+
+  "max_daily_orders": 5,
+  "_max_daily_note": "Max BUY orders per UTC day. SELL orders do not count. Null = no cap. Useful to throttle a runaway strategy.",
+
+  "allowed_sides": ["buy", "sell"],
+  "_allowed_sides_note": "Which order sides the worker may submit. ['buy', 'sell'] is the default. To freeze all new buys, set ['sell']."
+}

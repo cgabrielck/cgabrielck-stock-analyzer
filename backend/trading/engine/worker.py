@@ -21,6 +21,7 @@ import pandas as pd
 
 from backend.trading.broker import BrokerAdapter
 from backend.trading.engine.order_manager import OrderManager, OrderStore
+from backend.trading.engine.shadow import ShadowTradingEngine
 from backend.trading.engine.signal_processor import SignalProcessor
 from backend.trading.models import Order, OrderSide, OrderStatus, OrderType
 from backend.trading.reconciliation.service import ReconciliationService
@@ -62,6 +63,8 @@ class TradingWorker:
         risk_limits: Optional[RiskLimits] = None,
         ticker_universe: Optional[List[str]] = None,
         mandate: Optional[TradingMandate] = None,
+        execution_mode: str = "paper",
+        shadow_engine: Optional["ShadowTradingEngine"] = None,
     ):
         self.broker      = broker
         self.store       = store
@@ -73,6 +76,9 @@ class TradingWorker:
         # Mandate gate: declarative authorization envelope loaded from
         # config/mandate.json (permissive default preserves legacy behaviour).
         self.mandate_gate = MandateGate(mandate or load_mandate())
+        # Execution mode: "paper" submits to broker, "shadow" simulates fills locally
+        self.execution_mode = execution_mode
+        self.shadow_engine = shadow_engine
 
         # Default universe — can be overridden
         if ticker_universe is None:
@@ -224,7 +230,7 @@ class TradingWorker:
 
             # Update trailing high
             prev_high = self._trailing_highs.get(symbol, pos.average_entry_price)
-            self._trailing_highs[symbol] = max(prev_high, current_price)
+            self._trailing_highs[symbol] = max(prev_high or 0.0, current_price)
 
             meta = self._position_meta.get(symbol, {})
             strategy_id = meta.get("strategy_id", self.strategy.strategy_id)
@@ -396,8 +402,15 @@ class TradingWorker:
             # Record this order against the mandate's daily limit
             self.mandate_gate.record_order()
 
-            # Submit via order manager
-            result = self.manager.submit_new_order(draft)
+            # Submit via order manager OR shadow engine
+            if self.execution_mode == "shadow" and self.shadow_engine is not None:
+                # Shadow mode: simulate fill with next-day bar (fetch tomorrow's open)
+                draft.status = OrderStatus.RISK_APPROVED
+                next_bars = self._fetch_next_bar(ticker, signal.entry_price)
+                result = self.shadow_engine.simulate_submission(draft, next_bars=next_bars)
+            else:
+                # Paper/live mode: submit to broker
+                result = self.manager.submit_new_order(draft)
             
             # Audit the submission result
             audit.log_order_submission(
@@ -541,19 +554,46 @@ class TradingWorker:
             idempotency_key=idem,
         )
         try:
-            self.manager.submit_new_order(order)
+            if self.execution_mode == "shadow" and self.shadow_engine is not None:
+                # Shadow mode: simulate fill with next-day bar
+                order.status = OrderStatus.RISK_APPROVED
+                next_bars = self._fetch_next_bar(symbol, price)
+                self.shadow_engine.simulate_submission(order, next_bars=next_bars)
+            else:
+                # Paper/live mode: submit to broker
+                self.manager.submit_new_order(order)
             logger.info("SELL submitted: %s ×%.0f @ %.4f (%s)", symbol, quantity, price, reason)
         except Exception as exc:
             logger.error("SELL submission failed for %s: %s", symbol, exc)
+
+    def _fetch_next_bar(self, symbol: str, ref_price: float) -> Optional[pd.DataFrame]:
+        """
+        Fetch a single next-day bar for shadow fill simulation.
+        
+        In real shadow mode we'd wait for tomorrow's actual bar. For now we 
+        approximate with today's last bar as a conservative fill estimate.
+        """
+        df = self._fetch_ohlcv(symbol, period="5d")
+        if df is None or len(df) < 2:
+            # Fallback: synthetic bar at ref_price
+            return pd.DataFrame({
+                "Open": [ref_price],
+                "High": [ref_price * 1.002],
+                "Low": [ref_price * 0.998],
+                "Close": [ref_price],
+            })
+        return df.tail(1)
 
 
 # ---------------------------------------------------------------------------
 # CLI entry point — run as:  python -m backend.trading.engine.worker
 # ---------------------------------------------------------------------------
 
-def _build_worker(strategy_id: str, ticker_universe: Optional[List[str]]) -> TradingWorker:
+def _build_worker(strategy_id: str, ticker_universe: Optional[List[str]], 
+                  execution_mode: str = "paper") -> TradingWorker:
     """Build a fully wired TradingWorker from environment configuration."""
     from dotenv import load_dotenv
+    from pathlib import Path
 
     load_dotenv()
 
@@ -561,11 +601,23 @@ def _build_worker(strategy_id: str, ticker_universe: Optional[List[str]]) -> Tra
     from backend.trading.storage import JSONOrderStore
     from backend.trading.reconciliation.service import ReconciliationService
     from backend.trading.engine.order_manager import OrderManager
+    from backend.utils.constants import DATA_DIR
 
+    # Shadow mode uses a separate order ledger
+    if execution_mode == "shadow":
+        store_path = Path(DATA_DIR) / "shadow_orders.json"
+        store = JSONOrderStore(filepath=str(store_path))
+    else:
+        store = JSONOrderStore()  # default: data/trading_orders.json
+    
     broker = AlpacaBroker()
-    store = JSONOrderStore()
     manager = OrderManager(broker=broker, store=store)
     reconciler = ReconciliationService(broker)
+    
+    # Shadow engine only needed in shadow mode
+    shadow_engine = None
+    if execution_mode == "shadow":
+        shadow_engine = ShadowTradingEngine(order_manager=manager)
 
     return TradingWorker(
         broker=broker,
@@ -574,6 +626,8 @@ def _build_worker(strategy_id: str, ticker_universe: Optional[List[str]]) -> Tra
         reconciler=reconciler,
         strategy_id=strategy_id,
         ticker_universe=ticker_universe,
+        execution_mode=execution_mode,
+        shadow_engine=shadow_engine,
     )
 
 
@@ -595,6 +649,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="ALPHA//DESK standalone trading worker")
     parser.add_argument("--strategy", default="stable", choices=["stable", "aggressive", "hybrid"],
                         help="Strategy to run (default: stable)")
+    parser.add_argument("--mode", default="paper", choices=["paper", "shadow"],
+                        help="Execution mode: 'paper' submits to broker, 'shadow' simulates fills locally (default: paper)")
     parser.add_argument("--interval", type=int, default=60,
                         help="Polling interval in seconds (default: 60)")
     parser.add_argument("--tickers", nargs="*", default=None,
@@ -640,14 +696,16 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     import os
     is_paper = os.getenv("APCA_PAPER", "true").lower() == "true"
-    if not is_paper and not args.allow_live:
+    
+    # Shadow mode bypasses broker entirely, so live-guard is not applicable
+    if args.mode == "paper" and not is_paper and not args.allow_live:
         logger.error("APCA_PAPER is not 'true'. Refusing to start standalone worker "
                      "without --allow-live. This protects against accidental live trading.")
         return 2
 
-    worker = _build_worker(args.strategy, args.tickers)
-    logger.info("Worker initialized: strategy=%s universe=%d interval=%ds paper=%s",
-                args.strategy, len(worker.ticker_universe), args.interval, is_paper)
+    worker = _build_worker(args.strategy, args.tickers, execution_mode=args.mode)
+    logger.info("Worker initialized: mode=%s strategy=%s universe=%d interval=%ds paper=%s",
+                args.mode, args.strategy, len(worker.ticker_universe), args.interval, is_paper)
 
     def _write_heartbeat() -> None:
         if not args.heartbeat_file:

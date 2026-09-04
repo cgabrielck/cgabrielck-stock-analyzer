@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import List, Optional
 
@@ -28,8 +28,8 @@ class OrderType(str, Enum):
 
 class AuditableModel(BaseModel):
     id: str = Field(..., description="Unique identifier")
-    created_at: datetime = Field(default_factory=datetime.utcnow, description="Creation timestamp in UTC")
-    updated_at: datetime = Field(default_factory=datetime.utcnow, description="Last update timestamp in UTC")
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), description="Creation timestamp in UTC")
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), description="Last update timestamp in UTC")
 
 class Order(AuditableModel):
     symbol: str = Field(..., description="The symbol of the asset to trade")

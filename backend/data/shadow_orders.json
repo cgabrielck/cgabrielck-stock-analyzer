@@ -1,0 +1,42 @@
+[
+  {
+    "id": "AAPL-202608202255",
+    "created_at": "2026-08-20T22:55:57.481600",
+    "updated_at": "2026-08-20T22:55:57.481602",
+    "symbol": "AAPL",
+    "side": "buy",
+    "order_type": "limit",
+    "quantity": 47.0,
+    "limit_price": 147.0,
+    "stop_price": null,
+    "status": "cancelled",
+    "submitted_at": "2026-08-20T22:55:57.482012Z",
+    "filled_at": null,
+    "cancelled_at": "2026-08-20T22:55:57.482891Z",
+    "failed_at": null,
+    "error_message": "Shadow: limit price not touched within provided bars.",
+    "idempotency_key": "AAPL-202608202255",
+    "filled_avg_price": null,
+    "slippage_pct": null
+  },
+  {
+    "id": "AAPL-202608202257",
+    "created_at": "2026-08-20T22:57:01.108237",
+    "updated_at": "2026-08-20T22:57:01.108240",
+    "symbol": "AAPL",
+    "side": "buy",
+    "order_type": "limit",
+    "quantity": 47.0,
+    "limit_price": 147.0,
+    "stop_price": null,
+    "status": "cancelled",
+    "submitted_at": "2026-08-20T22:57:01.108785Z",
+    "filled_at": null,
+    "cancelled_at": "2026-08-20T22:57:01.109550Z",
+    "failed_at": null,
+    "error_message": "Shadow: limit price not touched within provided bars.",
+    "idempotency_key": "AAPL-202608202257",
+    "filled_avg_price": null,
+    "slippage_pct": null
+  }
+]

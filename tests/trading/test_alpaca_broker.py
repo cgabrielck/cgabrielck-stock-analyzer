@@ -25,9 +25,19 @@ def create_mock_alpaca_object(attributes):
 
 class TestAlpacaBroker(unittest.TestCase):
 
-    @patch('backend.trading.alpaca_broker.TradingClient')
-    def setUp(self, MockTradingClient):
-        """Set up a mock Alpaca API for each test."""
+    def setUp(self):
+        """Set up a mock Alpaca API for each test.
+        
+        The broker now uses lazy connection — no network I/O occurs until
+        the first method call that accesses `.api`. Because that connection
+        happens in the test method body (not in setUp), the TradingClient
+        patch must stay active for the whole test, so we start it with a
+        patcher + addCleanup rather than a decorator scoped to setUp only.
+        """
+        patcher = patch('backend.trading.alpaca_broker.TradingClient')
+        MockTradingClient = patcher.start()
+        self.addCleanup(patcher.stop)
+
         mock_account = MagicMock()
         mock_account.trading_blocked = False
         mock_account.cash = '100000'
@@ -38,22 +48,34 @@ class TestAlpacaBroker(unittest.TestCase):
         self.mock_api.get_account.return_value = mock_account
 
         self.broker = AlpacaBroker()
-        self.assertEqual(self.broker.api, self.mock_api)
 
     def test_initialization_success(self):
-        """Test successful initialization with environment variables."""
-        self.assertIsInstance(self.broker.api, MagicMock)
-        self.broker.api.get_account.assert_called_once()
+        """Test successful initialization and lazy connection.
+        
+        Constructor reads config only. Accessing `.api` triggers connection
+        and account verification.
+        """
         self.assertTrue(self.broker.is_paper)
+        # First access to .api triggers lazy connection
+        self.assertIsInstance(self.broker.api, MagicMock)
+        # Account check happened during that first access
+        self.broker._api.get_account.assert_called_once()
 
     @patch('backend.trading.alpaca_broker.TradingClient')
     def test_initialization_no_credentials(self, MockTradingClient):
-        """Test initialization failure when credentials are not set."""
+        """Test lazy credential validation — error on first use, not construction.
+        
+        The broker defers credential checking until the first method that
+        accesses `.api`, so construction succeeds but the first real call fails.
+        """
         if "APCA_API_KEY_ID" in os.environ: del os.environ["APCA_API_KEY_ID"]
         if "APCA_API_SECRET_KEY" in os.environ: del os.environ["APCA_API_SECRET_KEY"]
 
+        broker = AlpacaBroker()  # succeeds — no network I/O yet
+        
+        # First access to .api triggers credential check
         with self.assertRaisesRegex(ValueError, "Alpaca API credentials"):
-            AlpacaBroker()
+            _ = broker.api
 
         os.environ["APCA_API_KEY_ID"] = "test_key"
         os.environ["APCA_API_SECRET_KEY"] = "test_secret"

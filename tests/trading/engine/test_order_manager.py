@@ -1,6 +1,6 @@
 import unittest
 from unittest.mock import MagicMock
-from datetime import datetime
+from datetime import datetime, timezone
 
 from backend.trading.models import Order, OrderSide, OrderType, OrderStatus
 from backend.trading.engine.order_manager import OrderManager, InMemoryOrderStore
@@ -84,7 +84,7 @@ class TestOrderManager(unittest.TestCase):
         # Mock broker returning FILLED state
         broker_order = local_order.model_copy()
         broker_order.status = OrderStatus.FILLED
-        broker_order.filled_at = datetime.utcnow()
+        broker_order.filled_at = datetime.now(timezone.utc)
         self.mock_broker.get_order.return_value = broker_order
 
         # Execute sync
@@ -107,7 +107,7 @@ class TestOrderManager(unittest.TestCase):
         # Mock broker cancellation
         cancelled_broker_order = local_order.model_copy()
         cancelled_broker_order.status = OrderStatus.CANCELLED
-        cancelled_broker_order.cancelled_at = datetime.utcnow()
+        cancelled_broker_order.cancelled_at = datetime.now(timezone.utc)
         self.mock_broker.cancel_order.return_value = cancelled_broker_order
 
         result = self.manager.cancel_active_order("broker_id_cancel")

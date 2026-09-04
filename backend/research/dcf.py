@@ -1,6 +1,6 @@
 import pandas as pd
 from typing import Dict, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 
 class DCFModel:
     """
@@ -27,7 +27,7 @@ class DCFModel:
         self.net_debt = net_debt
         self.base_wacc = wacc
         self.base_tgr = terminal_growth_rate
-        self.timestamp = datetime.utcnow()
+        self.timestamp = datetime.now(timezone.utc)
 
     def calculate_enterprise_value(self, wacc: float, tgr: float, fcf_multiplier: float = 1.0) -> float:
         """
