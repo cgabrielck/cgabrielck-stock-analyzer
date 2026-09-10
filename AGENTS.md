@@ -7,6 +7,8 @@ See [`docs/ARCHITECTURE_DECISION.md`](docs/ARCHITECTURE_DECISION.md) and [`docs/
 
 **What to buy (VPS / broker / paid APIs):** [`docs/PROCUREMENT_GUIDE.md`](docs/PROCUREMENT_GUIDE.md) — Phase 1 Alpaca Paper + Hetzner CPX21 + Telegram; Phase 2 Polygon daily bars; Phase 3 live only after paper gate.
 
+**Local Cursor handoff (plans / todos / reports pack):** [`docs/LOCAL_CURSOR_HANDOFF.md`](docs/LOCAL_CURSOR_HANDOFF.md) — paste into local Agent to continue this work.
+
 ## Quick Wins (1-2 hours total)
 
 | # | Task | File | Status |
