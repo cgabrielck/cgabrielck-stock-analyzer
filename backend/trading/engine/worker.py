@@ -72,13 +72,20 @@ class TradingWorker:
         self.reconciler  = reconciler
         self.strategy: StrategyBase = get_strategy(strategy_id)
         self.risk_engine = RiskEngine(risk_limits or RiskLimits())
-        self.signal_processor = SignalProcessor(broker, self.risk_engine, manager)
         # Mandate gate: declarative authorization envelope loaded from
         # config/mandate.json (permissive default preserves legacy behaviour).
         self.mandate_gate = MandateGate(mandate or load_mandate())
         # Execution mode: "paper" submits to broker, "shadow" simulates fills locally
         self.execution_mode = execution_mode
         self.shadow_engine = shadow_engine
+        # Single entry point: strategy signals → risk → paper/shadow execution.
+        self.signal_processor = SignalProcessor(
+            broker,
+            self.risk_engine,
+            manager,
+            execution_mode=execution_mode,
+            shadow_engine=shadow_engine,
+        )
 
         # Default universe — can be overridden
         if ticker_universe is None:
@@ -186,12 +193,15 @@ class TradingWorker:
         # 0. Kill switch — highest-priority manual override.
         # When engaged, we still run EXITS (must be able to close positions)
         # but block ALL new entries. This is the emergency brake.
+        was_halted = self.is_halted
         self.is_halted = kill_switch.is_halted()
         halt_reason = kill_switch.get_reason() if self.is_halted else None
         audit.log_kill_switch_check(self.is_halted, halt_reason)
         if self.is_halted:
             logger.warning("KILL SWITCH ENGAGED (%s) — new entries blocked, exits still active.",
                            halt_reason)
+            if not was_halted:
+                self._notify_kill_switch(halt_reason or "kill_switch_engaged")
 
         # 1. Fetch price history for the universe (last 250 trading days)
         price_history: Dict[str, pd.DataFrame] = {}
@@ -360,76 +370,79 @@ class TradingWorker:
             if qty <= 0:
                 continue
 
-            # Build signal dict for SignalProcessor
-            signal_dict = {
-                "symbol": ticker,
-                "side": "buy",
-                "quantity": qty,
-                "limit_price": signal.entry_price,
-                "idempotency_key": f"{ticker}-{now.strftime('%Y%m%d%H%M')}",
-            }
-
-            # Inject extra args for RiskEngine 2.0
+            # Inject extra args for RiskEngine 2.0 via SignalProcessor
             account_refresh = self._safe_get_account()
             if account_refresh is None:
                 continue
 
-            from backend.trading.risk.gates import RiskDecision
-            draft = Order(
-                id=signal_dict["idempotency_key"],
-                symbol=ticker,
-                side=OrderSide.BUY,
-                order_type=OrderType.LIMIT,
-                quantity=qty,
-                limit_price=signal.entry_price,
-                idempotency_key=signal_dict["idempotency_key"],
+            use_bracket = (
+                self.execution_mode != "shadow"
+                and signal.stop_loss_price is not None
+                and signal.take_profit_price is not None
             )
-            decision: RiskDecision = self.risk_engine.evaluate_order(
-                draft, account_refresh,
-                vix_level=vix_level,
-                price_history=price_history,
-                cooldown_tickers=cooldown_tickers,
+            signal_dict = {
+                "id": f"{ticker}-{now.strftime('%Y%m%d%H%M')}",
+                "symbol": ticker,
+                "side": "buy",
+                "quantity": qty,
+                "limit_price": signal.entry_price,
+                "order_type": "limit",
+                "stop_loss_price": signal.stop_loss_price,
+                "take_profit_price": signal.take_profit_price,
+                "order_class": "bracket" if use_bracket else "simple",
+                "idempotency_key": f"{ticker}-{now.strftime('%Y%m%d%H%M')}",
+                "strategy_id": signal.strategy_id,
+            }
+
+            next_bars = (
+                self._fetch_next_bar(ticker, signal.entry_price)
+                if self.execution_mode == "shadow"
+                else None
+            )
+            result = self.signal_processor.process_signal(
+                signal_dict,
+                account_summary=account_refresh,
+                risk_extras={
+                    "vix_level": vix_level,
+                    "price_history": price_history,
+                    "cooldown_tickers": cooldown_tickers,
+                },
+                next_bars=next_bars,
             )
 
-            # Audit the risk decision
-            audit.log_risk_decision(ticker, "buy", qty, decision.approved, decision.reason)
-
-            if not decision.approved:
-                logger.info("BLOCKED %s: %s", ticker, decision.reason)
-                summary_rows.append({"ticker": ticker, "action": "BLOCKED", "reason": decision.reason})
+            # Audit the risk / submission outcome
+            if (result.error_message or "").startswith("Risk Gate Rejected"):
+                audit.log_risk_decision(ticker, "buy", qty, False, result.error_message or "")
+                logger.info("BLOCKED %s: %s", ticker, result.error_message)
+                summary_rows.append({
+                    "ticker": ticker, "action": "BLOCKED",
+                    "reason": result.error_message,
+                })
                 continue
 
-            # Record this order against the mandate's daily limit
+            audit.log_risk_decision(ticker, "buy", qty, True, "approved_via_signal_processor")
             self.mandate_gate.record_order()
-
-            # Submit via order manager OR shadow engine
-            if self.execution_mode == "shadow" and self.shadow_engine is not None:
-                # Shadow mode: simulate fill with next-day bar (fetch tomorrow's open)
-                draft.status = OrderStatus.RISK_APPROVED
-                next_bars = self._fetch_next_bar(ticker, signal.entry_price)
-                result = self.shadow_engine.simulate_submission(draft, next_bars=next_bars)
-            else:
-                # Paper/live mode: submit to broker
-                result = self.manager.submit_new_order(draft)
-            
-            # Audit the submission result
             audit.log_order_submission(
                 ticker, "buy", qty, signal.entry_price,
                 result.id, result.status.value,
             )
 
-            if result.status not in (OrderStatus.REJECTED,):
-                self._position_meta[ticker] = {
-                    "stop_loss_price":   signal.stop_loss_price,
-                    "take_profit_price": signal.take_profit_price,
-                    "strategy_id":       signal.strategy_id,
-                }
-                self._trailing_highs[ticker] = signal.entry_price
-                summary_rows.append({"ticker": ticker, "action": "BUY",
-                                      "qty": qty, "price": signal.entry_price,
-                                      "reason": signal.reason})
-            else:
+            if result.status in (OrderStatus.REJECTED,):
                 logger.warning("Order rejected for %s: %s", ticker, result.error_message)
+                continue
+
+            if result.status == OrderStatus.FILLED:
+                self._notify_fill(result, float(result.filled_avg_price or signal.entry_price))
+
+            self._position_meta[ticker] = {
+                "stop_loss_price":   signal.stop_loss_price,
+                "take_profit_price": signal.take_profit_price,
+                "strategy_id":       signal.strategy_id,
+            }
+            self._trailing_highs[ticker] = signal.entry_price
+            summary_rows.append({"ticker": ticker, "action": "BUY",
+                                  "qty": qty, "price": signal.entry_price,
+                                  "reason": signal.reason})
 
         self.last_signal_summary = summary_rows
 
@@ -485,7 +498,15 @@ class TradingWorker:
             return None
 
     def _fetch_ohlcv(self, ticker: str, period: str = "1y") -> Optional[pd.DataFrame]:
-        """Fetch daily OHLCV via yfinance with caching."""
+        """Fetch daily OHLCV — Polygon preferred when configured, else Yahoo."""
+        try:
+            from backend.agents import polygon_equity
+            if polygon_equity.is_configured():
+                poly = polygon_equity.fetch_chart_data_polygon(ticker, period_hint=period)
+                if not poly.get("error") and poly.get("data") is not None and not poly["data"].empty:
+                    return poly["data"]
+        except Exception as exc:
+            logger.debug("Polygon OHLCV fetch failed for %s: %s", ticker, exc)
         try:
             from backend.utils.chart_utils import fetch_chart_data
             result = fetch_chart_data(ticker, "1d", False)
@@ -498,6 +519,36 @@ class TradingWorker:
         except Exception as exc:
             logger.debug("OHLCV fetch failed for %s: %s", ticker, exc)
             return None
+
+    def _notify_fill(self, order: Order, price: float) -> None:
+        """Best-effort Telegram ops notification on fills."""
+        try:
+            from backend.config import get_telegram_settings
+            from backend.trading import ops_notifier
+            settings = get_telegram_settings()
+            ops_notifier.notify_trade_fill(
+                settings,
+                symbol=order.symbol,
+                side=order.side.value,
+                quantity=order.quantity,
+                price=price,
+                mode=self.execution_mode,
+                order_id=order.id,
+            )
+        except Exception as exc:
+            logger.debug("ops fill notify skipped: %s", exc)
+
+    def _notify_kill_switch(self, reason: str) -> None:
+        try:
+            from backend.config import get_telegram_settings
+            from backend.trading import ops_notifier
+            ops_notifier.notify_kill_switch(
+                get_telegram_settings(),
+                reason=reason,
+                triggered_by="worker",
+            )
+        except Exception as exc:
+            logger.debug("ops kill-switch notify skipped: %s", exc)
 
     def _fetch_vix(self) -> Optional[float]:
         """Fetch latest VIX close."""
@@ -598,17 +649,16 @@ def _build_worker(strategy_id: str, ticker_universe: Optional[List[str]],
     load_dotenv()
 
     from backend.trading.alpaca_broker import AlpacaBroker
-    from backend.trading.storage import JSONOrderStore
+    from backend.trading.storage import create_order_store
     from backend.trading.reconciliation.service import ReconciliationService
     from backend.trading.engine.order_manager import OrderManager
     from backend.utils.constants import DATA_DIR
 
     # Shadow mode uses a separate order ledger
     if execution_mode == "shadow":
-        store_path = Path(DATA_DIR) / "shadow_orders.json"
-        store = JSONOrderStore(filepath=str(store_path))
+        store = create_order_store(backend="sqlite", filepath=str(Path(DATA_DIR) / "shadow_orders.sqlite3"))
     else:
-        store = JSONOrderStore()  # default: data/trading_orders.json
+        store = create_order_store()
     
     broker = AlpacaBroker()
     manager = OrderManager(broker=broker, store=store)
@@ -649,8 +699,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="ALPHA//DESK standalone trading worker")
     parser.add_argument("--strategy", default="stable", choices=["stable", "aggressive", "hybrid"],
                         help="Strategy to run (default: stable)")
-    parser.add_argument("--mode", default="paper", choices=["paper", "shadow"],
-                        help="Execution mode: 'paper' submits to broker, 'shadow' simulates fills locally (default: paper)")
+    parser.add_argument("--mode", default="shadow", choices=["paper", "shadow"],
+                        help="Execution mode: 'paper' submits to broker, 'shadow' simulates fills locally (default: shadow)")
     parser.add_argument("--interval", type=int, default=60,
                         help="Polling interval in seconds (default: 60)")
     parser.add_argument("--tickers", nargs="*", default=None,

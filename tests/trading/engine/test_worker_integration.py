@@ -84,13 +84,14 @@ class TestWorkerIntegration(unittest.TestCase):
                 )
 
             # Isolate order store to tempdir so orders don't leak between runs
-            from backend.trading.storage import JSONOrderStore
-            store = worker.store
-            assert isinstance(store, JSONOrderStore), "Expected JSONOrderStore for attribute access"
-            store.filepath = str(store_path)
-            store._orders_by_id.clear()
-            store._orders_by_idem_key.clear()
-            store._load()
+            from backend.trading.storage import SQLiteOrderStore, JSONOrderStore, create_order_store
+            store = create_order_store(backend="sqlite", filepath=str(Path(tmpdir) / "orders.sqlite3"))
+            worker.store = store
+            worker.manager.store = store
+            worker.signal_processor.order_manager.store = store
+            if worker.shadow_engine is not None and worker.shadow_engine.order_manager is not None:
+                worker.shadow_engine.order_manager.store = store
+            self.assertTrue(isinstance(store, (SQLiteOrderStore, JSONOrderStore)))
 
             # Mock regime detection (neutral)
             def _fake_regime():
@@ -162,13 +163,13 @@ class TestWorkerIntegration(unittest.TestCase):
                 )
 
             # Isolate order store to tempdir
-            from backend.trading.storage import JSONOrderStore
-            store = worker.store
-            assert isinstance(store, JSONOrderStore)
-            store.filepath = str(store_path)
-            store._orders_by_id.clear()
-            store._orders_by_idem_key.clear()
-            store._load()
+            from backend.trading.storage import create_order_store
+            store = create_order_store(backend="sqlite", filepath=str(Path(tmpdir) / "orders.sqlite3"))
+            worker.store = store
+            worker.manager.store = store
+            worker.signal_processor.order_manager.store = store
+            if worker.shadow_engine is not None and worker.shadow_engine.order_manager is not None:
+                worker.shadow_engine.order_manager.store = store
 
             # Replace broker with a strict mock that raises on any call
             strict_broker = MagicMock()

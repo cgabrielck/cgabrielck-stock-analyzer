@@ -29,6 +29,7 @@ Environment=PYTHONUNBUFFERED=1
 # Heartbeat file is polled by WatchdogSec-style external monitors.
 ExecStart=/opt/stock-analyzer/.venv312/bin/python -m backend.trading.engine.worker \
     --strategy stable \
+    --mode shadow \
     --interval 60 \
     --heartbeat-file /run/alphadesk/heartbeat.json
 

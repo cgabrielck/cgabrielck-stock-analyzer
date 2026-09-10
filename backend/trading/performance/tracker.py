@@ -83,6 +83,8 @@ def load_orders(filepath: Optional[Path] = None) -> List[Dict]:
     try:
         with open(filepath, "r") as f:
             data = json.load(f)
+        if isinstance(data, list):
+            return data
         return data.get("orders", [])
     except Exception as exc:
         logger.error("Failed to load orders from %s: %s", filepath, exc)
@@ -317,3 +319,135 @@ def format_report(report: PerformanceReport) -> str:
         "=" * 60,
     ]
     return "\n".join(lines)
+
+
+@dataclass
+class SealCriteria:
+    """Pass/fail thresholds for Stage-2 shadow evidence."""
+
+    min_trading_days: int = 20
+    min_trades: int = 5
+    min_sharpe: float = 1.0
+    max_drawdown_pct: float = 20.0
+    require_positive_alpha: bool = False
+    min_calendar_months: int = 1
+
+
+@dataclass
+class SealDecision:
+    passed: bool
+    reasons: List[str] = field(default_factory=list)
+    metrics: Dict[str, Optional[float]] = field(default_factory=dict)
+    criteria: Optional[SealCriteria] = None
+
+
+def seal_stage2(
+    report: PerformanceReport,
+    criteria: Optional[SealCriteria] = None,
+) -> SealDecision:
+    """
+    Evaluate whether shadow/paper evidence meets Stage-2 seal gates.
+
+    A failing seal must block promotion to Stage-3 live capital.
+    """
+    crit = criteria or SealCriteria()
+    reasons: List[str] = []
+
+    months = 0.0
+    if report.start_date and report.end_date:
+        months = max(
+            0.0,
+            (report.end_date - report.start_date).days / 30.4375,
+        )
+
+    sharpe = report.sharpe_ratio
+    metrics = {
+        "trading_days": float(report.trading_days),
+        "num_trades": float(report.num_trades),
+        "sharpe_ratio": sharpe,
+        "max_drawdown_pct": report.max_drawdown_pct,
+        "alpha_pct": report.alpha_pct,
+        "calendar_months": round(months, 2),
+        "spy_return_pct": report.spy_return_pct,
+        "total_return_pct": report.total_return_pct,
+    }
+
+    if report.trading_days < crit.min_trading_days:
+        reasons.append(
+            f"trading_days {report.trading_days} < min {crit.min_trading_days}"
+        )
+    if report.num_trades < crit.min_trades:
+        reasons.append(f"num_trades {report.num_trades} < min {crit.min_trades}")
+    if months < crit.min_calendar_months:
+        reasons.append(
+            f"calendar_months {months:.2f} < min {crit.min_calendar_months}"
+        )
+    if sharpe is None:
+        reasons.append("sharpe_ratio unavailable")
+    elif sharpe < crit.min_sharpe:
+        reasons.append(f"sharpe {sharpe:.2f} < min {crit.min_sharpe}")
+    if report.max_drawdown_pct > crit.max_drawdown_pct:
+        reasons.append(
+            f"max_drawdown {report.max_drawdown_pct:.2f}% > max {crit.max_drawdown_pct}%"
+        )
+    if crit.require_positive_alpha and report.alpha_pct <= 0:
+        reasons.append(f"alpha {report.alpha_pct:.2f}% not positive vs SPY")
+
+    return SealDecision(
+        passed=not reasons,
+        reasons=reasons,
+        metrics=metrics,
+        criteria=crit,
+    )
+
+
+def persist_performance_snapshot(
+    report: PerformanceReport,
+    seal: SealDecision,
+    *,
+    path: Optional[Path] = None,
+    mode: str = "shadow",
+) -> Path:
+    """Write performance_shadow.json (or paper) seal artifact under DATA_DIR."""
+    out = path or (Path(DATA_DIR) / f"performance_{mode}.json")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "mode": mode,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "seal_passed": seal.passed,
+        "seal_reasons": seal.reasons,
+        "metrics": seal.metrics,
+        "criteria": {
+            "min_trading_days": seal.criteria.min_trading_days if seal.criteria else None,
+            "min_trades": seal.criteria.min_trades if seal.criteria else None,
+            "min_sharpe": seal.criteria.min_sharpe if seal.criteria else None,
+            "max_drawdown_pct": seal.criteria.max_drawdown_pct if seal.criteria else None,
+            "require_positive_alpha": seal.criteria.require_positive_alpha if seal.criteria else None,
+            "min_calendar_months": seal.criteria.min_calendar_months if seal.criteria else None,
+        },
+        "period": {
+            "start": report.start_date.isoformat() if report.start_date else None,
+            "end": report.end_date.isoformat() if report.end_date else None,
+            "trading_days": report.trading_days,
+        },
+        "pnl": {
+            "initial_capital": report.initial_capital,
+            "final_equity": report.final_equity,
+            "total_return_pct": report.total_return_pct,
+            "annualized_return_pct": report.annualized_return_pct,
+        },
+        "benchmark": {
+            "spy_return_pct": report.spy_return_pct,
+            "alpha_pct": report.alpha_pct,
+            "beta": report.beta,
+        },
+        "disclaimer": (
+            "Shadow/paper metrics are not live capital results. "
+            "Survivorship and Yahoo fallback limitations still apply unless "
+            "data/historical_universe.json and paid bars were used."
+        ),
+    }
+    tmp = Path(str(out) + ".tmp")
+    tmp.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    tmp.replace(out)
+    return out

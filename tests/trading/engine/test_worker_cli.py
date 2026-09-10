@@ -48,15 +48,28 @@ class TestWorkerCLI(unittest.TestCase):
     @patch.dict(os.environ, {"APCA_PAPER": "false"}, clear=False)
     def test_live_account_refuses_without_allow_live(self):
         with patch.object(worker_module, "_build_worker") as build:
-            code = worker_module.main(["--once"])
+            code = worker_module.main(["--once", "--mode", "paper"])
             self.assertEqual(code, 2)
             build.assert_not_called()
 
     @patch.dict(os.environ, {"APCA_PAPER": "false"}, clear=False)
     def test_live_account_allowed_with_allow_live(self):
         with patch.object(worker_module, "_build_worker", return_value=_fake_worker()):
-            code = worker_module.main(["--once", "--allow-live"])
+            code = worker_module.main(["--once", "--mode", "paper", "--allow-live"])
             self.assertEqual(code, 0)
+
+    @patch.dict(os.environ, {"APCA_PAPER": "true"}, clear=False)
+    def test_default_mode_is_shadow(self):
+        with patch.object(worker_module, "_build_worker", return_value=_fake_worker()) as build:
+            code = worker_module.main(["--once"])
+            self.assertEqual(code, 0)
+            build.assert_called_once()
+            _, kwargs = build.call_args
+            # Called as _build_worker(strategy, tickers, execution_mode=...)
+            if "execution_mode" in kwargs:
+                self.assertEqual(kwargs["execution_mode"], "shadow")
+            else:
+                self.assertEqual(build.call_args[0][2], "shadow")
 
     @patch.dict(os.environ, {"APCA_PAPER": "true"}, clear=False)
     def test_once_mode_runs_single_cycle(self):

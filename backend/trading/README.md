@@ -19,4 +19,8 @@ This module contains the core execution logic for the auto-trading upgrade. It i
 
 ## Status
 
-Currently at **Stage 2: Shadow Trading**. The infrastructure for paper trading is complete, but automated signals are currently routed through the `ShadowTradingEngine` to validate behavior before live paper execution.
+**Stage 2 tooling complete.** Strategy signals flow through `SignalProcessor` into
+`ShadowTradingEngine` (default CLI `--mode shadow`) or Alpaca paper. Durable
+ledgers default to SQLite via `create_order_store()`. Accumulate multi-month
+shadow evidence and seal with `scripts/run_evaluation.py --seal` before Stage 3
+(`docs/PAPER_VALIDATION_RUNBOOK.md`).

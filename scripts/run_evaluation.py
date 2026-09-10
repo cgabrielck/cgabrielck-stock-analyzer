@@ -31,6 +31,9 @@ from backend.trading.performance.tracker import (
     load_orders,
     compute_equity_curve,
     INITIAL_CAPITAL,
+    seal_stage2,
+    SealCriteria,
+    persist_performance_snapshot,
 )
 from backend.agents.risk_analyzer import calculate_risk_metrics
 
@@ -189,6 +192,16 @@ def main():
                         help="CSV output path for rolling window results (default: stdout)")
     parser.add_argument("--capital", type=float, default=INITIAL_CAPITAL,
                         help=f"Initial capital (default: {INITIAL_CAPITAL})")
+    parser.add_argument("--seal", action="store_true",
+                        help="Write Stage-2 seal decision to performance_shadow.json")
+    parser.add_argument("--min-sharpe", type=float, default=1.0,
+                        help="Seal gate: minimum Sharpe (default: 1.0)")
+    parser.add_argument("--max-dd", type=float, default=20.0,
+                        help="Seal gate: maximum drawdown pct (default: 20)")
+    parser.add_argument("--min-months", type=int, default=1,
+                        help="Seal gate: minimum calendar months of evidence (default: 1)")
+    parser.add_argument("--require-alpha", action="store_true",
+                        help="Seal gate: require positive alpha vs SPY")
     args = parser.parse_args()
     
     orders_path = Path(args.orders)
@@ -202,6 +215,23 @@ def main():
     logger.info("=" * 60)
     report = evaluate_performance(orders_path, initial_capital=args.capital)
     print(format_report(report))
+
+    seal = seal_stage2(
+        report,
+        SealCriteria(
+            min_sharpe=args.min_sharpe,
+            max_drawdown_pct=args.max_dd,
+            min_calendar_months=args.min_months,
+            require_positive_alpha=args.require_alpha,
+        ),
+    )
+    print("\nSTAGE-2 SEAL:", "PASS" if seal.passed else "FAIL")
+    if seal.reasons:
+        for reason in seal.reasons:
+            print(f"  - {reason}")
+    if args.seal:
+        out = persist_performance_snapshot(report, seal, mode="shadow")
+        logger.info("Wrote seal artifact: %s", out)
     
     # Rolling window analysis
     logger.info("\n" + "=" * 60)
@@ -213,7 +243,7 @@ def main():
     
     if not filled:
         logger.warning("No filled orders found.")
-        return 1
+        return 1 if not seal.passed else 0
     
     rolling_df = rolling_window_analysis(filled, window_months=args.months, initial_capital=args.capital)
     
@@ -241,7 +271,7 @@ def main():
             r = ci["annual_return_pct"]
             print(f"Annualized Return:  {r['mean']:.2f}%  [{r['lower']:.2f}%, {r['upper']:.2f}%]")
     
-    return 0
+    return 0 if seal.passed else 3
 
 
 if __name__ == "__main__":
