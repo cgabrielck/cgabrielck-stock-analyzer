@@ -1,5 +1,10 @@
 # Stock Analyzer — Enhancement Plan
 
+## Architecture Decision (ADR-001)
+
+**Keep the Streamlit research UI; upgrade execution and paid/PIT data — do not rebuild from scratch.**  
+See [`docs/ARCHITECTURE_DECISION.md`](docs/ARCHITECTURE_DECISION.md) and [`docs/AUTO_TRADING_ROADMAP.md`](docs/AUTO_TRADING_ROADMAP.md).
+
 ## Quick Wins (1-2 hours total)
 
 | # | Task | File | Status |

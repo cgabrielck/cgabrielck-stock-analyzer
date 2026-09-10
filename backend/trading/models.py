@@ -38,6 +38,10 @@ class Order(AuditableModel):
     quantity: float = Field(..., description="The number of shares to trade")
     limit_price: Optional[float] = Field(None, description="The limit price for a limit order")
     stop_price: Optional[float] = Field(None, description="The stop price for a stop order")
+    # Broker-native protective legs (Alpaca bracket / OCO style).
+    take_profit_price: Optional[float] = Field(None, description="Take-profit limit price for bracket orders")
+    stop_loss_price: Optional[float] = Field(None, description="Stop-loss trigger for bracket orders")
+    order_class: str = Field("simple", description="simple | bracket")
     status: OrderStatus = Field(OrderStatus.DRAFT, description="The current status of the order")
     submitted_at: Optional[datetime] = Field(None, description="Timestamp when the order was submitted to the broker")
     filled_at: Optional[datetime] = Field(None, description="Timestamp when the order was fully filled")

@@ -2,12 +2,14 @@
 
 This runbook deploys the standalone auto-trading worker
 (`python -m backend.trading.engine.worker`) as a systemd service on a Linux VPS.
-It targets **paper trading** (`APCA_PAPER=true`). Do not switch to live until the
-30-day paper-trading gate in `docs/AUTO_TRADING_ROADMAP.md` is met.
+Default CLI mode is **shadow**; set `--mode paper` with `APCA_PAPER=true` for the
+paper validation window. Do not switch to live until
+`docs/PAPER_VALIDATION_RUNBOOK.md` is completed.
 
 Related files:
 - `deploy/alphadesk-worker.service` — the systemd unit.
-- `.env.example` — required environment variables.
+- `.env.example` — required environment variables (Polygon, `ORDER_STORE_BACKEND`).
+- `docs/ARCHITECTURE_DECISION.md` — keep research UI; upgrade execution/data.
 
 ---
 

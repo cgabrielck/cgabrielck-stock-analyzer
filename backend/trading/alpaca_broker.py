@@ -5,12 +5,14 @@ from alpaca.common.exceptions import APIError
 from alpaca.trading.client import TradingClient
 from alpaca.trading.enums import OrderSide as AlpacaOrderSide
 from alpaca.trading.enums import OrderType as AlpacaOrderType
-from alpaca.trading.enums import TimeInForce
+from alpaca.trading.enums import TimeInForce, OrderClass
 from alpaca.trading.requests import (
     LimitOrderRequest,
     MarketOrderRequest,
     StopLimitOrderRequest,
     StopOrderRequest,
+    TakeProfitRequest,
+    StopLossRequest,
 )
 
 from backend.trading.broker import BrokerAdapter
@@ -106,6 +108,24 @@ class AlpacaBroker(BrokerAdapter):
         status_value = getattr(alpaca_status, "value", alpaca_status)
         return _STATUS_MAP.get(status_value, OrderStatus.DRAFT)  # Default/fallback
 
+    def _bracket_kwargs(self, order: Order) -> dict:
+        """Attach Alpaca bracket legs when stop/take-profit are present."""
+        wants_bracket = (
+            str(getattr(order, "order_class", "simple")).lower() == "bracket"
+            and order.take_profit_price is not None
+            and (order.stop_loss_price is not None or order.stop_price is not None)
+        )
+        if not wants_bracket:
+            return {}
+        stop = order.stop_loss_price if order.stop_loss_price is not None else order.stop_price
+        return {
+            "order_class": OrderClass.BRACKET,
+            "take_profit": TakeProfitRequest(limit_price=float(order.take_profit_price)),
+            "stop_loss": StopLossRequest(stop_price=float(stop)),
+            # Alpaca equity brackets typically require DAY TIF on the parent.
+            "time_in_force": TimeInForce.DAY,
+        }
+
     def _build_order_request(self, order: Order):
         """Builds the alpaca-py order-request object matching the order type."""
         side = AlpacaOrderSide(order.side.value)
@@ -116,6 +136,7 @@ class AlpacaBroker(BrokerAdapter):
             "time_in_force": TimeInForce.GTC,
             "client_order_id": order.idempotency_key,
         }
+        common.update(self._bracket_kwargs(order))
         if order.order_type == OrderType.MARKET:
             return MarketOrderRequest(**common)
         if order.order_type == OrderType.LIMIT:
