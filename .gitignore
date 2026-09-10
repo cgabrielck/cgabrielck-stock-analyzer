@@ -18,4 +18,6 @@ backend/data/audit/
 backend/trading/safety/KILL_SWITCH
 data/portfolio_state.json
 data/trade_journal.json
+backend/data/*.sqlite3
+backend/data/performance_*.json
 *.log
