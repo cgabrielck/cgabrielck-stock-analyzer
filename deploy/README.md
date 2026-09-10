@@ -10,12 +10,14 @@ Related files:
 - `deploy/alphadesk-worker.service` — the systemd unit.
 - `.env.example` — required environment variables (Polygon, `ORDER_STORE_BACKEND`).
 - `docs/ARCHITECTURE_DECISION.md` — keep research UI; upgrade execution/data.
+- `docs/PROCUREMENT_GUIDE.md` — **what to buy**: VPS (Hetzner CPX21), Alpaca Paper, Telegram, then Polygon; what *not* to buy yet.
 
 ---
 
 ## 1. Provision the VPS
 
-Recommended: **Hetzner CPX21** (3 vCPU / 4 GB / 80 GB NVMe, ≈ €4.51/mo) — see the
+Recommended: **Hetzner CPX21** (3 vCPU / 4 GB / 80 GB NVMe, ≈ €4.51–8/mo) — see
+[`docs/PROCUREMENT_GUIDE.md`](../docs/PROCUREMENT_GUIDE.md) Phase 1 and the
 VPS comparison in `UPGRADE_LOG.md`. Ubuntu 24.04 LTS image.
 
 ```bash

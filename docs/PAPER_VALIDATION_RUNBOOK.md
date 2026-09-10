@@ -5,6 +5,10 @@ Last updated: 2026-09-10
 This runbook is the **human-time** gate between Stage 2 shadow seals and any
 small-capital live trading. Code cannot skip calendar time.
 
+**Paid services:** only open Alpaca Live / realtime SIP / options data after this
+runbook is signed. Until then stay on Phase 1–2 purchases in
+[`PROCUREMENT_GUIDE.md`](PROCUREMENT_GUIDE.md).
+
 ## Preconditions
 
 1. ADR-001 accepted (`docs/ARCHITECTURE_DECISION.md`) — keep research UI; upgrade execution/data.

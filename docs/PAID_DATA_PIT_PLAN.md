@@ -2,6 +2,10 @@
 
 Last updated: 2026-09-10
 
+**Procurement (what to buy and when):** see [`PROCUREMENT_GUIDE.md`](PROCUREMENT_GUIDE.md).
+Phase 2 buys Polygon/Massive **stocks** daily bars (non-Advanced is enough for
+day-bar strategies); do not start with dual Advanced SIP+OPRA.
+
 ## Goal
 
 Replace Yahoo-only survivorship-biased history with:
