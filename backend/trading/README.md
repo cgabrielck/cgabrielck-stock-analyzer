@@ -24,3 +24,6 @@ This module contains the core execution logic for the auto-trading upgrade. It i
 ledgers default to SQLite via `create_order_store()`. Accumulate multi-month
 shadow evidence and seal with `scripts/run_evaluation.py --seal` before Stage 3
 (`docs/PAPER_VALIDATION_RUNBOOK.md`).
+
+**What to buy:** `docs/PROCUREMENT_GUIDE.md` (Alpaca Paper + Hetzner + Telegram,
+then Polygon bars; live/SIP only after paper gate).
