@@ -25,6 +25,7 @@ The system must not progress to live execution merely because a strategy has att
 - The initial execution target should be **US equities/ETFs in paper trading (Alpaca integrated)**.
 - LLMs may summarize evidence but must never bypass deterministic risk gates.
 - **Do not rebuild the research app from scratch** — see `docs/ARCHITECTURE_DECISION.md` (ADR-001).
+- **Procurement phases** (Alpaca Paper → Hetzner VPS → Polygon bars → live): `docs/PROCUREMENT_GUIDE.md`.
 
 ## Target Architecture
 

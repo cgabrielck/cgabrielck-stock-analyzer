@@ -5,6 +5,8 @@
 **Keep the Streamlit research UI; upgrade execution and paid/PIT data — do not rebuild from scratch.**  
 See [`docs/ARCHITECTURE_DECISION.md`](docs/ARCHITECTURE_DECISION.md) and [`docs/AUTO_TRADING_ROADMAP.md`](docs/AUTO_TRADING_ROADMAP.md).
 
+**What to buy (VPS / broker / paid APIs):** [`docs/PROCUREMENT_GUIDE.md`](docs/PROCUREMENT_GUIDE.md) — Phase 1 Alpaca Paper + Hetzner CPX21 + Telegram; Phase 2 Polygon daily bars; Phase 3 live only after paper gate.
+
 ## Quick Wins (1-2 hours total)
 
 | # | Task | File | Status |
