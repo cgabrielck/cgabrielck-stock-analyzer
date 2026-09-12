@@ -560,7 +560,7 @@ function autoBanner(){
 }
 function bindBanner(){
   const s=$("#banStart"), k=$("#banStop"), a=$("#banAi"), sc=$("#banScan");
-  if(s) s.onclick=async()=>{ try{ worker=await api("/api/worker/start",{method:"POST",body:JSON.stringify({strategy:"stable",interval:60})}); applyChrome(); render(); }catch(e){ alert(e.message);} };
+  if(s) s.onclick=async()=>{ try{ const cfg=await api("/api/ai-mode"); worker=await api("/api/worker/start",{method:"POST",body:JSON.stringify({strategy:cfg.strategy||"adaptive",interval:60})}); applyChrome(); render(); }catch(e){ alert(e.message);} };
   if(k) k.onclick=async()=>{ try{ worker=await api("/api/worker/stop",{method:"POST",body:"{}"}); applyChrome(); render(); }catch(e){ alert(e.message);} };
   if(a) a.onclick=()=>navTo("aimode");
   if(sc) sc.onclick=()=>navTo("scan");
@@ -1135,11 +1135,14 @@ async function aimode(){
   const cfg = await api("/api/ai-mode");
   await loadWorker();
   const sigs = (worker?.last_signals||[]).slice(-6);
+  const modes = ["adaptive","trend","breakout","research_list"];
+  const alias = {hybrid:"adaptive", aggressive:"breakout", stable:"adaptive", reversion:"adaptive"};
+  const active = alias[cfg.strategy] || cfg.strategy || "breakout";
   root.innerHTML = `${autoBanner()}<div class="layout"><div class="card"><h3>${t("page.aimode")}</h3>
     <p class="muted">${t("aimode.lead")}</p>
-    <div class="row" id="strats">${["stable","aggressive","hybrid","research_list"].map(s=>`<button class="tab ${cfg.strategy===s?"on":""}" data-s="${s}">${s}</button>`).join("")}</div>
+    <div class="row" id="strats">${modes.map(s=>`<button class="tab ${active===s?"on":""}" data-s="${s}">${s}</button>`).join("")}</div>
     <label class="field">LLM influence % <input id="llm" type="range" min="0" max="40" value="${cfg.llm_influence}" /> <span id="llmv">${cfg.llm_influence}%</span></label>
-    <label class="field">Entry threshold <input id="th" type="number" value="${cfg.entry_threshold}" /></label>
+    <label class="field">Entry threshold (research_list fund) <input id="th" type="number" value="${cfg.entry_threshold}" /></label>
     <label class="field">Max positions <input id="mp" type="number" value="${cfg.max_positions}" /></label>
     <label class="field">Risk <select id="rt"><option>low</option><option>medium</option><option>high</option></select></label>
     <div class="row" style="margin-top:12px">
@@ -1165,7 +1168,7 @@ async function aimode(){
     </div></div>`;
   bindBanner();
   $("#rt").value = cfg.risk_tolerance||"medium";
-  let strategy=cfg.strategy;
+  let strategy=active;
   root.querySelectorAll("#strats .tab").forEach(b=>b.onclick=()=>{strategy=b.dataset.s; root.querySelectorAll("#strats .tab").forEach(x=>x.classList.toggle("on",x===b));});
   $("#llm").oninput=()=>$("#llmv").textContent=$("#llm").value+"%";
   $("#save").onclick=async()=>{
@@ -1178,11 +1181,33 @@ async function aimode(){
 }
 
 async function strategies(){
-  const p = await api("/api/performance");
-  root.innerHTML = `<div class="card"><h3>${t("page.strategies")}</h3><p class="muted">Stable strategy backtest snapshot</p>
-    <div class="grid3"><div class="card"><div class="lbl">Return</div><div class="val">${p.total_return_pct??"—"}%</div></div>
-    <div class="card"><div class="lbl">Sharpe</div><div class="val">${p.sharpe_ratio??"—"}</div></div>
-    <div class="card"><div class="lbl">Trades</div><div class="val">${p.num_trades??"—"}</div></div></div></div>`;
+  let rows=[], disclaimer="";
+  try {
+    const b = await api("/api/strategy-bakeoff");
+    rows = b.rows || [];
+    disclaimer = b.disclaimer || "";
+  } catch {
+    const p = await api("/api/performance");
+    rows = [{
+      strategy: "paper snapshot",
+      sizing: "—",
+      return_pct: p.total_return_pct,
+      spy_pct: p.spy_return_pct,
+      alpha_net: p.alpha_net_of_costs_pct,
+      trades: p.num_trades,
+      sharpe: p.sharpe_ratio,
+    }];
+  }
+  root.innerHTML = `<div class="card"><h3>${t("page.strategies")}</h3>
+    <p class="muted">Mode bakeoff vs SPY (risk/fixed sizing).</p>
+    ${disclaimer?`<p class="muted" style="color:#e8b86d">${esc(disclaimer)}</p>`:""}
+    <table><thead><tr><th>Mode</th><th>Sizing</th><th>Return</th><th>SPY</th><th>Alpha net</th><th>Cash%</th><th>Trades</th><th>Sharpe</th><th>MaxDD</th></tr></thead>
+    <tbody>${rows.map(r=>`<tr>
+      <td>${esc(r.strategy||"—")}</td><td>${esc(r.sizing||"—")}</td>
+      <td>${r.return_pct??"—"}%</td><td>${r.spy_pct??"—"}%</td><td>${r.alpha_net??"—"}%</td>
+      <td>${r.avg_cash_pct??"—"}</td><td>${r.trades??"—"}</td><td>${r.sharpe??"—"}</td><td>${r.max_dd??"—"}%</td>
+    </tr>`).join("")||`<tr><td colspan="9" class="muted">Run scripts/run_strategy_bakeoff.py</td></tr>`}</tbody></table>
+  </div>`;
 }
 
 async function calendar(){

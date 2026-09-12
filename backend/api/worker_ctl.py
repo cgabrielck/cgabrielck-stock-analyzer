@@ -244,7 +244,7 @@ def status(position_count: int = 0, halted: bool = False) -> Dict[str, Any]:
     return payload
 
 
-def start(strategy: str = "stable", interval: int = 60) -> Dict[str, Any]:
+def start(strategy: str = "breakout", interval: int = 60) -> Dict[str, Any]:
     if not _is_paper():
         raise RuntimeError("Live trading is blocked. Keep APCA_PAPER=true.")
     if strategy not in KNOWN_STRATEGIES:

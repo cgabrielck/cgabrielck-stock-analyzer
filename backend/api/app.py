@@ -37,7 +37,7 @@ WATCHLIST_PATH = Path(DATA_DIR) / "watchlist.json"
 JOURNAL_PATH = Path(DATA_DIR) / "trade_journal.json"
 
 DEFAULT_AI_MODE = {
-    "strategy": "stable",
+    "strategy": "breakout",
     "llm_influence": 20,
     "entry_threshold": 70,
     "max_positions": 10,
@@ -45,6 +45,18 @@ DEFAULT_AI_MODE = {
     "worker_enabled": False,
     "ignore_market_hours": os.getenv("IGNORE_MARKET_HOURS", "false").lower() in ("1", "true", "yes"),
 }
+
+_ALLOWED_STRATEGIES = (
+    "adaptive",
+    "trend",
+    "breakout",
+    "research_list",
+    # legacy aliases
+    "hybrid",
+    "aggressive",
+    "stable",
+    "reversion",
+)
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
@@ -107,7 +119,7 @@ class OrderIn(BaseModel):
 
 
 class AiModeIn(BaseModel):
-    strategy: str = "stable"
+    strategy: str = "breakout"
     llm_influence: float = 20
     entry_threshold: float = 70
     max_positions: int = 10
@@ -127,7 +139,7 @@ class JournalIn(BaseModel):
 
 
 class WorkerStartIn(BaseModel):
-    strategy: str = "stable"
+    strategy: str = "breakout"
     interval: int = 60
 
 
@@ -297,10 +309,19 @@ def get_ai_mode() -> Dict[str, Any]:
 
 @app.put("/api/ai-mode")
 def put_ai_mode(body: AiModeIn) -> Dict[str, Any]:
-    if body.strategy not in ("stable", "aggressive", "hybrid", "research_list"):
+    if body.strategy not in _ALLOWED_STRATEGIES:
         raise HTTPException(status_code=400, detail="Unknown strategy")
     payload = body.model_dump()
     payload["llm_influence"] = max(0, min(40, float(body.llm_influence)))
+    payload["max_positions"] = max(1, min(25, int(body.max_positions)))
+    # entry_threshold only gates research_list fund floor (desk knob)
+    if payload.get("strategy") == "research_list":
+        try:
+            from backend.trading.strategies.registry import get_strategy
+
+            get_strategy("research_list").MIN_FUND_SCORE = float(payload.get("entry_threshold") or 65)
+        except Exception:
+            pass
     _write_json(AI_MODE_PATH, payload)
     return get_ai_mode()
 
@@ -349,7 +370,7 @@ def worker_start(body: Optional[WorkerStartIn] = None) -> Dict[str, Any]:
     _require_paper()
     body = body or WorkerStartIn()
     cfg = {**DEFAULT_AI_MODE, **_read_json(AI_MODE_PATH, {})}
-    strategy = body.strategy or cfg.get("strategy") or "stable"
+    strategy = body.strategy or cfg.get("strategy") or "breakout"
     try:
         result = worker_ctl.start(strategy=strategy, interval=body.interval)
     except ValueError as exc:
@@ -733,6 +754,27 @@ def performance(refresh: bool = False) -> Dict[str, Any]:
             "total_return_pct": summary.get("total_return_pct"),
             "num_trades": summary.get("num_trades"),
         },
+    }
+
+
+@app.get("/api/strategy-bakeoff")
+def strategy_bakeoff() -> Dict[str, Any]:
+    """Desk Strategies page: rows from scripts/run_strategy_bakeoff.py output."""
+    path = Path(DATA_DIR) / "strategy_bakeoff_summary.json"
+    raw = _read_json(path, [])
+    if isinstance(raw, dict):
+        rows = raw.get("rows") or []
+        disclaimer = raw.get("disclaimer")
+    elif isinstance(raw, list):
+        rows = raw
+        disclaimer = None
+    else:
+        rows, disclaimer = [], None
+    return {
+        "available": bool(rows),
+        "rows": rows,
+        "disclaimer": disclaimer,
+        "path": str(path.name),
     }
 
 

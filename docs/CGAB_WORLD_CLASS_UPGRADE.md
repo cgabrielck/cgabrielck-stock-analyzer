@@ -265,5 +265,5 @@ This is the best first move. It does not require FinBERT or a debate UI.
 
 ## Coding wait-state
 
-**Landed:** ADR-002 docs; Slice A paper-truth; session-timed auto Scan + keep-real-scores; **thin Slice B evidence** (desk provenance chips, paper vs SPY net of costs, post-close Telegram digest).
+**Landed:** ADR-002 docs; Slice A paper-truth; session-timed auto Scan + keep-real-scores; **thin Slice B evidence** (desk provenance chips, paper vs SPY net of costs, post-close Telegram digest); **trading-AI redesign** (Stage-2 `trend`, regime `adaptive`, Connors `stable`/`reversion`, breakout+RS, risk-pct sizing, bakeoff vs SPY).
 **Not approved next:** full Slice B committee / FinBERT; Slice C IC/IR factory.

@@ -72,7 +72,7 @@ class TradingWorker:
         store: OrderStore,
         manager: OrderManager,
         reconciler: ReconciliationService,
-        strategy_id: str = "stable",
+        strategy_id: str = "breakout",
         risk_limits: Optional[RiskLimits] = None,
         ticker_universe: Optional[List[str]] = None,
         mandate: Optional[TradingMandate] = None,
@@ -260,6 +260,29 @@ class TradingWorker:
             self.last_skip_counts = skip_counts
             self.last_signal_summary = [{"action": "NO_PRICE", "tried": len(to_fetch), "cap": cap}]
             return
+
+        # Inject SPY for Stage-2 RS / adaptive regime (strategies that support it)
+        try:
+            spy_df = self._fetch_ohlcv("SPY", period="2y")
+            if spy_df is not None and len(spy_df) > 210 and hasattr(self.strategy, "set_spy_close"):
+                self.strategy.set_spy_close(spy_df["Close"])
+        except Exception as exc:
+            logger.debug("SPY inject skipped: %s", exc)
+
+        # Apply desk max_positions from ai_mode.json into RiskEngine
+        try:
+            from pathlib import Path
+            import json as _json
+            from backend.utils.constants import DATA_DIR
+            cfg_path = Path(DATA_DIR) / "ai_mode.json"
+            if cfg_path.exists():
+                cfg = _json.loads(cfg_path.read_text(encoding="utf-8"))
+                mp = int(cfg.get("max_positions") or self.risk_engine.limits.max_open_positions)
+                self.risk_engine.limits.max_open_positions = max(1, min(25, mp))
+                if cfg.get("strategy") == "research_list" and hasattr(self.strategy, "MIN_FUND_SCORE"):
+                    self.strategy.MIN_FUND_SCORE = float(cfg.get("entry_threshold") or 65)
+        except Exception as exc:
+            logger.debug("ai_mode limits skipped: %s", exc)
 
         # 2. Fetch VIX for dampening
         vix_level = self._fetch_vix()

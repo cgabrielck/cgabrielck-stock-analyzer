@@ -6,10 +6,15 @@ from typing import Any, Dict, List, Optional, Tuple
 import pandas as pd
 
 from backend.trading.strategies.base import ExitSignal, Signal, StrategyBase
+from backend.trading.strategies.stage2 import add_trend_template_columns, stage2_ok
 
 
 class ResearchListStrategy(StrategyBase):
-    """Risk-gated buys from a *fresh* Scan top-N. Stale scan → no entries."""
+    """Risk-gated buys from a *fresh* Scan top-N. Stale scan → no entries.
+
+    Optional Stage-2 timing gate (REQUIRE_STAGE2 truthy by default) blocks
+    auto-buys of high-score names that are not in a Minervini uptrend.
+    """
 
     strategy_id = "research_list"
     display_name = "掃描名單 Research list (Scan top-N)"
@@ -23,6 +28,7 @@ class ResearchListStrategy(StrategyBase):
     MIN_FUND_SCORE = 65.0
     STOP_LOSS_PCT = 0.06
     TAKE_PROFIT_PCT = 0.10
+    REQUIRE_STAGE2 = 1.0
 
     def __init__(self, **overrides):
         for key, value in overrides.items():
@@ -31,6 +37,10 @@ class ResearchListStrategy(StrategyBase):
                 setattr(self, attr, float(value) if isinstance(value, (int, float)) else value)
 
     def populate_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
+        if df is None:
+            return pd.DataFrame()
+        if len(df) >= 210:
+            return add_trend_template_columns(df)
         return df.copy()
 
     def _scan_book(self) -> Tuple[List[str], bool]:
@@ -71,6 +81,14 @@ class ResearchListStrategy(StrategyBase):
             return "fund_lt_65"
         if df is None or len(df) < 30:
             return "history_short"
+        need_stage2 = bool(float(getattr(self, "REQUIRE_STAGE2", 1.0) or 0.0))
+        if need_stage2:
+            if len(df) < 210:
+                return "not_stage2"
+            work = self.populate_indicators(df)
+            ok, code = stage2_ok(work.iloc[-1])
+            if not ok:
+                return code or "not_stage2"
         return None
 
     def generate_signal(
@@ -92,13 +110,17 @@ class ResearchListStrategy(StrategyBase):
             side="buy",
             strategy_id=self.strategy_id,
             confidence=round(min(1.0, 0.45 + (fundamental_score - 65) / 100), 3),
-            reason=f"Scan list #{top.index(ticker.upper()) + 1} fund={fundamental_score:.0f}",
+            reason=f"Scan list #{top.index(ticker.upper()) + 1} fund={fundamental_score:.0f} Stage-2 OK",
             entry_price=round(close, 4),
             stop_loss_price=stop,
             take_profit_price=target,
             avg_win_pct=self.expected_win_pct,
             avg_loss_pct=self.expected_loss_pct,
-            meta={"scan_rank": top.index(ticker.upper()) + 1, "scan_list": top},
+            meta={
+                "entry_kind": "research_list",
+                "scan_rank": top.index(ticker.upper()) + 1,
+                "scan_list": top,
+            },
         )
 
     def check_exit(

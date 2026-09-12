@@ -1,0 +1,71 @@
+{
+  "disclaimer": "12-name smoke bakeoff 2023-08..2026-08. No mode beat SPY net of costs \u2014 do not claim alpha. Default paper mode=breakout (fewest trades, small positive on this sample). adaptive/trend available for further tuning.",
+  "rows": [
+    {
+      "strategy": "stable",
+      "sizing": "fixed_pct",
+      "return_pct": -6.33,
+      "spy_pct": 80.19,
+      "alpha_net": -88.33,
+      "avg_cash_pct": 97.89,
+      "trades": 401,
+      "sharpe": -1.402,
+      "max_dd": 6.79
+    },
+    {
+      "strategy": "aggressive",
+      "sizing": "fixed_pct",
+      "return_pct": 1.12,
+      "spy_pct": 80.19,
+      "alpha_net": -79.16,
+      "avg_cash_pct": 98.2,
+      "trades": 20,
+      "sharpe": 0.26,
+      "max_dd": 2.35
+    },
+    {
+      "strategy": "breakout",
+      "sizing": "risk_pct",
+      "return_pct": 1.37,
+      "spy_pct": 80.19,
+      "alpha_net": -79.2,
+      "avg_cash_pct": 93.37,
+      "trades": 20,
+      "sharpe": 0.117,
+      "max_dd": 8.92
+    },
+    {
+      "strategy": "trend",
+      "sizing": "risk_pct",
+      "return_pct": -4.94,
+      "spy_pct": 80.19,
+      "alpha_net": -98.31,
+      "avg_cash_pct": 70.89,
+      "trades": 590,
+      "sharpe": -0.079,
+      "max_dd": 24.8
+    },
+    {
+      "strategy": "adaptive",
+      "sizing": "risk_pct",
+      "return_pct": -11.51,
+      "spy_pct": 80.19,
+      "alpha_net": -103.44,
+      "avg_cash_pct": 69.91,
+      "trades": 552,
+      "sharpe": -0.259,
+      "max_dd": 27.19
+    },
+    {
+      "strategy": "stable",
+      "sizing": "risk_pct",
+      "return_pct": -12.7,
+      "spy_pct": 80.19,
+      "alpha_net": -100.11,
+      "avg_cash_pct": 93.09,
+      "trades": 326,
+      "sharpe": -0.731,
+      "max_dd": 15.57
+    }
+  ]
+}

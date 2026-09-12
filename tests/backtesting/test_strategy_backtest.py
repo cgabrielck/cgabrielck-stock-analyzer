@@ -120,10 +120,10 @@ class TestStrategyBacktest(unittest.TestCase):
         self.assertEqual(result.num_trades, 0)
         self.assertTrue(result.warnings)
 
-    def test_invalid_strategy_falls_back_to_stable(self):
+    def test_invalid_strategy_falls_back_to_adaptive(self):
         from backend.trading.strategies.registry import get_strategy
         s = get_strategy("does_not_exist")
-        self.assertEqual(s.strategy_id, "stable")
+        self.assertEqual(s.strategy_id, "adaptive")
 
 
 if __name__ == "__main__":

@@ -1,25 +1,21 @@
 """
-Aggressive Strategy — Minervini VCP Breakout + Momentum
+Breakout Strategy (id: aggressive) — Minervini VCP + real RS vs SPY.
 
 Entry logic (ALL conditions must be met):
-  1. VCP pattern detected (volatility contracting, volume drying up)
-  2. Today's volume >= 1.5× 20-day avg volume  (breakout confirmation)
-  3. Price breaks above the VCP resistance level (pivot high)
-  4. Price > SMA50  (intermediate uptrend)
-  5. RS Rank: stock outperforming SPY over 12 weeks  (relative strength)
-  6. LLM signal is "bullish" or None (not explicitly bearish)
+  1. VCP pattern detected (volatility contracting)
+  2. Today's volume >= 1.5× 20-day avg volume
+  3. Price breaks above the VCP resistance level
+  4. Price > SMA50
+  5. 12-week relative strength vs SPY > 0  (implemented)
+  6. LLM not explicitly bearish
   7. Not already holding this ticker
 
-Target:
-  Take-profit = entry + REWARD_RISK_RATIO × (entry − stop)  (3R rule,
-  Van Tharp / Minervini). Initial risk = entry − stop = TRAILING_STOP_PCT.
+Exit:
+  A. ATR / pivot stop (worker may trail)
+  B. Close below SMA50
+  C. No RSI≥80 scalp exit — let winners run to ≥2R then trail
 
-Exit logic:
-  A. Trailing stop 8% below the highest close since entry
-  B. Price closes below SMA50  (trend break)
-  C. RSI > 80  (extreme overbought — trim position)
-
-Historical target metrics: Win% ~44%, Profit Factor ~2.6, Max DD ~14%
+Legacy id remains ``aggressive``; ``breakout`` is an alias in the registry.
 """
 from __future__ import annotations
 
@@ -28,34 +24,37 @@ from typing import Any, Dict, List, Optional
 import pandas as pd
 
 from backend.trading.strategies.base import ExitSignal, Signal, StrategyBase
+from backend.trading.strategies.stage2 import atr_stop, relative_strength_vs_spy
 
 
 class AggressiveStrategy(StrategyBase):
     strategy_id   = "aggressive"
-    display_name  = "激进型 Aggressive (VCP Breakout)"
+    display_name  = "突破型 Breakout (VCP + RS)"
     risk_profile  = "aggressive"
-    expected_win_rate  = 0.44
-    expected_win_pct   = 0.15
-    expected_loss_pct  = 0.08
+    expected_win_rate  = 0.40
+    expected_win_pct   = 0.16
+    expected_loss_pct  = 0.07
 
     # --- Tuneable parameters ---
     SMA_TREND          = 50
-    VOLUME_SURGE       = 1.5       # today's vol / 20d avg vol
+    VOLUME_SURGE       = 1.5
     VCP_MIN_CONTRACTIONS = 2
-    TRAILING_STOP_PCT  = 0.08
-    RSI_OVERBOUGHT     = 80
-    MIN_FUND_SCORE     = 50.0      # lower bar — momentum can override weak fundamentals
-    REWARD_RISK_RATIO  = 3.0       # 3R rule (Minervini/Van Tharp): target = 3× initial risk
+    TRAILING_STOP_PCT  = 0.08  # fallback if ATR missing
+    ATR_STOP_MULT      = 1.8
+    RSI_OVERBOUGHT     = 80    # kept for diagnose only (not a required exit)
+    MIN_FUND_SCORE     = 50.0
+    REWARD_RISK_RATIO  = 3.0
+    RS_LOOKBACK        = 63
 
     def __init__(self, **overrides):
-        """Allow per-instance parameter overrides for tuning/backtesting.
-
-        Example: AggressiveStrategy(volume_surge=2.0, trailing_stop_pct=0.10)
-        """
+        self.spy_close: Optional[pd.Series] = None
         for key, value in overrides.items():
             attr = key.upper()
             if hasattr(self, attr):
                 setattr(self, attr, float(value) if isinstance(value, (int, float)) else value)
+
+    def set_spy_close(self, spy_close: Optional[pd.Series]) -> None:
+        self.spy_close = spy_close
 
     def diagnose_entry(
         self,
@@ -95,15 +94,19 @@ class AggressiveStrategy(StrategyBase):
             return "below_sma50", None
         if vol20 <= 0 or (vol / vol20) < self.VOLUME_SURGE:
             return "volume_weak", None
-        if rsi >= self.RSI_OVERBOUGHT:
-            return "rsi_overbought", None
-        vcp = detect_vcp(work, min_contractions=self.VCP_MIN_CONTRACTIONS)
+        # Do not require RSI not overbought for entry — Stage-2 breakouts often print high RSI.
+        rs, rs_code = relative_strength_vs_spy(work["Close"], self.spy_close, self.RS_LOOKBACK)
+        if self.spy_close is not None and (rs is None or rs <= 0):
+            return rs_code or "rs_weak", None
+        if rs is None:
+            rs = 0.0
+        vcp = detect_vcp(work, min_contractions=int(self.VCP_MIN_CONTRACTIONS))
         if not vcp["found"]:
             return "no_vcp", None
         breakout_level = vcp["breakout_level"]
         if close < breakout_level * 0.98:
             return "no_vcp", None
-        return None, (row, close, sma50, vol, vol20, rsi, vcp, breakout_level)
+        return None, (row, close, sma50, vol, vol20, rsi, vcp, breakout_level, rs)
 
     def populate_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
         df = df.copy()
@@ -128,18 +131,22 @@ class AggressiveStrategy(StrategyBase):
         skip, packed = self._entry_skip(ticker, df, fundamental_score, llm_signal, current_positions)
         if skip or packed is None:
             return None
-        row, close, sma50, vol, vol20, rsi, vcp, breakout_level = packed
+        row, close, sma50, vol, vol20, rsi, vcp, breakout_level, rs = packed
 
-        stop = round(close * (1 - self.TRAILING_STOP_PCT), 4)
-        # 3R rule (Van Tharp / Minervini): target = entry + R × (entry - stop).
-        # The initial risk is (entry - stop); reward is REWARD_RISK_RATIO × that risk.
+        atr = float(row["atr"]) if "atr" in row and not pd.isna(row["atr"]) else close * 0.02
+        pivot_stop = round(breakout_level * 0.98, 4)
+        atr_s = atr_stop(close, atr, self.ATR_STOP_MULT)
+        pct_stop = round(close * (1 - self.TRAILING_STOP_PCT), 4)
+        # Nearest valid stop below price among ATR / pivot / pct
+        candidates = [s for s in (atr_s, pivot_stop, pct_stop) if s < close]
+        stop = round(max(candidates), 4) if candidates else pct_stop
         initial_risk = close - stop
         target = round(close + self.REWARD_RISK_RATIO * initial_risk, 4)
 
         reason = (
             f"VCP breakout at {breakout_level:.2f}, "
             f"{vcp['contractions']} contractions, "
-            f"vol_surge={vol/vol20:.1f}×, RSI={rsi:.1f}, above SMA50={sma50:.2f}"
+            f"vol_surge={vol/vol20:.1f}×, RS_12w={rs*100:.1f}%, SMA50={sma50:.2f}"
         )
 
         return Signal(
@@ -153,7 +160,14 @@ class AggressiveStrategy(StrategyBase):
             take_profit_price=target,
             avg_win_pct=self.expected_win_pct,
             avg_loss_pct=self.expected_loss_pct,
-            meta={"vcp": vcp, "vol_surge": round(vol / vol20, 2), "rsi": rsi, "sma50": sma50},
+            meta={
+                "entry_kind": "breakout",
+                "vcp": vcp,
+                "vol_surge": round(vol / vol20, 2),
+                "rsi": rsi,
+                "sma50": sma50,
+                "rs_12w": round(rs, 4),
+            },
         )
 
     def check_exit(
@@ -173,7 +187,7 @@ class AggressiveStrategy(StrategyBase):
         sma50 = float(row["sma50"]) if not pd.isna(row["sma50"]) else None
         rsi   = float(row["rsi"])   if not pd.isna(row["rsi"])   else 50.0
 
-        # A. Trailing stop (stop_loss_price is updated by Worker on each tick)
+        # A. Trailing / hard stop (stop_loss_price may be updated by Worker)
         if current_price <= stop_loss_price:
             return ExitSignal(ticker=ticker, reason="trailing_stop", exit_price=current_price)
 
@@ -181,10 +195,8 @@ class AggressiveStrategy(StrategyBase):
         if sma50 and current_price < sma50 * 0.99:
             return ExitSignal(ticker=ticker, reason="trend_break_sma50", exit_price=current_price)
 
-        # C. Extreme overbought
-        if rsi >= self.RSI_OVERBOUGHT:
-            return ExitSignal(ticker=ticker, reason="overbought_rsi", exit_price=current_price)
-
+        # Intentionally no RSI≥80 scalp exit — breakouts often stay "overbought".
+        _ = rsi
         return None
 
 
@@ -276,3 +288,6 @@ def detect_vcp(df: pd.DataFrame, min_contractions: int = 2) -> Dict:
         "avg_volume_trend": vol_trend,
     })
     return result
+
+
+BreakoutStrategy = AggressiveStrategy

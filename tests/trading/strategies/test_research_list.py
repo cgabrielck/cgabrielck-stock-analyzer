@@ -28,12 +28,18 @@ def test_research_list_skips_stale_scan():
 
 
 def test_research_list_buys_fresh_top_name():
-    strat = ResearchListStrategy()
+    strat = ResearchListStrategy(require_stage2=0)
     with patch.object(strat, "_scan_book", return_value=(["NVDA", "MSFT"], False)):
         sig = strat.generate_signal("NVDA", _bars(), 80, None, [])
     assert sig is not None
     assert sig.strategy_id == "research_list"
     assert sig.stop_loss_price < sig.entry_price < sig.take_profit_price
+
+
+def test_research_list_stage2_blocks_short_history():
+    strat = ResearchListStrategy(require_stage2=1)
+    with patch.object(strat, "_scan_book", return_value=(["NVDA"], False)):
+        assert strat.diagnose_entry("NVDA", _bars(40), 80, None, []) == "not_stage2"
 
 
 def test_research_list_skips_names_not_on_scan():
@@ -58,5 +64,5 @@ def test_stable_diagnose_fund_gate():
             "Volume": [1_000_000] * 220,
         }
     )
-    assert strat.diagnose_entry("AAPL", df, 40, None, []) == "fund_lt_65"
+    assert strat.diagnose_entry("AAPL", df, 40, None, []) == "fund_below_min"
     assert strat.generate_signal("AAPL", df, 40, None, []) is None

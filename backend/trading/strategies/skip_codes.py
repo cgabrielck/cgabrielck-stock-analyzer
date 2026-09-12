@@ -8,7 +8,7 @@ LABELS_EN: Dict[str, str] = {
     "fund_lt_65": "Fundamental score below 65",
     "fund_below_min": "Fundamental score below strategy minimum",
     "llm_bearish": "LLM signal is bearish",
-    "rsi_not_oversold": "RSI not oversold",
+    "rsi_not_oversold": "RSI not oversold / no Connors pullback",
     "bb_not_low": "Price not at Bollinger lower band",
     "below_sma200": "Price below SMA200",
     "below_sma50": "Price below SMA50",
@@ -26,6 +26,11 @@ LABELS_EN: Dict[str, str] = {
     "regime_gate": "Regime exposure cap",
     "universe_capped": "Not in this cycle's universe slice",
     "risk_rejected": "RiskEngine rejected",
+    "not_stage2": "Not Minervini Stage-2",
+    "rs_weak": "Relative strength vs SPY weak",
+    "extended": "Too far from 52-week high / broken trend",
+    "not_pullback": "No Stage-2 pullback reclaim",
+    "regime_no_new_buys": "Regime blocks new buys",
 }
 
 LABELS_ZH: Dict[str, str] = {
@@ -33,7 +38,7 @@ LABELS_ZH: Dict[str, str] = {
     "fund_lt_65": "基本面分數低於 65",
     "fund_below_min": "基本面分數低於策略門檻",
     "llm_bearish": "LLM 偏空",
-    "rsi_not_oversold": "RSI 尚未超賣",
+    "rsi_not_oversold": "RSI 尚未超賣／無 Connors 回撤",
     "bb_not_low": "未碰到布林下軌",
     "below_sma200": "價格在 SMA200 之下",
     "below_sma50": "價格在 SMA50 之下",
@@ -51,6 +56,11 @@ LABELS_ZH: Dict[str, str] = {
     "regime_gate": "市場狀態曝險上限",
     "universe_capped": "本輪宇宙切片未涵蓋",
     "risk_rejected": "風控拒絕",
+    "not_stage2": "非 Minervini Stage-2",
+    "rs_weak": "相對 SPY 強度偏弱",
+    "extended": "距 52 週高過遠／趨勢破裂",
+    "not_pullback": "無 Stage-2 回踩收復",
+    "regime_no_new_buys": "市場狀態禁止開新倉",
 }
 
 
