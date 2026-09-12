@@ -12,14 +12,14 @@ Paste this file (or `@docs/LOCAL_CURSOR_HANDOFF.md`) into your **local Cursor** 
 ## 0. One-line status
 
 Personal US-equity **research terminal + Stage-2 shadow/paper trading scaffold**.  
-**Do not rebuild from scratch.** Keep Streamlit research UI; upgrade data, seal evidence, execution ops.  
-Grade vs production auto-trader: ~**5.6–6.0 / 10 (C+ ~ B-)**. Strong research/risk design; need PIT/paid bars evidence window + paper gate before live.
+**Do not rebuild from scratch.** Product UI = FastAPI desk; Streamlit = lab (ADR-002). Keep RiskEngine, Kelly, mandate, kill switch, Alpaca.  
+Grade vs a sellable top AI desk: **5.8 / 10**. Operating plan: [`CGAB_WORLD_CLASS_UPGRADE.md`](CGAB_WORLD_CLASS_UPGRADE.md).
 
 ---
 
-## 1. Architecture decision (ADR-001) — MUST FOLLOW
+## 1. Architecture decision (ADR-002) — MUST FOLLOW
 
-**Keep research UI; upgrade execution & paid/PIT data — no greenfield rewrite.**
+**FastAPI desk is the product; Streamlit is lab. Keep risk kernel. No greenfield rewrite.** ADR-001 superseded.
 
 | Keep | Upgrade |
 |------|---------|

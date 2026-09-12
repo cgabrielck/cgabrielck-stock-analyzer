@@ -9,6 +9,13 @@
 >
 > 風險調整型美股研究終端，整合基本面、技術訊號、即時交易時段價格、市場狀態、walk-forward 回測、倉位管理與選用的 LLM 分析。專為個人研究者打造的機構級工具。
 
+**Product name: Cgab.** Trading desk at http://127.0.0.1:8000 (FastAPI serves the UI; paper only).
+
+```bat
+cd C:\Users\001\cgabrielck-stock-analyzer
+.\.venv\Scripts\python.exe -m uvicorn backend.api.app:app --host 127.0.0.1 --port 8000
+```
+
 **Live application / 線上版本:** [stock-analyzergit-ijue4vuwb7kuvizn62fema.streamlit.app](https://stock-analyzergit-ijue4vuwb7kuvizn62fema.streamlit.app/)
 
 Quality grades, architecture decisions, and the phased enhancement plan are tracked in [docs/QUALITY_ROADMAP.md](docs/QUALITY_ROADMAP.md).

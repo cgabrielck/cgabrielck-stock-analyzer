@@ -1,0 +1,1196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Cgab</title>
+  <style>
+    :root {
+      --bg:#071016; --card:#0e1c22; --card2:#12242c; --line:#1a3d44;
+      --cyan:#2de2c5; --purple:#7c6cff; --mint:#3ee0a0; --rose:#ff6b81;
+      --text:#e8fffb; --muted:#8aa8ae; --sidebar:#050b0e; --nav:#0b1820;
+    }
+    * { box-sizing:border-box; }
+    html,body { margin:0; height:100%; font-family:"Segoe UI",Inter,system-ui,sans-serif; background:radial-gradient(1200px 600px at 80% -10%, #14343a 0%, transparent 50%), var(--bg); color:var(--text); }
+    button,input,select,textarea { font:inherit; color:inherit; }
+    .shell { display:grid; grid-template-columns:248px 1fr; min-height:100%; }
+    .sidebar { background:linear-gradient(180deg,#061014 0%, #050b0e 100%); border-right:1px solid var(--line); padding:16px 12px 14px; display:flex; flex-direction:column; gap:10px; }
+    .brand { display:flex; align-items:center; gap:10px; padding:4px 8px 8px; font-weight:800; font-size:20px; letter-spacing:.04em; }
+    .mark { width:28px; height:28px; border-radius:9px; background:linear-gradient(135deg,var(--cyan),var(--purple)); box-shadow:0 0 16px rgba(45,226,197,.35); }
+    .nav-stack { display:flex; flex-direction:column; gap:12px; }
+    .nav-group {
+      position:relative; border-radius:18px; padding:10px 8px 8px;
+      background:linear-gradient(180deg, rgba(18,36,44,.9), rgba(8,18,22,.75));
+      border:1px solid rgba(45,226,197,.12);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.04);
+    }
+    .nav-group::before {
+      content:""; position:absolute; left:0; top:12px; bottom:12px; width:3px; border-radius:99px;
+    }
+    .nav-group.g-nav::before { background:linear-gradient(180deg,var(--cyan),#1a8f80); }
+    .nav-group.g-apps { border-color:rgba(124,108,255,.28); }
+    .nav-group.g-apps::before { background:linear-gradient(180deg,var(--purple),#4b3fd1); }
+    .nav-group.g-more { border-color:rgba(138,168,174,.22); }
+    .nav-group.g-more::before { background:linear-gradient(180deg,#8aa8ae,#4d6469); }
+    .nav-head { display:flex; align-items:center; gap:10px; padding:4px 8px 8px 10px; }
+    .nav-ico {
+      width:28px; height:28px; border-radius:9px; display:grid; place-items:center;
+      font-size:13px; font-weight:800; color:#052226;
+    }
+    .g-nav .nav-ico { background:var(--cyan); }
+    .g-apps .nav-ico { background:var(--purple); color:#fff; }
+    .g-more .nav-ico { background:#2a3d44; color:var(--text); }
+    .nav-k { font-size:10px; letter-spacing:.16em; text-transform:uppercase; color:var(--muted); }
+    .nav-sub { font-size:11px; color:#c5e8e2; margin-top:1px; font-weight:600; }
+    .nav-btn { width:100%; text-align:left; background:transparent; border:0; color:var(--muted); padding:9px 12px 9px 14px; border-radius:11px; cursor:pointer; display:flex; align-items:center; gap:8px; }
+    .nav-btn .dot { width:5px; height:5px; border-radius:50%; background:#35555c; }
+    .nav-btn.on .dot { background:var(--cyan); box-shadow:0 0 8px var(--cyan); }
+    .nav-btn.on, .nav-btn:hover { background:rgba(45,226,197,.08); color:var(--cyan); }
+    .g-apps .nav-btn.on, .g-apps .nav-btn:hover { background:rgba(124,108,255,.12); color:#cfc8ff; }
+    .g-apps .nav-btn.on .dot { background:var(--purple); box-shadow:0 0 8px var(--purple); }
+    .foot { margin-top:auto; padding:8px 6px 2px; display:flex; flex-direction:column; gap:8px; }
+    .pill { display:inline-flex; align-items:center; gap:6px; border:1px solid var(--cyan); color:var(--cyan); border-radius:999px; padding:6px 12px; font-size:11px; font-weight:800; letter-spacing:.08em; width:fit-content; }
+    .pill.off { border-color:#35555c; color:var(--muted); }
+    .pill.warn { border-color:#e7c36a; color:#e7c36a; }
+    .topbar { display:flex; gap:10px; align-items:center; padding:14px 22px; border-bottom:1px solid var(--line); flex-wrap:wrap; }
+    .search { flex:1; min-width:180px; max-width:420px; background:var(--card); border:1px solid var(--line); border-radius:999px; padding:10px 16px; }
+    .chip { background:var(--card); border:1px solid var(--line); border-radius:999px; padding:8px 12px; font-size:13px; color:var(--muted); }
+    .lang { display:flex; background:#0b1820; border:1px solid var(--line); border-radius:999px; padding:3px; }
+    .lang button { border:0; background:transparent; color:var(--muted); border-radius:999px; padding:6px 12px; cursor:pointer; font-weight:700; font-size:12px; }
+    .lang button.on { background:var(--cyan); color:#052226; }
+    .content { padding:20px 22px 32px; }
+    .kpis { display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); gap:12px; margin-bottom:16px; }
+    .card { background:linear-gradient(180deg,var(--card2),var(--card)); border:1px solid var(--line); border-radius:16px; padding:16px; }
+    .card h3 { margin:0 0 10px; font-size:15px; }
+    .lbl { color:var(--muted); font-size:12px; } .val { font-size:20px; font-weight:700; margin-top:6px; }
+    .pos { color:var(--mint); } .neg { color:var(--rose); } .muted { color:var(--muted); font-size:13px; } .err { color:var(--rose); }
+    .ok { color:var(--mint); }
+    .layout { display:grid; grid-template-columns:1.7fr .9fr; gap:14px; }
+    .grid3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; margin-bottom:14px; }
+    .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+    table { width:100%; border-collapse:collapse; font-size:13px; }
+    th { text-align:left; color:var(--muted); font-weight:500; padding:8px 6px; border-bottom:1px solid var(--line); }
+    td { padding:10px 6px; border-bottom:1px solid #132830; }
+    .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+    .btn { background:var(--cyan); color:#052226; border:0; border-radius:999px; padding:9px 14px; font-weight:700; cursor:pointer; }
+    .ghost { background:transparent; color:var(--cyan); border:1px solid var(--cyan); }
+    .danger { background:var(--rose); color:#1a0508; }
+    .purple { background:var(--purple); color:#fff; }
+    .field { display:flex; flex-direction:column; gap:6px; font-size:12px; color:var(--muted); }
+    input,select,textarea { background:#07141a; border:1px solid var(--line); border-radius:12px; padding:9px 10px; }
+    .tab { background:#0d1f26; border:1px solid var(--line); color:var(--muted); border-radius:999px; padding:7px 12px; cursor:pointer; }
+    .tab.on { color:#052226; background:var(--cyan); border-color:var(--cyan); }
+    .bars { display:flex; align-items:flex-end; gap:2px; height:140px; }
+    .bar { flex:1; background:linear-gradient(180deg,var(--cyan),var(--purple)); border-radius:3px 3px 0 0; min-height:4px; }
+    .banner {
+      display:flex; gap:14px; align-items:flex-start; justify-content:space-between; flex-wrap:wrap;
+      margin-bottom:16px; padding:14px 16px; border-radius:16px;
+      border:1px solid rgba(45,226,197,.35); background:rgba(45,226,197,.08);
+    }
+    .banner.off { border-color:rgba(231,195,106,.35); background:rgba(231,195,106,.08); }
+    .banner.warn { border-color:rgba(231,195,106,.6); }
+    .banner h2 { margin:0 0 6px; font-size:16px; }
+    .status-dot { width:8px; height:8px; border-radius:50%; display:inline-block; margin-right:6px; background:var(--muted); }
+    .status-dot.on { background:var(--mint); box-shadow:0 0 8px var(--mint); }
+    .guide-step { border:1px solid var(--line); border-radius:14px; padding:14px; margin-bottom:10px; background:#0b1820; }
+    .guide-step b { color:var(--cyan); }
+    .tour-mask {
+      position:fixed; inset:0; background:rgba(2,8,10,.72); z-index:40;
+      display:flex; align-items:center; justify-content:center; padding:24px;
+      backdrop-filter:blur(6px);
+    }
+    .tour-card {
+      width:min(520px,100%); background:linear-gradient(180deg,#12242c,#0b1820);
+      border:1px solid rgba(45,226,197,.35); border-radius:20px; padding:22px;
+      box-shadow:0 24px 80px rgba(0,0,0,.45);
+    }
+    .tour-card h2 { margin:8px 0 10px; }
+    .hidden { display:none; }
+    .icon-btn { width:36px; height:36px; border-radius:50%; border:1px solid var(--line); background:var(--card); color:var(--cyan); cursor:pointer; font-weight:800; }
+    .prog { margin-top:12px; }
+    .prog-top { display:flex; justify-content:space-between; align-items:baseline; gap:12px; font-size:13px; }
+    .prog-pct { font-weight:800; color:var(--cyan); font-size:20px; letter-spacing:.02em; }
+    .prog-track { height:10px; border-radius:99px; background:#07141a; border:1px solid var(--line); overflow:hidden; margin-top:8px; }
+    .prog-fill { height:100%; width:0; border-radius:99px; background:linear-gradient(90deg,var(--cyan),var(--purple)); transition:width .4s ease; }
+    .pick-grid { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:10px; }
+    .pick-card { background:#0b1820; border:1px solid var(--line); border-radius:16px; padding:14px; cursor:pointer; min-width:0; }
+    .pick-card:hover { border-color:var(--cyan); }
+    .pick-rank { font-size:10px; letter-spacing:.16em; color:var(--muted); }
+    .pick-ticker { font-size:22px; font-weight:800; margin:4px 0 2px; }
+    .pick-name { font-size:12px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .meter { height:6px; border-radius:99px; background:#07141a; overflow:hidden; margin-top:8px; }
+    .meter > span { display:block; height:100%; background:linear-gradient(90deg,var(--cyan),var(--purple)); }
+    .badge { display:inline-block; font-size:10px; font-weight:800; letter-spacing:.08em; border-radius:999px; padding:3px 8px; }
+    .badge.buy { background:rgba(62,224,160,.15); color:var(--mint); }
+    .badge.hold { background:rgba(231,195,106,.12); color:#e7c36a; }
+    .badge.watch { background:rgba(138,168,174,.12); color:var(--muted); }
+    .badge.avoid { background:rgba(255,107,129,.15); color:var(--rose); }
+    .ticket { display:grid; grid-template-columns:repeat(4,1fr); gap:8px; margin:12px 0; }
+    .ticket div { background:#07141a; border:1px solid var(--line); border-radius:12px; padding:10px; }
+    .news-line { font-size:12px; color:var(--muted); margin:6px 0; padding-left:8px; border-left:2px solid var(--line); }
+    .news-line.positive { border-color:var(--mint); }
+    .news-line.negative { border-color:var(--rose); }
+    .why { font-size:13px; line-height:1.45; color:#cfe8e3; margin:10px 0 0; }
+    .tape { display:flex; gap:8px; flex-wrap:wrap; margin-top:12px; }
+    .pick-card.sel { border-color:var(--cyan); box-shadow:0 0 0 1px rgba(45,226,197,.35); }
+    .blotter { margin-top:14px; padding-top:14px; border-top:1px solid var(--line); }
+    .stat-grid { display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); gap:8px; margin-top:10px; }
+    .stat { background:#07141a; border:1px solid var(--line); border-radius:12px; padding:10px; }
+    .stat .val { font-size:16px; }
+    .score-row { display:grid; grid-template-columns:88px 1fr 40px; gap:8px; align-items:center; margin:6px 0; font-size:12px; color:var(--muted); }
+    .heat { font-variant-numeric:tabular-nums; font-weight:700; }
+    .heat.buy { color:var(--mint); }
+    .heat.hold { color:#e7c36a; }
+    .heat.watch { color:var(--muted); }
+    .heat.avoid { color:var(--rose); }
+    .phase { font-size:11px; letter-spacing:.12em; text-transform:uppercase; color:var(--cyan); }
+    @media(max-width:1100px){ .kpis,.layout,.grid3,.grid2,.pick-grid,.ticket,.stat-grid{grid-template-columns:1fr;} .shell{grid-template-columns:1fr;} .sidebar{display:none;} }
+  </style>
+</head>
+<body>
+<div class="shell">
+  <aside class="sidebar">
+    <div class="brand"><span class="mark"></span> Cgab</div>
+    <div class="nav-stack">
+      <section class="nav-group g-nav">
+        <div class="nav-head"><span class="nav-ico">N</span><div><div class="nav-k" data-i18n="nav.navigation">Navigation</div><div class="nav-sub" data-i18n="nav.navigation.sub">Workspace</div></div></div>
+        <button class="nav-btn on" data-page="desk"><span class="dot"></span><span data-i18n="page.desk">Desk</span></button>
+        <button class="nav-btn" data-page="scan"><span class="dot"></span><span data-i18n="page.scan">Scan</span></button>
+        <button class="nav-btn" data-page="orders"><span class="dot"></span><span data-i18n="page.orders">Orders</span></button>
+        <button class="nav-btn" data-page="research"><span class="dot"></span><span data-i18n="page.research">Research</span></button>
+        <button class="nav-btn" data-page="market"><span class="dot"></span><span data-i18n="page.market">Market</span></button>
+        <button class="nav-btn" data-page="chart"><span class="dot"></span><span data-i18n="page.chart">Chart</span></button>
+      </section>
+      <section class="nav-group g-apps">
+        <div class="nav-head"><span class="nav-ico">A</span><div><div class="nav-k" data-i18n="nav.apps">Apps</div><div class="nav-sub" data-i18n="nav.apps.sub">Automation</div></div></div>
+        <button class="nav-btn" data-page="aimode"><span class="dot"></span><span data-i18n="page.aimode">AI Mode</span></button>
+        <button class="nav-btn" data-page="strategies"><span class="dot"></span><span data-i18n="page.strategies">Strategies</span></button>
+        <button class="nav-btn" data-page="alerts"><span class="dot"></span><span data-i18n="page.alerts">Alerts</span></button>
+        <button class="nav-btn" data-page="calendar"><span class="dot"></span><span data-i18n="page.calendar">Calendar</span></button>
+      </section>
+      <section class="nav-group g-more">
+        <div class="nav-head"><span class="nav-ico">+</span><div><div class="nav-k" data-i18n="nav.more">More</div><div class="nav-sub" data-i18n="nav.more.sub">Help & extras</div></div></div>
+        <button class="nav-btn" data-page="guide"><span class="dot"></span><span data-i18n="page.guide">Guide</span></button>
+        <button class="nav-btn" data-page="journal"><span class="dot"></span><span data-i18n="page.journal">Journal</span></button>
+        <button class="nav-btn" data-page="options"><span class="dot"></span><span data-i18n="page.options">Options</span></button>
+        <button class="nav-btn" data-page="settings"><span class="dot"></span><span data-i18n="page.settings">Settings</span></button>
+      </section>
+    </div>
+    <div class="foot">
+      <span class="pill" id="paperPill">PAPER</span>
+      <div class="muted" data-i18n="brand.tag">US equity AI desk</div>
+    </div>
+  </aside>
+  <section>
+    <header class="topbar">
+      <input id="search" class="search" data-i18n-placeholder="search.ph" placeholder="Search symbol…" />
+      <span class="pill" id="chipPaper">PAPER</span>
+      <span class="pill off" id="chipAuto">AUTO OFF</span>
+      <span class="chip" id="chipEq">Equity —</span>
+      <div class="lang" role="group" aria-label="Language">
+        <button type="button" id="langEn" class="on">EN</button>
+        <button type="button" id="langZh">繁</button>
+      </div>
+      <button class="icon-btn" id="helpBtn" title="Guide">?</button>
+      <button class="btn ghost" id="refresh" data-i18n="btn.refresh">Refresh</button>
+    </header>
+    <div class="content" id="root"><p class="muted">Loading Cgab…</p></div>
+  </section>
+</div>
+<div id="tour" class="tour-mask hidden"></div>
+<script>
+const I18N = {
+  en: {
+    "brand.tag":"US equity AI desk",
+    "nav.navigation":"Navigation",
+    "nav.navigation.sub":"Daily workspace",
+    "nav.apps":"Apps",
+    "nav.apps.sub":"Tune & automate",
+    "nav.more":"More",
+    "nav.more.sub":"Guide & extras",
+    "page.desk":"Desk",
+    "page.scan":"Scan",
+    "page.orders":"Orders",
+    "page.research":"Research",
+    "page.market":"Market",
+    "page.chart":"Chart",
+    "page.aimode":"AI Mode",
+    "page.strategies":"Strategies",
+    "page.alerts":"Alerts",
+    "page.calendar":"Calendar",
+    "page.guide":"Guide",
+    "page.journal":"Journal",
+    "page.options":"Options",
+    "page.settings":"Settings",
+    "search.ph":"Search symbol…",
+    "btn.refresh":"Refresh",
+    "btn.save":"Save",
+    "btn.start":"Start paper auto",
+    "btn.stop":"Stop auto",
+    "btn.buy":"Buy",
+    "btn.sell":"Sell",
+    "btn.submit":"Submit order",
+    "btn.halt":"Halt buys",
+    "btn.resume":"Resume",
+    "btn.tour":"Replay tour",
+    "btn.scan":"Scan all 74",
+    "btn.deep":"Run deep research",
+    "btn.deep5":"Deep these 5",
+    "scan.title":"Universe scan",
+    "scan.lead":"Rank all 74 names with fundamentals, technicals, sentiment, risk, and regime gates. Top 5 become today's picks.",
+    "scan.top5":"Today's top 5",
+    "scan.rankings":"Full rankings",
+    "scan.empty":"No scan yet. Press Scan all 74 — this takes 1–3 minutes.",
+    "scan.stale":"Scan as-of is past freshness. research_list blocks new buys; Stable keeps last real scores.",
+    "scan.fresh":"Fresh scan cache is feeding paper-worker fund scores.",
+    "desk.scan.stale":"Scan past session freshness — research_list will not buy; Stable keeps last real fund scores (as-of). Wait for auto-scan or rescan.",
+    "desk.scan.next":"Auto-scan next: {t}",
+    "aimode.why":"Why no trade",
+    "aimode.cap":"Universe this cycle",
+    "scan.running":"Scanning… {n}/{t}",
+    "scan.eta":"~{m}m {s}s left",
+    "scan.wait":"Please wait — scoring continues after the last ticker (regime, sentiment, risk gates).",
+    "scan.noga":"No name cleared today’s entry gate. Rankings below still show the full book.",
+    "scan.conviction.strong":"STRONG",
+    "scan.conviction.buy":"BUY",
+    "scan.conviction.hold":"HOLD",
+    "scan.conviction.watch":"WATCH",
+    "scan.phase.queued":"Queued",
+    "scan.phase.fetch":"Fetching prices & filings",
+    "scan.phase.llm":"AI overlay",
+    "scan.phase.score":"Ranking & risk gates",
+    "scan.phase.deep":"Deep research",
+    "scan.phase.done":"Complete",
+    "scan.complete":"Scan complete — {p} ideas · {r} ranked",
+    "scan.thesis":"Idea blotter",
+    "scan.refreshing":"Refreshing the book — previous names stay visible until this run finishes.",
+    "scan.rev":"Rev gr.",
+    "scan.eps":"EPS gr.",
+    "scan.risk":"Risk",
+    "research.lead":"Deep research up to 5 names: entry zone, stop, targets, sentiment, SEC, options.",
+    "research.rr":"R / R",
+    "research.confirm":"Confirm",
+    "research.exec":"Execution",
+    "research.sec":"SEC",
+    "research.chart":"Chart",
+    "research.select":"Selected (max 5)",
+    "research.pick":"Add from universe",
+    "research.empty":"No deep reports yet. Select tickers and run deep research.",
+    "research.entry":"Entry zone",
+    "research.stop":"Stop loss",
+    "research.targets":"Targets",
+    "research.stance":"Stance",
+    "desk.holdings":"Holdings — broker inventory",
+    "desk.holdings.hint":"Alpaca Paper real book (not a model portfolio)",
+    "desk.empty":"No positions yet — paper auto only fills when a signal passes every gate.",
+    "desk.ticket":"Trade ticket",
+    "desk.open":"Open orders",
+    "desk.none":"None",
+    "desk.risk":"Risk / Ops",
+    "desk.llm":"Tune the agent in AI Mode. LLM cannot bypass RiskEngine.",
+    "desk.banner.on":"Paper auto is ON",
+    "desk.banner.off":"Paper auto is OFF",
+    "desk.how":"Start it in AI Mode. AUTO ON in the top bar means the worker heartbeat is fresh.",
+    "aimode.lead":"Only place to tune the agent and start paper auto trading. LLM cannot bypass RiskEngine / kill / mandate.",
+    "aimode.gates":"Gates",
+    "aimode.paperonly":"Orders stay on Alpaca paper while PAPER is shown.",
+    "aimode.worker":"Paper worker",
+    "settings.lang":"Language",
+    "alerts.body":"New rules attach to saved research plans. Telegram worker stays the delivery path.",
+    "alerts.new":"New rule",
+    "tour.next":"Next",
+    "tour.back":"Back",
+    "tour.skip":"Skip",
+    "tour.done":"Got it",
+    "tour.n":"Step {n} of {t}",
+    "t0.t":"Welcome to Cgab",
+    "t0.b":"This desk researches US stocks and can auto-trade on Alpaca paper. The PAPER badge means no live cash.",
+    "t1.t":"Three sidebar groups",
+    "t1.b":"Navigation is the daily workspace. Apps is where you start the AI worker. More has the written guide.",
+    "t2.t":"Desk is the live paper book",
+    "t2.b":"Equity and holdings come from Alpaca paper. An empty table means no fills yet — not a broken screen.",
+    "t3.t":"Start paper auto in AI Mode",
+    "t3.b":"Saving sliders does not start the bot. Press Start paper auto. The top bar turns AUTO ON when the heartbeat is fresh.",
+    "t4.t":"Why you may see no trades",
+    "t4.b":"Run Scan so fund scores feed the AI (≥65). Then signals must still pass RSI/BB, Kelly, and risk gates.",
+    "t5.t":"English and 繁體中文",
+    "t5.b":"Switch anytime with EN / 繁. Replay this tour from Guide or the ? button.",
+    "guide.title":"New user guide",
+    "guide.lead":"A short map of Cgab. Details also live in docs/CGAB_USER_GUIDE.md."
+  },
+  "zh-TW": {
+    "brand.tag":"美股 AI 工作台",
+    "nav.navigation":"導覽",
+    "nav.navigation.sub":"日常工作區",
+    "nav.apps":"應用",
+    "nav.apps.sub":"調參與自動",
+    "nav.more":"更多",
+    "nav.more.sub":"教學與其他",
+    "page.desk":"工作台",
+    "page.scan":"掃描",
+    "page.orders":"訂單",
+    "page.research":"研究",
+    "page.market":"行情",
+    "page.chart":"圖表",
+    "page.aimode":"AI 模式",
+    "page.strategies":"策略",
+    "page.alerts":"警示",
+    "page.calendar":"行事曆",
+    "page.guide":"教學",
+    "page.journal":"日誌",
+    "page.options":"選擇權",
+    "page.settings":"設定",
+    "search.ph":"搜尋代碼…",
+    "btn.refresh":"重新整理",
+    "btn.save":"儲存",
+    "btn.start":"啟動紙上自動交易",
+    "btn.stop":"停止自動交易",
+    "btn.buy":"買入",
+    "btn.sell":"賣出",
+    "btn.submit":"送出訂單",
+    "btn.halt":"停止開倉",
+    "btn.resume":"恢復交易",
+    "btn.tour":"再看一次導覽",
+    "btn.scan":"掃描全部 74 檔",
+    "btn.deep":"執行深度研究",
+    "btn.deep5":"深度研究這 5 檔",
+    "scan.title":"全市場掃描",
+    "scan.lead":"對 74 檔做基本面、技術、情緒、風險與市場狀態評分。前 5 名成為今日精選。",
+    "scan.top5":"今日前 5 名",
+    "scan.rankings":"完整排名",
+    "scan.empty":"尚無掃描結果。按下「掃描全部 74 檔」— 約需 1–3 分鐘。",
+    "scan.stale":"掃描 as-of 已過新鮮度視窗。research_list 不開新倉；Stable 保留上次真實分數。",
+    "scan.fresh":"新鮮掃描快取正提供紙上 worker 基本面分數。",
+    "desk.scan.stale":"掃描超過盤中新鮮度視窗 — research_list 不開新倉；Stable 保留上次真實分數（as-of）。請等自動掃描或手動掃描。",
+    "desk.scan.next":"下次自動掃描：{t}",
+    "aimode.why":"為何沒買",
+    "aimode.cap":"本輪宇宙",
+    "scan.running":"掃描中… {n}/{t}",
+    "scan.eta":"剩餘約 {m} 分 {s} 秒",
+    "scan.wait":"請稍候 — 最後一檔抓完後還會做評分、情緒與風控篩選。",
+    "scan.noga":"今日沒有標的通過進場門檻。下方排名仍是完整股票池。",
+    "scan.conviction.strong":"強買",
+    "scan.conviction.buy":"買入",
+    "scan.conviction.hold":"觀望",
+    "scan.conviction.watch":"觀察",
+    "scan.phase.queued":"排隊中",
+    "scan.phase.fetch":"抓取報價與財報",
+    "scan.phase.llm":"AI 覆蓋評分",
+    "scan.phase.score":"排名與風控篩選",
+    "scan.phase.deep":"深度研究",
+    "scan.phase.done":"完成",
+    "scan.complete":"掃描完成 — {p} 檔精選 · {r} 檔已排名",
+    "scan.thesis":"研究票據",
+    "scan.refreshing":"正在更新名單 — 本次跑完前仍顯示上一輪結果。",
+    "scan.rev":"營收成長",
+    "scan.eps":"EPS 成長",
+    "scan.risk":"風險",
+    "research.lead":"一次深度研究最多 5 檔：買入區間、停損、目標、情緒、SEC、選擇權。",
+    "research.rr":"風報比",
+    "research.confirm":"確認價",
+    "research.exec":"執行",
+    "research.sec":"SEC",
+    "research.chart":"圖表",
+    "research.select":"已選（最多 5）",
+    "research.pick":"從股票池加入",
+    "research.empty":"尚無深度報告。選擇代碼後執行深度研究。",
+    "research.entry":"買入區間",
+    "research.stop":"停損",
+    "research.targets":"目標價",
+    "research.stance":"立場",
+    "desk.holdings":"持倉 — 券商帳本",
+    "desk.holdings.hint":"Alpaca 模擬盤真實持倉（不是模型組合）",
+    "desk.empty":"尚無持倉 — 紙上自動交易只有訊號通過所有關卡才會成交。",
+    "desk.ticket":"下單",
+    "desk.open":"未成交訂單",
+    "desk.none":"無",
+    "desk.risk":"風險 / 營運",
+    "desk.llm":"在 AI 模式調整代理人。LLM 不能繞過風控。",
+    "desk.banner.on":"紙上自動交易：開啟",
+    "desk.banner.off":"紙上自動交易：關閉",
+    "desk.how":"到 AI 模式啟動。頂欄 AUTO ON 代表工作行程心跳正常。",
+    "aimode.lead":"這裡才調參數並啟動紙上自動交易。LLM 不能繞過風控、緊急停止或授權。",
+    "aimode.gates":"關卡",
+    "aimode.paperonly":"只要顯示 PAPER，訂單就只會進 Alpaca 模擬盤。",
+    "aimode.worker":"紙上工作行程",
+    "settings.lang":"語言",
+    "alerts.body":"新規則會綁在已儲存的研究計畫。Telegram 仍是通知通道。",
+    "alerts.new":"新增規則",
+    "tour.next":"下一步",
+    "tour.back":"上一步",
+    "tour.skip":"略過",
+    "tour.done":"知道了",
+    "tour.n":"第 {n} / {t} 步",
+    "t0.t":"歡迎使用 Cgab",
+    "t0.b":"這是美股研究工作台，可在 Alpaca 模擬盤自動交易。PAPER 代表不會動用真錢。",
+    "t1.t":"側欄三個分組",
+    "t1.b":"導覽是日常工作區。應用用來啟動 AI 工作行程。更多裡面有完整教學。",
+    "t2.t":"工作台是模擬帳本",
+    "t2.b":"權益與持倉來自 Alpaca 模擬帳戶。表格空白代表還沒成交，不是畫面壞掉。",
+    "t3.t":"在 AI 模式啟動自動交易",
+    "t3.b":"只儲存參數不會啟動機器人。請按「啟動紙上自動交易」。心跳正常時頂欄會變成 AUTO ON。",
+    "t4.t":"為什麼可能沒有成交",
+    "t4.b":"先跑掃描讓基本面分數餵給 AI（≥65）。訊號還要通過 RSI/布林、凱利倉位與風控。",
+    "t5.t":"英文與繁體中文",
+    "t5.b":"用頂欄 EN / 繁 隨時切換。之後可從教學或問號再看導覽。",
+    "guide.title":"新手教學",
+    "guide.lead":"Cgab 的快速地圖。完整說明也寫在 docs/CGAB_USER_GUIDE.md。"
+  }
+};
+const $ = (s) => document.querySelector(s);
+const $$ = (s) => [...document.querySelectorAll(s)];
+const root = $("#root");
+let page = "desk", symbol = "AAPL", account = null, worker = null, tourStep = 0, lang = localStorage.getItem("cgab.lang") || "en";
+const t = (k, vars) => {
+  let s = (I18N[lang] && I18N[lang][k]) || I18N.en[k] || k;
+  if (vars) Object.entries(vars).forEach(([a,b]) => { s = s.replaceAll("{"+a+"}", b); });
+  return s;
+};
+const money = (n) => (n==null||isNaN(n)) ? "—" : n.toLocaleString("en-US",{style:"currency",currency:"USD"});
+const cls = (n) => n==null?"":(n>=0?"pos":"neg");
+const explainMsg = () => {
+  const e = worker?.explain || {};
+  return lang === "zh-TW" ? (e.message_zh || e.message_en || "") : (e.message_en || e.message_zh || "");
+};
+function applyChrome(){
+  document.documentElement.lang = lang === "zh-TW" ? "zh-Hant" : "en";
+  $$("[data-i18n]").forEach(el => el.textContent = t(el.dataset.i18n));
+  $$("[data-i18n-placeholder]").forEach(el => el.placeholder = t(el.dataset.i18nPlaceholder));
+  $("#langEn").classList.toggle("on", lang==="en");
+  $("#langZh").classList.toggle("on", lang==="zh-TW");
+  const on = !!(worker && worker.running);
+  const stale = !!(worker && worker.stale);
+  const auto = $("#chipAuto");
+  auto.textContent = on ? "AUTO ON" : "AUTO OFF";
+  auto.className = "pill" + (on && !stale ? "" : stale ? " warn" : " off");
+  const paper = worker?.paper !== false;
+  $("#chipPaper").style.display = paper ? "" : "none";
+  $("#paperPill").style.display = paper ? "" : "none";
+}
+async function api(path, opt={}) {
+  const res = await fetch(path, { headers: {"Content-Type":"application/json"}, ...opt });
+  const data = await res.json().catch(()=>({}));
+  if (!res.ok) throw new Error(typeof data.detail==="string"?data.detail:JSON.stringify(data.detail||res.statusText));
+  return data;
+}
+async function loadAccount(){ try { account = await api("/api/account"); $("#chipEq").textContent = money(account.equity||account.portfolio_value); } catch(e){ account=null; } }
+async function loadWorker(){ try { worker = await api("/api/worker/status"); } catch(e){ worker={running:false,explain:{message_en:e.message,message_zh:e.message}}; } applyChrome(); }
+function navTo(p){ page=p; $$(".nav-btn[data-page]").forEach(b=>b.classList.toggle("on", b.dataset.page===p)); render(); }
+$$(".nav-btn[data-page]").forEach(b=>b.onclick=()=>navTo(b.dataset.page));
+$("#refresh").onclick=async()=>{ await Promise.all([loadAccount(), loadWorker()]); render(); };
+$("#search").addEventListener("keydown", e=>{ if(e.key==="Enter"){ symbol=e.target.value.toUpperCase(); navTo("research"); }});
+$("#langEn").onclick=()=>{ lang="en"; localStorage.setItem("cgab.lang", lang); applyChrome(); render(); };
+$("#langZh").onclick=()=>{ lang="zh-TW"; localStorage.setItem("cgab.lang", lang); applyChrome(); render(); };
+$("#helpBtn").onclick=()=>{ tourStep=0; showTour(); };
+
+function showTour(){
+  const total=6;
+  const last = tourStep>=total-1;
+  $("#tour").classList.remove("hidden");
+  $("#tour").innerHTML = `<div class="tour-card">
+    <div class="muted">${t("tour.n",{n:tourStep+1,t:total})}</div>
+    <h2>${t("t"+tourStep+".t")}</h2>
+    <p class="muted">${t("t"+tourStep+".b")}</p>
+    <div class="row" style="margin-top:16px;justify-content:space-between">
+      <button class="btn ghost" id="tourSkip">${t("tour.skip")}</button>
+      <div class="row">
+        ${tourStep?`<button class="btn ghost" id="tourBack">${t("tour.back")}</button>`:""}
+        <button class="btn" id="tourNext">${last?t("tour.done"):t("tour.next")}</button>
+      </div>
+    </div>
+  </div>`;
+  $("#tourSkip").onclick=()=>endTour();
+  const back=$("#tourBack"); if(back) back.onclick=()=>{ tourStep--; showTour(); };
+  $("#tourNext").onclick=()=>{ if(last) endTour(); else { tourStep++; showTour(); } };
+}
+function endTour(){ $("#tour").classList.add("hidden"); localStorage.setItem("cgab.tour.done","1"); }
+
+function autoBanner(){
+  const on = !!(worker && worker.running);
+  const research = worker?.research || {};
+  const scanStale = !!(worker?.scan_stale || research.scan_stale);
+  const researchMsg = lang === "zh-TW"
+    ? (research.message_zh || "")
+    : (research.message_en || "");
+  const nextScan = worker?.next_scan_at || research.next_scan_at;
+  const nextLine = (worker?.scan_auto || research.scan_auto) && nextScan
+    ? `<p class="muted" style="margin:8px 0 0">${t("desk.scan.next",{t: String(nextScan).replace("T"," ").slice(0,16)})}</p>`
+    : "";
+  const asOf = worker?.scan_as_of || research.scan_as_of || worker?.scan_ts || research.scan_ts;
+  const asOfLine = asOf
+    ? `<p class="muted" style="margin:8px 0 0">as-of ${String(asOf).replace("T"," ").slice(0,19)}</p>`
+    : "";
+  const staleLine = scanStale
+    ? `<p class="muted" style="margin:8px 0 0;color:#e8b86d">${t("desk.scan.stale")}</p>`
+    : (researchMsg ? `<p class="muted" style="margin:8px 0 0">${researchMsg}</p>` : "");
+  const skips = worker?.skip_counts || {};
+  const skipKeys = Object.keys(skips).filter(k => skips[k] > 0).sort((a,b)=>skips[b]-skips[a]).slice(0,5);
+  const skipLine = skipKeys.length
+    ? `<p class="muted" style="margin:8px 0 0">${t("aimode.why")}: ${skipKeys.map(k=>`${k}×${skips[k]}`).join(" · ")}</p>`
+    : "";
+  return `<div class="banner ${on?"":"off"} ${scanStale?"warn":""}">
+    <div>
+      <h2><span class="status-dot ${on?"on":""}"></span>${on?t("desk.banner.on"):t("desk.banner.off")}</h2>
+      <p class="muted" style="margin:0">${explainMsg() || t("desk.how")}</p>
+      <p class="muted" style="margin:8px 0 0">mode=${worker?.mode||"paper"} · hours=${worker?.market_hours?"RTH":"off-hours"} · heartbeat=${worker?.heartbeat_age_sec??"—"}s</p>
+      ${asOfLine}${staleLine}${nextLine}${skipLine}
+    </div>
+    <div class="row">
+      ${on?`<button class="btn ghost" id="banStop">${t("btn.stop")}</button>`:`<button class="btn" id="banStart">${t("btn.start")}</button>`}
+      <button class="btn purple" id="banAi">${t("page.aimode")}</button>
+      <button class="btn ghost" id="banScan">${t("page.scan")}</button>
+    </div>
+  </div>`;
+}
+function bindBanner(){
+  const s=$("#banStart"), k=$("#banStop"), a=$("#banAi"), sc=$("#banScan");
+  if(s) s.onclick=async()=>{ try{ worker=await api("/api/worker/start",{method:"POST",body:JSON.stringify({strategy:"stable",interval:60})}); applyChrome(); render(); }catch(e){ alert(e.message);} };
+  if(k) k.onclick=async()=>{ try{ worker=await api("/api/worker/stop",{method:"POST",body:"{}"}); applyChrome(); render(); }catch(e){ alert(e.message);} };
+  if(a) a.onclick=()=>navTo("aimode");
+  if(sc) sc.onclick=()=>navTo("scan");
+}
+
+async function render(){
+  applyChrome();
+  try {
+    if(page==="desk") return desk();
+    if(page==="scan") return scanPage();
+    if(page==="orders") return orders();
+    if(page==="research") return research();
+    if(page==="market") return market();
+    if(page==="chart") return chart();
+    if(page==="aimode") return aimode();
+    if(page==="strategies") return strategies();
+    if(page==="alerts") { root.innerHTML = `<div class="card"><h3>${t("page.alerts")}</h3><p class="muted">${t("alerts.body")}</p><button class="btn">${t("alerts.new")}</button></div>`; return; }
+    if(page==="calendar") return calendar();
+    if(page==="guide") return guide();
+    if(page==="journal") return journal();
+    if(page==="options") return options();
+    if(page==="settings") return settings();
+  } catch(e){ root.innerHTML = `<p class="err">${e.message}</p>`; }
+}
+
+async function desk(){
+  if(!account) await loadAccount();
+  if(!worker) await loadWorker();
+  let ops={}, perf={}, orders=[];
+  try { ops = await api("/api/ops"); } catch{}
+  try { perf = await api("/api/performance"); } catch{}
+  try { orders = (await api("/api/orders?status=open")).orders||[]; } catch{}
+  const pos = account?.positions||[];
+  const eq = account?.equity||account?.portfolio_value||0;
+  const day = account?.day_pnl||0;
+  root.innerHTML = `
+    ${autoBanner()}
+    <div class="kpis">
+      <div class="card"><div class="lbl">Equity</div><div class="val">${money(eq)}</div></div>
+      <div class="card"><div class="lbl">Day P/L</div><div class="val ${cls(day)}">${money(day)}</div></div>
+      <div class="card"><div class="lbl">Cash</div><div class="val">${money(account?.cash)}</div></div>
+      <div class="card"><div class="lbl">Positions</div><div class="val">${pos.length}</div></div>
+      <div class="card"><div class="lbl">Unrealized</div><div class="val ${cls(account?.unrealized_pl)}">${money(account?.unrealized_pl)}</div></div>
+      <div class="card"><div class="lbl">Buying power</div><div class="val">${money(account?.buying_power)}</div></div>
+    </div>
+    <div class="grid3">
+      <div class="card"><div class="lbl">Win rate (backtest)</div><div class="val">${perf.win_rate_pct??"—"}%</div></div>
+      <div class="card"><div class="lbl">Profit factor</div><div class="val">${perf.profit_factor??"—"}</div></div>
+      <div class="card"><div class="lbl">Max DD</div><div class="val">${perf.max_drawdown_pct??"—"}%</div></div>
+    </div>
+    <div class="layout">
+      <div class="card">
+        <h3>${t("desk.holdings")}</h3>
+        <p class="muted">${t("desk.holdings.hint")}</p>
+        <table><thead><tr><th>Symbol</th><th>Qty</th><th>Avg</th><th>Last</th><th>Mkt</th><th>Unreal</th><th>Wgt</th><th></th></tr></thead>
+        <tbody>${pos.length?pos.map(p=>{
+          const w=eq&&p.market_value?((100*p.market_value/eq).toFixed(1)+"%"):"—";
+          return `<tr><td>${p.symbol}</td><td>${p.quantity}</td><td>${p.average_entry_price?.toFixed?.(2)??"—"}</td><td>${p.current_price?.toFixed?.(2)??"—"}</td><td>${money(p.market_value)}</td><td class="${cls(p.unrealized_pl)}">${money(p.unrealized_pl)}</td><td>${w}</td><td><button class="btn trade" data-s="${p.symbol}">Trade</button></td></tr>`;
+        }).join(""):`<tr><td colspan="8" class="muted">${t("desk.empty")}</td></tr>`}</tbody></table>
+      </div>
+      <div>
+        <div class="card" style="margin-bottom:12px">
+          <h3>${t("desk.ticket")}</h3>
+          <div class="row" style="margin-bottom:8px"><button class="tab on" id="buy">${t("btn.buy")}</button><button class="tab" id="sell">${t("btn.sell")}</button></div>
+          <label class="field">Symbol <input id="tsym" value="AAPL" /></label>
+          <label class="field">Qty <input id="tqty" type="number" min="1" value="1" /></label>
+          <label class="field">Type <select id="ttype"><option value="market">Market</option><option value="limit">Limit</option></select></label>
+          <button class="btn" id="tsub" style="margin-top:10px;width:100%">${t("btn.submit")}</button>
+          <p class="muted" id="tmsg"></p>
+        </div>
+        <div class="card" style="margin-bottom:12px"><h3>${t("desk.open")}</h3>${orders.length?orders.slice(0,6).map(o=>`<div class="row" style="justify-content:space-between"><span>${o.side} ${o.qty} ${o.symbol}</span><button class="btn ghost cancel" data-id="${o.id}">Cancel</button></div>`).join(""):`<p class="muted">${t("desk.none")}</p>`}</div>
+        <div class="card"><h3>${t("desk.risk")}</h3><p class="muted">Kill switch ${ops.kill_switch?"ON":"OFF"}</p>
+          <div class="row"><button class="btn danger" id="halt">${t("btn.halt")}</button><button class="btn ghost" id="resume">${t("btn.resume")}</button></div>
+          <p class="muted" style="margin-top:8px">${t("desk.llm")}</p>
+        </div>
+      </div>
+    </div>`;
+  bindBanner();
+  let side="buy";
+  $("#buy").onclick=()=>{side="buy"; $("#buy").classList.add("on"); $("#sell").classList.remove("on");};
+  $("#sell").onclick=()=>{side="sell"; $("#sell").classList.add("on"); $("#buy").classList.remove("on");};
+  root.querySelectorAll(".trade").forEach(b=>b.onclick=()=>{$("#tsym").value=b.dataset.s;});
+  $("#tsub").onclick=async()=>{
+    try {
+      await api("/api/orders",{method:"POST",body:JSON.stringify({symbol:$("#tsym").value,side,quantity:Number($("#tqty").value),order_type:$("#ttype").value})});
+      $("#tmsg").textContent = lang==="zh-TW" ? "模擬盤訂單已送出。" : "Order submitted (paper).";
+      await loadAccount(); desk();
+    } catch(e){ $("#tmsg").textContent=e.message; }
+  };
+  $("#halt").onclick=async()=>{ await api("/api/ops/kill",{method:"POST"}); desk(); };
+  $("#resume").onclick=async()=>{ await api("/api/ops/resume",{method:"POST"}); desk(); };
+  root.querySelectorAll(".cancel").forEach(b=>b.onclick=async()=>{ await api(`/api/orders/${b.dataset.id}/cancel`,{method:"POST"}); desk(); });
+}
+
+async function orders(){
+  const d = await api("/api/orders?status=all");
+  const rows = d.orders||[];
+  root.innerHTML = `<div class="card"><h3>${t("page.orders")}</h3>
+    <table><thead><tr><th>Symbol</th><th>Side</th><th>Qty</th><th>Type</th><th>Status</th></tr></thead>
+    <tbody>${rows.map(o=>`<tr><td>${o.symbol}</td><td>${o.side}</td><td>${o.qty||o.quantity}</td><td>${o.type||o.order_type||""}</td><td>${o.status}</td></tr>`).join("")||`<tr><td class="muted">${t("desk.none")}</td></tr>`}</tbody></table></div>`;
+}
+
+let deepSelected = [];
+let scanFocus = null;
+let universeByTicker = {};
+
+function esc(s){
+  return String(s??"").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
+}
+function num(n, d=1){
+  if(n && typeof n === "object" && n.price != null) n = n.price;
+  if(n==null || n==="" || isNaN(Number(n))) return "—";
+  return Number(n).toFixed(d);
+}
+function fmtTs(ts){
+  if(!ts) return "—";
+  try { return new Date(ts).toLocaleString(lang==="zh-TW"?"zh-Hant-TW":"en-US"); }
+  catch { return String(ts).slice(0,19); }
+}
+function jobPct(job){
+  if(!job) return 0;
+  if(job.pct != null) return Math.max(0, Math.min(100, Number(job.pct)));
+  const tot = Number(job.total)||74;
+  return Math.max(0, Math.min(100, Math.round(100*(Number(job.progress)||0)/tot)));
+}
+function fmtEta(sec){
+  if(sec==null || sec==="" || isNaN(sec)) return "";
+  const n=Math.max(0, Number(sec));
+  const m=Math.floor(n/60), s=Math.floor(n%60);
+  return t("scan.eta",{m, s});
+}
+function conviction(score){
+  const n=Number(score);
+  if(isNaN(n)) return {key:"scan.conviction.watch", cls:"watch"};
+  if(n>=80) return {key:"scan.conviction.strong", cls:"buy"};
+  if(n>=70) return {key:"scan.conviction.buy", cls:"buy"};
+  if(n>=60) return {key:"scan.conviction.hold", cls:"hold"};
+  return {key:"scan.conviction.watch", cls:"watch"};
+}
+function meter(n){ const w=Math.max(0,Math.min(100,Number(n)||0)); return `<div class="meter"><span style="width:${w}%"></span></div>`; }
+function hydrate(row){
+  if(!row) return {};
+  const u = universeByTicker[row.ticker] || {};
+  return {
+    ...row,
+    name: row.name_en || u.name_en || row.name,
+    name_zh: row.name_zh || u.name_tw || u.name_cn || row.name
+  };
+}
+function pickLabel(p){
+  const row = hydrate(p);
+  return (lang==="zh-TW" ? (row.name_zh||row.name) : (row.name||row.name_zh)) || p.ticker;
+}
+function phaseLabel(job){
+  const key = job && job.phase ? "scan.phase."+job.phase : "";
+  if(key && ((I18N[lang]&&I18N[lang][key]) || I18N.en[key])) return t(key);
+  return job && job.phase ? String(job.phase) : "";
+}
+function progressPanel(job, prefix){
+  const running = job && (job.status==="queued"||job.status==="running");
+  const show = running || (job && job.status==="error");
+  if(!show) return "";
+  const pct = running ? jobPct(job) : 0;
+  return `<div class="prog" id="${prefix}Prog">
+    <div class="prog-top">
+      <span><span class="phase" id="${prefix}Phase">${esc(phaseLabel(job))}</span> · <span class="prog-pct" id="${prefix}Pct">${pct}%</span></span>
+      <span class="muted" id="${prefix}Eta">${running?fmtEta(job.eta_sec):""}</span>
+    </div>
+    <div class="prog-track"><div class="prog-fill" id="${prefix}Fill" style="width:${pct}%"></div></div>
+    <p class="muted" id="${prefix}Msg">${esc(job && job.message ? job.message : t("scan.wait"))}</p>
+  </div>`;
+}
+function applyProgress(prefix, job){
+  const pctEl=$(`#${prefix}Pct`), fill=$(`#${prefix}Fill`), msg=$(`#${prefix}Msg`), eta=$(`#${prefix}Eta`), phase=$(`#${prefix}Phase`);
+  if(!pctEl || !job) return;
+  const pct=jobPct(job);
+  pctEl.textContent = pct+"%";
+  if(fill) fill.style.width=pct+"%";
+  if(msg) msg.textContent = job.message || t("scan.running",{n:job.progress||0,t:job.total||74});
+  if(eta) eta.textContent = (job.status==="running"||job.status==="queued") ? fmtEta(job.eta_sec) : "";
+  if(phase) phase.textContent = phaseLabel(job);
+}
+async function pollJob(kind, jobId, onTick){
+  const path = kind === "scan" ? `/api/scan/status?job_id=${encodeURIComponent(jobId)}` : `/api/deep/status?job_id=${encodeURIComponent(jobId)}`;
+  const latestPath = kind === "scan" ? "/api/scan/latest" : "/api/deep/latest";
+  let last = {};
+  for(let i=0;i<900;i++){
+    try {
+      const st = await api(path);
+      last = st.job || {};
+      if(onTick) onTick(last);
+      if(last.status === "done" || last.status === "error") return last;
+    } catch(e) {
+      if(i >= 3){
+        try {
+          const latest = await api(latestPath);
+          if(latest && (latest.job_id===jobId || latest.available)){
+            return {status:"done", result: latest, message:"Complete"};
+          }
+        } catch(_){}
+      }
+    }
+    await new Promise(r=>setTimeout(r, 1000));
+  }
+  try {
+    const latest = await api(latestPath);
+    if(latest && ((latest.rankings||[]).length || (latest.recommendations||[]).length || latest.reports)){
+      return {status:"done", result: latest, message:"Complete"};
+    }
+  } catch(_){}
+  return last.status ? last : {status:"error", message:"timeout"};
+}
+function resultHasRows(data){
+  if(!data) return false;
+  return ((data.rankings||[]).length + (data.recommendations||[]).length) > 0;
+}
+function mergeScan(latest, job){
+  if(job && job.result && resultHasRows(job.result)){
+    return {available:true, stale:false, ...job.result};
+  }
+  return latest || {};
+}
+function scoreCell(n){
+  const conv = conviction(n);
+  return `<span class="heat ${conv.cls}">${num(n)}</span>`;
+}
+function scoreStack(p){
+  const rows = [
+    ["Growth", p.growth_score],
+    ["Tech", p.technical_score || p.timing_score],
+    ["Sent", p.sentiment_score],
+    ["LLM", p.llm_score]
+  ];
+  return rows.map(([lab,v])=>`<div class="score-row"><span>${lab}</span>${meter(v)}<span>${num(v)}</span></div>`).join("");
+}
+function newsTape(items){
+  return (items||[]).slice(0,3).map(n=>{
+    const title = n && (n.title||n.headline) ? n.title||n.headline : "";
+    return `<div class="news-line ${esc(n.sentiment||"")}">${esc(title)}</div>`;
+  }).join("");
+}
+
+function renderScanBody(latest, job){
+  const data = mergeScan(latest, job);
+  const regime = data.market_regime || {};
+  const picks = (data.recommendations || []).map(hydrate);
+  const ranks = (data.rankings || []).map(hydrate);
+  const running = job && (job.status==="queued" || job.status==="running");
+  const stale = !!data.stale || !data.available;
+  const alloc = regime.target_allocation!=null ? Math.round(regime.target_allocation*100)+"%" : "—";
+  const regimeCls = String(regime.regime||"").includes("bull") ? "buy" : String(regime.regime||"").includes("bear") ? "avoid" : "hold";
+  if(!scanFocus && picks[0]) scanFocus = picks[0].ticker;
+  const focused = picks.find(p=>p.ticker===scanFocus) || ranks.find(r=>r.ticker===scanFocus) || picks[0] || ranks[0];
+  const statusLine = running
+    ? t("scan.refreshing")
+    : (resultHasRows(data)
+        ? (stale ? t("scan.stale") : t("scan.complete",{p:picks.length, r:ranks.length}))
+        : t("scan.empty"));
+  const blotter = focused ? `<div class="blotter">
+      <div class="row" style="justify-content:space-between">
+        <h3 style="margin:0">${t("scan.thesis")} · ${esc(focused.ticker)} ${esc(pickLabel(focused))}</h3>
+        <div class="row">
+          <button class="btn purple" id="focusDeep">${t("btn.deep")}</button>
+          <button class="btn ghost" id="focusChart">${t("research.chart")}</button>
+        </div>
+      </div>
+      <div class="stat-grid">
+        <div class="stat"><div class="lbl">${t("scan.rev")}</div><div class="val">${num(focused.revenue_growth)}%</div></div>
+        <div class="stat"><div class="lbl">${t("scan.eps")}</div><div class="val">${num(focused.eps_growth)}%</div></div>
+        <div class="stat"><div class="lbl">PEG</div><div class="val">${num(focused.peg,2)}</div></div>
+        <div class="stat"><div class="lbl">ROE</div><div class="val">${num(focused.roe)}%</div></div>
+        <div class="stat"><div class="lbl">${t("scan.risk")}</div><div class="val">${esc((focused.risk_level||"—").toString())}</div></div>
+        <div class="stat"><div class="lbl">P/E</div><div class="val">${num(focused.pe_ratio,1)}</div></div>
+      </div>
+      ${scoreStack(focused)}
+      <p class="why">${esc((focused.reasoning||"").slice(0,520))}</p>
+      ${newsTape(focused.news)}
+    </div>` : "";
+  return `
+    <div class="card" style="margin-bottom:14px">
+      <div class="row" style="justify-content:space-between">
+        <div>
+          <h3>${t("scan.title")}</h3>
+          <p class="muted">${t("scan.lead")}</p>
+        </div>
+        <button class="btn" id="runScan" ${running?"disabled":""}>${t("btn.scan")}</button>
+      </div>
+      ${progressPanel(job, "scan")}
+      <p class="muted" id="scanMsg">${esc(statusLine)}</p>
+      <div class="tape">
+        <span class="badge ${regimeCls}">${esc((regime.regime||"regime").toUpperCase())}</span>
+        <span class="chip">SPY ${regime.spy_price!=null?num(regime.spy_price,2):"—"} / SMA200 ${regime.sma200!=null?num(regime.sma200,1):"—"}</span>
+        <span class="chip">VIX ${regime.vix??"—"}</span>
+        <span class="chip">entry ≥ ${regime.entry_threshold??"—"}</span>
+        <span class="chip">alloc ${alloc}</span>
+        <span class="chip">${ranks.length||0} ranked · ${picks.length} picks</span>
+        <span class="chip">${fmtTs(data.ts)}</span>
+      </div>
+    </div>
+    <div class="card" style="margin-bottom:14px">
+      <div class="row" style="justify-content:space-between">
+        <h3>${t("scan.top5")}</h3>
+        ${picks.length?`<button class="btn purple" id="deep5">${t("btn.deep5")}</button>`:""}
+      </div>
+      ${picks.length?`<div class="pick-grid">${picks.map((p,i)=>{
+        const conv=conviction(p.risk_adjusted_score);
+        return `<div class="pick-card ${p.ticker===scanFocus?"sel":""}" data-s="${esc(p.ticker)}">
+          <div class="pick-rank">RANK #${i+1}</div>
+          <div class="pick-ticker">${esc(p.ticker)}</div>
+          <div class="pick-name">${esc(pickLabel(p))}</div>
+          <p class="muted" style="margin:6px 0 0">${esc(p.sector||"")} · ${money(p.price)}</p>
+          <div class="row" style="margin-top:8px"><span class="badge ${conv.cls}">${t(conv.key)}</span><span class="muted">${num(p.risk_adjusted_score)}</span></div>
+          ${meter(p.risk_adjusted_score)}
+          <p class="muted" style="margin-top:8px">G ${num(p.growth_score)} · T ${num(p.technical_score)} · S ${num(p.sentiment_score)}</p>
+        </div>`;
+      }).join("")}</div>${blotter}`
+        :`<p class="muted">${ranks.length?t("scan.noga"):t("scan.empty")}</p>${ranks.length?blotter:""}`}
+    </div>
+    <div class="card">
+      <h3>${t("scan.rankings")}</h3>
+      <table><thead><tr><th>Rank</th><th>Symbol</th><th>Name</th><th>Sector</th><th>Risk adj</th><th>Growth</th><th>Tech</th><th>Sent</th><th>PEG</th></tr></thead>
+      <tbody>${ranks.slice(0,74).map(r=>`<tr class="rank-row ${r.ticker===scanFocus?"sel":""}" data-s="${esc(r.ticker)}" style="cursor:pointer"><td>${r.rank??""}</td><td><strong>${esc(r.ticker)}</strong></td><td>${esc(pickLabel(r))}</td><td>${esc(r.sector||"")}</td><td>${scoreCell(r.risk_adjusted_score)}</td><td>${scoreCell(r.growth_score??r.model_score)}</td><td>${scoreCell(r.timing_score)}</td><td>${scoreCell(r.sentiment_score)}</td><td>${num(r.peg,2)}</td></tr>`).join("")||`<tr><td class="muted">${t("scan.empty")}</td></tr>`}</tbody></table>
+    </div>`;
+}
+
+async function scanPage(){
+  let latest = {};
+  let job = null;
+  try {
+    const uni = await api("/api/universe");
+    universeByTicker = Object.fromEntries((uni.universe||[]).map(s=>[s.ticker,s]));
+  } catch{}
+  try { latest = await api("/api/scan/latest"); } catch{}
+  try { const st = await api("/api/scan/status"); job = st.job; } catch{}
+  const paint = () => { root.innerHTML = renderScanBody(latest, job); bind(); };
+  const bind = () => {
+    root.querySelectorAll(".pick-card, .rank-row").forEach(b=>b.onclick=()=>{ scanFocus=b.dataset.s; symbol=scanFocus; paint(); });
+    const deep5 = $("#deep5");
+    if(deep5) deep5.onclick=()=>{
+      const data = mergeScan(latest, job);
+      deepSelected = (data.top5_tickers||(data.recommendations||[]).map(p=>p.ticker)).slice(0,5);
+      navTo("research");
+    };
+    const fd = $("#focusDeep");
+    if(fd) fd.onclick=()=>{ if(scanFocus){ symbol=scanFocus; deepSelected=[scanFocus]; navTo("research"); } };
+    const fc = $("#focusChart");
+    if(fc) fc.onclick=()=>{ if(scanFocus){ symbol=scanFocus; navTo("chart"); } };
+    const btn = $("#runScan");
+    if(btn) btn.onclick = async () => {
+      try {
+        const res = await api("/api/scan",{method:"POST",body:JSON.stringify({lang, llm_weight:0.2, use_llm:true})});
+        job = res.job;
+        paint();
+        job = await pollJob("scan", job.id, (j)=>{ if(page!=="scan") return; applyProgress("scan", j); });
+        if(page!=="scan") return;
+        try { latest = await api("/api/scan/latest"); } catch{}
+        latest = mergeScan(latest, job);
+        if(job.status==="error" && !resultHasRows(latest)){
+          alert(job.error||job.message||"Scan failed");
+        }
+        job = job.status==="done" ? null : job;
+        paint();
+        await loadWorker();
+      } catch(e){ alert(e.message); const b=$("#runScan"); if(b) b.disabled=false; }
+    };
+  };
+  paint();
+  if(job && (job.status==="queued"||job.status==="running")){
+    pollJob("scan", job.id, (j)=>{ if(page!=="scan") return; applyProgress("scan", j); }).then(async (done)=>{
+      if(page!=="scan") return;
+      job = done;
+      try { latest = await api("/api/scan/latest"); } catch{}
+      latest = mergeScan(latest, job);
+      job = job.status==="done" ? null : job;
+      paint();
+      await loadWorker();
+    });
+  }
+}
+
+function renderResearchBody(universe, deep, job){
+  const reports = deep.reports||{};
+  const batch = deep.latest_batch || Object.keys(reports).slice(0,5);
+  const showTickers = deepSelected.length ? deepSelected : batch.slice(0,5);
+  const uniOpts = universe.map(s=>`<option value="${esc(s.ticker)}">${esc(s.ticker)} · ${esc(lang==="zh-TW"?(s.name_tw||s.name_cn||s.name_en||""):(s.name_en||s.name_tw||""))}</option>`).join("");
+  const running = job && (job.status==="queued"||job.status==="running");
+  return `
+    <div class="card" style="margin-bottom:14px">
+      <h3>${t("page.research")}</h3>
+      <p class="muted">${t("research.lead")}</p>
+      <div class="row">
+        <label class="field" style="min-width:220px">${t("research.pick")}
+          <select id="addSym">${uniOpts}</select>
+        </label>
+        <button class="btn ghost" id="addBtn">+</button>
+        <button class="btn purple" id="runDeep" ${running?"disabled":""}>${t("btn.deep")}</button>
+      </div>
+      <p class="muted" style="margin-top:8px">${t("research.select")}: <strong id="selList">${esc(deepSelected.join(", ")||"—")}</strong></p>
+      ${progressPanel(job, "deep")}
+    </div>
+    <div class="grid2" id="deepCards">
+      ${showTickers.map(sym=>{
+        const r = reports[sym]||{};
+        const plan = r.trade_plan||{};
+        const zone = plan.entry_zone||{};
+        const targets = plan.targets||[];
+        const action = String(plan.action||"watch");
+        const badgeCls = /buy/.test(action) ? "buy" : /avoid/.test(action) ? "avoid" : "hold";
+        if(r.error) return `<div class="card"><h3>${esc(sym)}</h3><p class="err">${esc(r.error)}</p></div>`;
+        if(!plan.action && !r.short_term) return `<div class="card"><h3>${esc(sym)}</h3><p class="muted">${t("research.empty")}</p></div>`;
+        const strat = r.strategy||{};
+        const why = strat.decision_explanation?.why || strat.reasoning || strat.summary || strat.rationale || strat.top_strategy || "";
+        const avoid = (r.avoid&&r.avoid.reasons)||[];
+        const rr = Array.isArray(plan.risk_reward) ? plan.risk_reward[0] : (plan.risk_reward || strat.risk_reward);
+        const sec = r.sec_evidence||{};
+        const evidence = (strat.decision_explanation?.supporting_evidence||[]).slice(0,2);
+        return `<div class="card">
+          <div class="row" style="justify-content:space-between">
+            <div>
+              <div class="pick-rank">${esc((strat.top_strategy||"TRADE PLAN").toString().replaceAll("_"," ").toUpperCase())}</div>
+              <h3 style="margin:4px 0 0">${esc(sym)}</h3>
+            </div>
+            <span class="badge ${badgeCls}">${esc(action.replaceAll("_"," ").toUpperCase())}</span>
+          </div>
+          <p class="muted">${t("research.stance")}: ${esc((plan.stance||"—").toUpperCase())} · ${money(r.technical?.price || plan.confirmation_price)}</p>
+          <div class="ticket">
+            <div><div class="lbl">${t("research.entry")}</div><div class="val" style="font-size:16px">${num(zone.low,2)} – ${num(zone.high,2)}</div></div>
+            <div><div class="lbl">${t("research.stop")}</div><div class="val" style="font-size:16px">${num(plan.stop_loss,2)}</div></div>
+            <div><div class="lbl">T1</div><div class="val" style="font-size:16px">${num(targets[0],2)}</div></div>
+            <div><div class="lbl">${t("research.rr")}</div><div class="val" style="font-size:16px">${num(rr,2)}</div></div>
+          </div>
+          <div class="tape">
+            <span class="chip">${t("research.confirm")} ${num(plan.confirmation_price,2)}</span>
+            <span class="chip">T2 ${num(targets[1],2)}</span>
+            <span class="chip">ATR ${num(plan.atr_14,2)}</span>
+          </div>
+          <div class="grid2" style="margin-top:10px">
+            <div><div class="lbl">Short 5–20d</div>${meter(r.short_term?.score)}<div class="muted">${num(r.short_term?.score)} · ${esc((r.short_term?.view||"").toUpperCase())}</div></div>
+            <div><div class="lbl">Long 6–18m</div>${meter(r.long_term?.score)}<div class="muted">${num(r.long_term?.score)} · ${esc((r.long_term?.view||"").toUpperCase())}</div></div>
+          </div>
+          ${plan.execution_window?`<p class="muted" style="margin-top:10px">${t("research.exec")}: ${esc(plan.execution_window)}</p>`:""}
+          ${avoid.length?`<p class="err" style="margin-top:10px">${esc(avoid.slice(0,3).join(" · "))}</p>`:""}
+          <p class="why">${esc(String(why).slice(0,420))}</p>
+          ${evidence.map(x=>`<div class="news-line">${esc(x)}</div>`).join("")}
+          ${sec.summary?`<p class="muted" style="margin-top:8px">${t("research.sec")}: ${esc(String(sec.summary).slice(0,220))}</p>`:""}
+          ${newsTape(r.news)}
+          <p class="muted" style="margin-top:8px">quant ${num(r.quant_score)} · risk-adj ${num(r.risk_adjusted_score)}</p>
+          <button class="btn ghost open" data-s="${esc(sym)}" style="margin-top:8px">${t("research.chart")}</button>
+        </div>`;
+      }).join("")||`<div class="card"><p class="muted">${t("research.empty")}</p></div>`}
+    </div>`;
+}
+
+async function research(){
+  let universe=[], deep={}, job=null;
+  try { universe = (await api("/api/universe")).universe||[]; } catch{}
+  try { deep = await api("/api/deep/latest"); } catch{}
+  try { const st = await api("/api/deep/status"); job = st.job; } catch{}
+  if(job && job.result && job.result.reports){
+    deep = {available:true, reports:{...(deep.reports||{}), ...job.result.reports}, latest_batch: job.result.tickers || deep.latest_batch};
+  }
+  if(!deepSelected.length && symbol) deepSelected=[symbol];
+  const paint = () => { root.innerHTML = renderResearchBody(universe, deep, job); bind(); };
+  const bind = () => {
+    const refreshSel = ()=>{ const el=$("#selList"); if(el) el.textContent = deepSelected.join(", ")||"—"; };
+    const addBtn = $("#addBtn");
+    if(addBtn) addBtn.onclick=()=>{
+      const v = $("#addSym").value;
+      if(v && !deepSelected.includes(v) && deepSelected.length<5){ deepSelected.push(v); symbol=v; }
+      refreshSel();
+    };
+    root.querySelectorAll(".open").forEach(b=>b.onclick=()=>{symbol=b.dataset.s; navTo("chart");});
+    const run = $("#runDeep");
+    if(run) run.onclick=async()=>{
+      if(!deepSelected.length){ alert("Select tickers"); return; }
+      try{
+        const res = await api("/api/deep",{method:"POST",body:JSON.stringify({tickers:deepSelected, lang})});
+        job = res.job;
+        paint();
+        job = await pollJob("deep", job.id, (j)=>{ if(page!=="research") return; applyProgress("deep", j); });
+        if(page!=="research") return;
+        try { deep = await api("/api/deep/latest"); } catch{}
+        if(job.result && job.result.reports){
+          deep = {available:true, reports:{...(deep.reports||{}), ...job.result.reports}, latest_batch: job.result.tickers || deep.latest_batch};
+        }
+        if(job.status==="error" && !(deep.reports && Object.keys(deep.reports).length)){
+          alert(job.error||job.message||"Deep failed");
+        }
+        job = job.status==="done" ? null : job;
+        paint();
+      }catch(e){ alert(e.message); }
+    };
+  };
+  paint();
+  if(job && (job.status==="queued"||job.status==="running")){
+    pollJob("deep", job.id, (j)=>{ if(page!=="research") return; applyProgress("deep", j); }).then(async (done)=>{
+      if(page!=="research") return;
+      job = done;
+      try { deep = await api("/api/deep/latest"); } catch{}
+      if(job.result && job.result.reports){
+        deep = {available:true, reports:{...(deep.reports||{}), ...job.result.reports}, latest_batch: job.result.tickers || deep.latest_batch};
+      }
+      job = job.status==="done" ? null : job;
+      paint();
+    });
+  }
+}
+
+async function market(){
+  root.innerHTML = `<div class="card"><h3>${t("page.market")}</h3><p class="muted">…</p></div>`;
+  const [q,w] = await Promise.all([api("/api/quotes"), api("/api/watchlist")]);
+  root.innerHTML = `<div class="layout">
+    <div class="card"><h3>${t("page.market")}</h3>
+      <table><thead><tr><th>Symbol</th><th>Name</th><th>Last</th><th>Chg</th><th>Sector</th></tr></thead>
+      <tbody>${(q.quotes||[]).map(r=>`<tr class="open" data-s="${r.symbol}" style="cursor:pointer"><td>${r.symbol}</td><td>${r.name}</td><td>${r.last?.toFixed?.(2)}</td><td class="${cls(r.chg_pct)}">${r.chg_pct}%</td><td>${r.sector||""}</td></tr>`).join("")}</tbody></table>
+    </div>
+    <div class="card"><h3>Watchlist</h3>${(w.symbols||[]).map(s=>`<div class="row" style="justify-content:space-between"><button class="nav-btn open" data-s="${s}">${s}</button></div>`).join("")}</div>
+  </div>`;
+  root.querySelectorAll(".open").forEach(b=>b.onclick=()=>{symbol=b.dataset.s; navTo("research");});
+}
+
+async function chart(){
+  const d = await api("/api/chart/"+symbol);
+  const bars = d.bars||[];
+  const cs = bars.map(b=>b.c);
+  const max=Math.max(...cs,1), min=Math.min(...cs,0), span=max-min||1;
+  root.innerHTML = `<div class="card"><h3>${t("page.chart")} ${symbol}</h3>
+    <div class="bars">${bars.slice(-80).map(b=>`<div class="bar" title="${b.t} ${b.c}" style="height:${((b.c-min)/span)*100}%"></div>`).join("")}</div>
+    <p class="muted">Daily closes</p></div>`;
+}
+
+async function aimode(){
+  const cfg = await api("/api/ai-mode");
+  await loadWorker();
+  const sigs = (worker?.last_signals||[]).slice(-6);
+  root.innerHTML = `${autoBanner()}<div class="layout"><div class="card"><h3>${t("page.aimode")}</h3>
+    <p class="muted">${t("aimode.lead")}</p>
+    <div class="row" id="strats">${["stable","aggressive","hybrid","research_list"].map(s=>`<button class="tab ${cfg.strategy===s?"on":""}" data-s="${s}">${s}</button>`).join("")}</div>
+    <label class="field">LLM influence % <input id="llm" type="range" min="0" max="40" value="${cfg.llm_influence}" /> <span id="llmv">${cfg.llm_influence}%</span></label>
+    <label class="field">Entry threshold <input id="th" type="number" value="${cfg.entry_threshold}" /></label>
+    <label class="field">Max positions <input id="mp" type="number" value="${cfg.max_positions}" /></label>
+    <label class="field">Risk <select id="rt"><option>low</option><option>medium</option><option>high</option></select></label>
+    <div class="row" style="margin-top:12px">
+      <button class="btn" id="save">${t("btn.save")}</button>
+      ${worker?.running?`<button class="btn ghost" id="wstop">${t("btn.stop")}</button>`:`<button class="btn purple" id="wstart">${t("btn.start")}</button>`}
+    </div>
+    <p class="muted" id="sm"></p>
+    </div><div>
+      <div class="card" style="margin-bottom:12px"><h3>${t("aimode.worker")}</h3>
+        <p>AUTO ${worker?.running?"ON":"OFF"} · PAPER ${worker?.paper!==false?"YES":"NO"}</p>
+        <p class="muted">${explainMsg()}</p>
+        <p class="muted">${t("aimode.cap")}: ${worker?.fetched??"—"} / cap ${worker?.universe_cap??"—"} / ${worker?.universe_size??"—"}</p>
+        <p class="muted">market hours: ${worker?.market_hours?"yes":"no"} · ignore hours: ${worker?.ignore_market_hours?"yes":"no"}</p>
+        <p class="muted">last run: ${worker?.last_run||"—"}</p>
+        ${(() => { const sk=worker?.skip_counts||{}; const ks=Object.keys(sk).filter(k=>sk[k]>0).sort((a,b)=>sk[b]-sk[a]); return ks.length?`<p class="muted">${t("aimode.why")}: ${ks.map(k=>`${k}×${sk[k]}`).join(" · ")}</p>`:""; })()}
+      </div>
+      <div class="card"><h3>${t("aimode.gates")}</h3>
+        <p>Kill switch: ${cfg.kill_switch?"ON":"OFF"}</p>
+        <p class="muted">${t("aimode.paperonly")}</p>
+        <h3 style="margin-top:12px">Signals</h3>
+        ${sigs.length?sigs.map(s=>`<p class="muted">${JSON.stringify(s)}</p>`).join(""):`<p class="muted">${t("desk.none")}</p>`}
+      </div>
+    </div></div>`;
+  bindBanner();
+  $("#rt").value = cfg.risk_tolerance||"medium";
+  let strategy=cfg.strategy;
+  root.querySelectorAll("#strats .tab").forEach(b=>b.onclick=()=>{strategy=b.dataset.s; root.querySelectorAll("#strats .tab").forEach(x=>x.classList.toggle("on",x===b));});
+  $("#llm").oninput=()=>$("#llmv").textContent=$("#llm").value+"%";
+  $("#save").onclick=async()=>{
+    await api("/api/ai-mode",{method:"PUT",body:JSON.stringify({strategy,llm_influence:Number($("#llm").value),entry_threshold:Number($("#th").value),max_positions:Number($("#mp").value),risk_tolerance:$("#rt").value,worker_enabled:!!worker?.running,ignore_market_hours:!!worker?.ignore_market_hours})});
+    $("#sm").textContent = lang==="zh-TW" ? "已儲存（尚未啟動機器人）。" : "Saved (does not start the worker).";
+  };
+  const st=$("#wstart"), sp=$("#wstop");
+  if(st) st.onclick=async()=>{ try{ worker=await api("/api/worker/start",{method:"POST",body:JSON.stringify({strategy,interval:60})}); applyChrome(); aimode(); }catch(e){ $("#sm").textContent=e.message; } };
+  if(sp) sp.onclick=async()=>{ try{ worker=await api("/api/worker/stop",{method:"POST",body:"{}"}); applyChrome(); aimode(); }catch(e){ $("#sm").textContent=e.message; } };
+}
+
+async function strategies(){
+  const p = await api("/api/performance");
+  root.innerHTML = `<div class="card"><h3>${t("page.strategies")}</h3><p class="muted">Stable strategy backtest snapshot</p>
+    <div class="grid3"><div class="card"><div class="lbl">Return</div><div class="val">${p.total_return_pct??"—"}%</div></div>
+    <div class="card"><div class="lbl">Sharpe</div><div class="val">${p.sharpe_ratio??"—"}</div></div>
+    <div class="card"><div class="lbl">Trades</div><div class="val">${p.num_trades??"—"}</div></div></div></div>`;
+}
+
+async function calendar(){
+  const d = await api("/api/calendar");
+  root.innerHTML = `<div class="card"><h3>${t("page.calendar")}</h3><table><thead><tr><th>Date</th><th>Event</th><th>Impact</th><th>Symbol</th></tr></thead>
+    <tbody>${(d.events||[]).map(e=>`<tr><td>${e.date}</td><td>${e.event}</td><td>${e.impact}</td><td>${e.symbol||""}</td></tr>`).join("")}</tbody></table></div>`;
+}
+
+async function guide(){
+  let steps=[];
+  try { steps = (await api("/api/guide")).steps||[]; } catch{}
+  const pick = (s) => lang==="zh-TW" ? (s.zh||s.en) : (s.en||s.zh);
+  root.innerHTML = `<div class="card"><h3>${t("guide.title")}</h3>
+    <p class="muted">${t("guide.lead")}</p>
+    <button class="btn" id="replay">${t("btn.tour")}</button>
+    <div style="margin-top:16px">${steps.map((s,i)=>{ const x=pick(s); return `<div class="guide-step"><b>${i+1}. ${x.title}</b><p class="muted" style="margin:8px 0 0">${x.body}</p></div>`; }).join("")}</div>
+  </div>`;
+  $("#replay").onclick=()=>{ tourStep=0; showTour(); };
+}
+
+async function journal(){
+  const d = await api("/api/journal");
+  const rows = [...(d.entries||[])].reverse().slice(0,40);
+  root.innerHTML = `<div class="card"><h3>${t("page.journal")}</h3>
+    <div class="row"><input id="js" value="AAPL" style="width:90px" /><input id="jn" placeholder="Note" style="flex:1" /><button class="btn" id="ja">Add</button></div>
+    <table><thead><tr><th>Time</th><th>Symbol</th><th>Note</th></tr></thead>
+    <tbody>${rows.map(e=>`<tr><td>${String(e.ts||"").slice(0,19)}</td><td>${e.symbol||""}</td><td>${e.note||JSON.stringify(e)}</td></tr>`).join("")}</tbody></table></div>`;
+  $("#ja").onclick=async()=>{ await api("/api/journal",{method:"POST",body:JSON.stringify({symbol:$("#js").value,note:$("#jn").value})}); journal(); };
+}
+
+async function options(){
+  const d = await api("/api/options/"+symbol);
+  const tbl = (rows)=> (rows||[]).map(c=>`<tr><td>${c.strike}</td><td>${c.lastPrice}</td><td>${c.impliedVolatility?.toFixed?.(2)??""}</td></tr>`).join("");
+  root.innerHTML = `<div class="card"><h3>${t("page.options")} ${symbol}</h3><p class="muted">Expiry ${d.expiry||"—"}</p>
+    <div class="grid2"><div><h3>Calls</h3><table><thead><tr><th>Strike</th><th>Last</th><th>IV</th></tr></thead><tbody>${tbl(d.calls)}</tbody></table></div>
+    <div><h3>Puts</h3><table><thead><tr><th>Strike</th><th>Last</th><th>IV</th></tr></thead><tbody>${tbl(d.puts)}</tbody></table></div></div></div>`;
+}
+
+async function settings(){
+  const m = await api("/api/meta");
+  const o = await api("/api/ops");
+  await loadWorker();
+  root.innerHTML = `<div class="card"><h3>${t("page.settings")}</h3>
+    <p>App: <strong>Cgab</strong></p>
+    <p>${t("settings.lang")}: ${lang==="zh-TW"?"繁體中文":"English"}</p>
+    <p>Paper: ${m.paper}</p>
+    <p>Ignore market hours: ${m.ignore_market_hours}</p>
+    <p>LLM: ${m.llm?.configured?"ON":"OFF"} · chat=${m.llm?.chat_model||"—"} · reasoner=${m.llm?.reasoning_model||"—"}</p>
+    <p class="muted">Scan / Deep use the chat model for batch scores and the reasoner for deep strategy write-ups. The paper worker does not call the LLM every minute.</p>
+    <p>AUTO: ${worker?.running?"ON":"OFF"} (${explainMsg()})</p>
+    <p class="muted">Kill switch ${o.kill_switch?"ON":"OFF"}</p>
+    <p class="muted">docs/CGAB_USER_GUIDE.md</p>
+    <button class="btn" id="replay">${t("btn.tour")}</button>
+  </div>`;
+  $("#replay").onclick=()=>{ tourStep=0; showTour(); };
+}
+
+applyChrome();
+Promise.all([loadAccount(), loadWorker()]).then(()=>{
+  render();
+  if(!localStorage.getItem("cgab.tour.done")) { tourStep=0; showTour(); }
+});
+setInterval(()=>{ loadWorker(); }, 12000);
+</script>
+</body>
+</html>

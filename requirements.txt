@@ -15,3 +15,5 @@ akshare>=1.18.0
 vaderSentiment>=3.3.2
 pydantic>=2.0.0
 alpaca-py>=0.33.0
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0

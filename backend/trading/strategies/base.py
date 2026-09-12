@@ -77,6 +77,17 @@ class StrategyBase(ABC):
         Return None if no actionable setup exists.
         """
 
+    def diagnose_entry(
+        self,
+        ticker: str,
+        df: pd.DataFrame,
+        fundamental_score: float,
+        llm_signal: Optional[str],
+        current_positions: List[Dict[str, Any]],
+    ) -> Optional[str]:
+        """Return a skip_codes id when generate_signal would be None, else None."""
+        return "no_setup"
+
     @abstractmethod
     def check_exit(
         self,

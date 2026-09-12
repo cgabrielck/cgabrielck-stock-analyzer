@@ -86,21 +86,64 @@ class AlpacaBroker(BrokerAdapter):
         account = self.api.get_account()
         positions_raw = self.api.get_all_positions()
 
-        positions = [
-            Position(
-                id=p.asset_id,
-                symbol=p.symbol,
-                quantity=float(p.qty),
-                average_entry_price=float(p.avg_entry_price),
+        def _f(value, default=None):
+            if value is None:
+                return default
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return default
+
+        positions = []
+        unrealized_total = 0.0
+        long_mv = 0.0
+        for p in positions_raw:
+            qty = _f(p.qty, 0.0) or 0.0
+            avg = _f(p.avg_entry_price, 0.0) or 0.0
+            mark = _f(getattr(p, "current_price", None))
+            mkt = _f(getattr(p, "market_value", None))
+            upl = _f(getattr(p, "unrealized_pl", None))
+            uplpc = _f(getattr(p, "unrealized_plpc", None))
+            cost = _f(getattr(p, "cost_basis", None), qty * avg)
+            if mkt is None and mark is not None:
+                mkt = mark * qty
+            if upl is None and mkt is not None and cost is not None:
+                upl = mkt - cost
+            if upl:
+                unrealized_total += upl
+            if mkt:
+                long_mv += mkt
+            positions.append(
+                Position(
+                    id=str(p.asset_id),
+                    symbol=p.symbol,
+                    quantity=qty,
+                    average_entry_price=avg,
+                    current_price=mark,
+                    market_value=mkt,
+                    unrealized_pl=upl,
+                    unrealized_plpc=uplpc,
+                    cost_basis=cost,
+                )
             )
-            for p in positions_raw
-        ]
+
+        equity = _f(getattr(account, "equity", None), float(account.portfolio_value))
+        last_equity = _f(getattr(account, "last_equity", None), equity)
+        day_pnl = None
+        if equity is not None and last_equity is not None:
+            day_pnl = equity - last_equity
 
         return AccountSummary(
             cash=float(account.cash),
             buying_power=float(account.buying_power),
             portfolio_value=float(account.portfolio_value),
             positions=positions,
+            equity=equity,
+            last_equity=last_equity,
+            day_pnl=day_pnl,
+            unrealized_pl=unrealized_total,
+            long_market_value=long_mv,
+            paper=self.is_paper,
         )
 
     def _map_status(self, alpaca_status) -> OrderStatus:

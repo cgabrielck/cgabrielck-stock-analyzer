@@ -65,6 +65,47 @@ class StableStrategy(StrategyBase):
         df["atr"]      = self._atr(df)
         return df
 
+    def diagnose_entry(
+        self,
+        ticker: str,
+        df: pd.DataFrame,
+        fundamental_score: float,
+        llm_signal: Optional[str],
+        current_positions: List[Dict[str, Any]],
+    ) -> Optional[str]:
+        skip, _row = self._entry_skip(ticker, df, fundamental_score, llm_signal, current_positions)
+        return skip
+
+    def _entry_skip(
+        self,
+        ticker: str,
+        df: pd.DataFrame,
+        fundamental_score: float,
+        llm_signal: Optional[str],
+        current_positions: List[Dict[str, Any]],
+    ):
+        if df is None or len(df) < 210:
+            return "history_short", None
+        work = self.populate_indicators(df)
+        row = work.iloc[-1]
+        if any(p.get("symbol") == ticker for p in current_positions):
+            return "already_held", row
+        if fundamental_score < self.MIN_FUND_SCORE:
+            return "fund_lt_65", row
+        if llm_signal and llm_signal.lower() == "bearish":
+            return "llm_bearish", row
+        close = float(row["Close"])
+        rsi = float(row["rsi"])
+        if pd.isna(rsi) or rsi >= self.RSI_ENTRY:
+            return "rsi_not_oversold", row
+        bb_lower = float(row["bb_lower"])
+        if pd.isna(bb_lower) or close > bb_lower * 1.005:
+            return "bb_not_low", row
+        sma200 = float(row["sma200"])
+        if pd.isna(sma200) or close < sma200 * 0.97:
+            return "below_sma200", row
+        return None, row
+
     def generate_signal(
         self,
         ticker: str,
@@ -73,44 +114,15 @@ class StableStrategy(StrategyBase):
         llm_signal: Optional[str],
         current_positions: List[Dict[str, Any]],
     ) -> Optional[Signal]:
-        if len(df) < 210:          # need enough history for SMA200
-            return None
-
-        df = self.populate_indicators(df)
-        row = df.iloc[-1]
-
-        # 1. Already holding?
-        held = [p for p in current_positions if p.get("symbol") == ticker]
-        if held:
-            return None
-
-        # 2. Fundamental quality gate
-        if fundamental_score < self.MIN_FUND_SCORE:
-            return None
-
-        # 3. LLM sentiment gate
-        if llm_signal and llm_signal.lower() == "bearish":
+        skip, row = self._entry_skip(ticker, df, fundamental_score, llm_signal, current_positions)
+        if skip or row is None:
             return None
 
         close = float(row["Close"])
-
-        # 4. RSI oversold
         rsi = float(row["rsi"])
-        if pd.isna(rsi) or rsi >= self.RSI_ENTRY:
-            return None
-
-        # 5. BB lower touch
         bb_lower = float(row["bb_lower"])
-        bb_mid   = float(row["bb_mid"])
-        if pd.isna(bb_lower) or close > bb_lower * 1.005:   # 0.5% tolerance
-            return None
-
-        # 6. Long-term uptrend (price above SMA200)
+        bb_mid = float(row["bb_mid"])
         sma200 = float(row["sma200"])
-        if pd.isna(sma200) or close < sma200 * 0.97:        # 3% buffer
-            return None
-
-        atr = float(row["atr"]) if not pd.isna(row["atr"]) else close * 0.01
         stop   = round(close * (1 - self.STOP_LOSS_PCT), 4)
         target = round(bb_mid, 4)                            # target = BB mid (SMA20)
 

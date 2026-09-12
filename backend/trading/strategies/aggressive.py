@@ -57,6 +57,54 @@ class AggressiveStrategy(StrategyBase):
             if hasattr(self, attr):
                 setattr(self, attr, float(value) if isinstance(value, (int, float)) else value)
 
+    def diagnose_entry(
+        self,
+        ticker: str,
+        df: pd.DataFrame,
+        fundamental_score: float,
+        llm_signal: Optional[str],
+        current_positions: List[Dict[str, Any]],
+    ) -> Optional[str]:
+        skip, _packed = self._entry_skip(ticker, df, fundamental_score, llm_signal, current_positions)
+        return skip
+
+    def _entry_skip(
+        self,
+        ticker: str,
+        df: pd.DataFrame,
+        fundamental_score: float,
+        llm_signal: Optional[str],
+        current_positions: List[Dict[str, Any]],
+    ):
+        if df is None or len(df) < 60:
+            return "history_short", None
+        work = self.populate_indicators(df)
+        row = work.iloc[-1]
+        if any(p.get("symbol") == ticker for p in current_positions):
+            return "already_held", None
+        if llm_signal and llm_signal.lower() == "bearish":
+            return "llm_bearish", None
+        if fundamental_score < self.MIN_FUND_SCORE:
+            return "fund_below_min", None
+        close = float(row["Close"])
+        sma50 = float(row["sma50"]) if not pd.isna(row["sma50"]) else None
+        vol = float(row["Volume"]) if not pd.isna(row["Volume"]) else 0.0
+        vol20 = float(row["vol20"]) if not pd.isna(row["vol20"]) else 1.0
+        rsi = float(row["rsi"]) if not pd.isna(row["rsi"]) else 50.0
+        if sma50 is None or close < sma50:
+            return "below_sma50", None
+        if vol20 <= 0 or (vol / vol20) < self.VOLUME_SURGE:
+            return "volume_weak", None
+        if rsi >= self.RSI_OVERBOUGHT:
+            return "rsi_overbought", None
+        vcp = detect_vcp(work, min_contractions=self.VCP_MIN_CONTRACTIONS)
+        if not vcp["found"]:
+            return "no_vcp", None
+        breakout_level = vcp["breakout_level"]
+        if close < breakout_level * 0.98:
+            return "no_vcp", None
+        return None, (row, close, sma50, vol, vol20, rsi, vcp, breakout_level)
+
     def populate_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
         df = df.copy()
         df["sma50"]     = df["Close"].rolling(50).mean()
@@ -77,48 +125,10 @@ class AggressiveStrategy(StrategyBase):
         llm_signal: Optional[str],
         current_positions: List[Dict[str, Any]],
     ) -> Optional[Signal]:
-        if len(df) < 60:
+        skip, packed = self._entry_skip(ticker, df, fundamental_score, llm_signal, current_positions)
+        if skip or packed is None:
             return None
-
-        df = self.populate_indicators(df)
-        row = df.iloc[-1]
-
-        # 1. Already holding?
-        if any(p.get("symbol") == ticker for p in current_positions):
-            return None
-
-        # 2. LLM must not be bearish
-        if llm_signal and llm_signal.lower() == "bearish":
-            return None
-
-        close  = float(row["Close"])
-        sma50  = float(row["sma50"])  if not pd.isna(row["sma50"])  else None
-        vol    = float(row["Volume"]) if not pd.isna(row["Volume"]) else 0.0
-        vol20  = float(row["vol20"])  if not pd.isna(row["vol20"])  else 1.0
-        rsi    = float(row["rsi"])    if not pd.isna(row["rsi"])    else 50.0
-
-        # 3. Price above SMA50
-        if sma50 is None or close < sma50:
-            return None
-
-        # 4. Volume surge (breakout confirmation)
-        if vol20 <= 0 or (vol / vol20) < self.VOLUME_SURGE:
-            return None
-
-        # 5. RSI not already overbought at entry
-        if rsi >= self.RSI_OVERBOUGHT:
-            return None
-
-        # 6. VCP pattern
-        vcp = detect_vcp(df, min_contractions=self.VCP_MIN_CONTRACTIONS)
-        if not vcp["found"]:
-            return None
-
-        breakout_level = vcp["breakout_level"]
-
-        # Price must be at/above breakout level (within 2%)
-        if close < breakout_level * 0.98:
-            return None
+        row, close, sma50, vol, vol20, rsi, vcp, breakout_level = packed
 
         stop = round(close * (1 - self.TRAILING_STOP_PCT), 4)
         # 3R rule (Van Tharp / Minervini): target = entry + R × (entry - stop).

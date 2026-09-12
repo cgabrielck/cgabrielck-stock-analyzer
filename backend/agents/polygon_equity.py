@@ -24,7 +24,13 @@ DEFAULT_TIMEOUT = 15
 
 
 def is_configured() -> bool:
-    return bool(POLYGON_API_KEY)
+    key = (POLYGON_API_KEY or "").strip()
+    if not key:
+        return False
+    low = key.lower()
+    if any(token in low for token in ("replace-with", "your-polygon", "changeme")):
+        return False
+    return True
 
 
 def _get(path: str, params: Optional[Dict[str, Any]] = None, timeout: float = DEFAULT_TIMEOUT) -> Dict[str, Any]:

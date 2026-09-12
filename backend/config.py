@@ -54,8 +54,30 @@ class TelegramSettings:
     owner_user_id: str
 
     @property
+    def ops_configured(self) -> bool:
+        token = (self.bot_token or "").strip()
+        chat = (self.chat_id or "").strip()
+        if not token or not chat:
+            return False
+        return not (_is_secret_placeholder(token) or _is_secret_placeholder(chat))
+
+    @property
     def configured(self) -> bool:
-        return bool(self.bot_token and self.chat_id and self.owner_user_id)
+        owner = (self.owner_user_id or "").strip()
+        return self.ops_configured and bool(owner) and not _is_secret_placeholder(owner)
+
+
+def _is_secret_placeholder(value: str) -> bool:
+    low = (value or "").strip().lower()
+    return any(
+        token in low
+        for token in (
+            "replace-with",
+            "your-bot-token",
+            "your-chat-id",
+            "your-stock-analyzer",
+        )
+    )
 
 
 @lru_cache(maxsize=1)

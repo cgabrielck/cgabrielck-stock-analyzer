@@ -63,9 +63,20 @@ class Position(AuditableModel):
     symbol: str = Field(..., description="The symbol of the asset")
     quantity: float = Field(..., description="The number of shares held")
     average_entry_price: float = Field(..., description="The average price at which the shares were acquired")
-    
+    current_price: Optional[float] = Field(None, description="Last/mark price")
+    market_value: Optional[float] = Field(None, description="Mark-to-market value")
+    unrealized_pl: Optional[float] = Field(None, description="Unrealized P&L in dollars")
+    unrealized_plpc: Optional[float] = Field(None, description="Unrealized P&L as a fraction")
+    cost_basis: Optional[float] = Field(None, description="Total cost basis")
+
 class AccountSummary(BaseModel):
     cash: float
     buying_power: float
     portfolio_value: float
     positions: List[Position]
+    equity: Optional[float] = None
+    last_equity: Optional[float] = None
+    day_pnl: Optional[float] = None
+    unrealized_pl: Optional[float] = None
+    long_market_value: Optional[float] = None
+    paper: bool = True

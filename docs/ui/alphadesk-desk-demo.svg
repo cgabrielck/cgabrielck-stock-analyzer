@@ -1,0 +1,138 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="900" viewBox="0 0 1440 900">
+  <!-- Soft dark + coral style (reference Chainex-like), no DESK//OVERVIEW, no CYBER TERMINAL -->
+  <rect width="1440" height="900" fill="#12121a"/>
+
+  <!-- Sidebar -->
+  <rect width="220" height="900" fill="#16161f"/>
+  <circle cx="40" cy="40" r="14" fill="#f0858e"/>
+  <text x="64" y="46" fill="#ffffff" font-family="Segoe UI, Arial, sans-serif" font-size="16" font-weight="700">ALPHA//DESK</text>
+
+  <rect x="16" y="96" width="188" height="40" rx="12" fill="#2a1f24"/>
+  <text x="36" y="121" fill="#f0858e" font-family="Segoe UI, Arial, sans-serif" font-size="14" font-weight="600">Desk</text>
+  <text x="36" y="169" fill="#a0a0a0" font-family="Segoe UI, Arial, sans-serif" font-size="14">Research</text>
+  <text x="36" y="209" fill="#a0a0a0" font-family="Segoe UI, Arial, sans-serif" font-size="14">Market</text>
+  <text x="36" y="249" fill="#a0a0a0" font-family="Segoe UI, Arial, sans-serif" font-size="14">Strategies</text>
+  <text x="36" y="289" fill="#a0a0a0" font-family="Segoe UI, Arial, sans-serif" font-size="14">AI Mode</text>
+  <text x="36" y="329" fill="#a0a0a0" font-family="Segoe UI, Arial, sans-serif" font-size="14">Alerts</text>
+  <text x="36" y="369" fill="#a0a0a0" font-family="Segoe UI, Arial, sans-serif" font-size="14">Settings</text>
+
+  <rect x="16" y="820" width="188" height="48" rx="14" fill="#1c1c28" stroke="#f0858e" stroke-opacity="0.5"/>
+  <text x="36" y="849" fill="#f0858e" font-family="Segoe UI, Arial, sans-serif" font-size="13" font-weight="600">PAPER</text>
+
+  <!-- Header -->
+  <rect x="248" y="24" width="720" height="44" rx="22" fill="#1c1c28"/>
+  <text x="272" y="51" fill="#a0a0a0" font-family="Segoe UI, Arial, sans-serif" font-size="14">Search symbols, orders...</text>
+  <rect x="1280" y="28" width="120" height="36" rx="18" fill="#f0858e"/>
+  <text x="1310" y="51" fill="#12121a" font-family="Segoe UI, Arial, sans-serif" font-size="13" font-weight="700">Refresh</text>
+
+  <!-- KPI cards -->
+  <rect x="248" y="88" width="180" height="72" rx="16" fill="#1c1c28"/>
+  <text x="268" y="116" fill="#a0a0a0" font-family="Segoe UI, Arial, sans-serif" font-size="12">Equity</text>
+  <text x="268" y="142" fill="#ffffff" font-family="Segoe UI, Arial, sans-serif" font-size="18" font-weight="700">$100,234</text>
+
+  <rect x="444" y="88" width="180" height="72" rx="16" fill="#1c1c28"/>
+  <text x="464" y="116" fill="#a0a0a0" font-family="Segoe UI, Arial, sans-serif" font-size="12">Day P/L</text>
+  <text x="464" y="142" fill="#4caf50" font-family="Segoe UI, Arial, sans-serif" font-size="18" font-weight="700">+$412</text>
+
+  <rect x="640" y="88" width="180" height="72" rx="16" fill="#1c1c28"/>
+  <text x="660" y="116" fill="#a0a0a0" font-family="Segoe UI, Arial, sans-serif" font-size="12">Cash</text>
+  <text x="660" y="142" fill="#ffffff" font-family="Segoe UI, Arial, sans-serif" font-size="18" font-weight="700">$38,200</text>
+
+  <rect x="836" y="88" width="180" height="72" rx="16" fill="#1c1c28"/>
+  <text x="856" y="116" fill="#a0a0a0" font-family="Segoe UI, Arial, sans-serif" font-size="12">Positions</text>
+  <text x="856" y="142" fill="#ffffff" font-family="Segoe UI, Arial, sans-serif" font-size="18" font-weight="700">5</text>
+
+  <rect x="1032" y="88" width="180" height="72" rx="16" fill="#1c1c28"/>
+  <text x="1052" y="116" fill="#a0a0a0" font-family="Segoe UI, Arial, sans-serif" font-size="12">Unrealized</text>
+  <text x="1052" y="142" fill="#4caf50" font-family="Segoe UI, Arial, sans-serif" font-size="18" font-weight="700">+$1,840</text>
+
+  <rect x="1228" y="88" width="172" height="72" rx="16" fill="#1c1c28"/>
+  <text x="1248" y="116" fill="#a0a0a0" font-family="Segoe UI, Arial, sans-serif" font-size="12">Worker</text>
+  <circle cx="1260" cy="136" r="5" fill="#4caf50"/>
+  <text x="1272" y="142" fill="#ffffff" font-family="Segoe UI, Arial, sans-serif" font-size="18" font-weight="700">ON</text>
+
+  <!-- Holdings -->
+  <rect x="248" y="184" width="760" height="520" rx="20" fill="#1c1c28"/>
+  <text x="276" y="224" fill="#ffffff" font-family="Segoe UI, Arial, sans-serif" font-size="18" font-weight="700">Holdings</text>
+  <text x="276" y="248" fill="#a0a0a0" font-family="Segoe UI, Arial, sans-serif" font-size="12">Broker inventory (Alpaca Paper)</text>
+
+  <text x="276" y="288" fill="#a0a0a0" font-family="Segoe UI, Arial, sans-serif" font-size="12">Symbol</text>
+  <text x="380" y="288" fill="#a0a0a0" font-family="Segoe UI, Arial, sans-serif" font-size="12">Qty</text>
+  <text x="450" y="288" fill="#a0a0a0" font-family="Segoe UI, Arial, sans-serif" font-size="12">Avg</text>
+  <text x="540" y="288" fill="#a0a0a0" font-family="Segoe UI, Arial, sans-serif" font-size="12">Last</text>
+  <text x="640" y="288" fill="#a0a0a0" font-family="Segoe UI, Arial, sans-serif" font-size="12">Mkt Value</text>
+  <text x="760" y="288" fill="#a0a0a0" font-family="Segoe UI, Arial, sans-serif" font-size="12">Unreal</text>
+  <text x="880" y="288" fill="#a0a0a0" font-family="Segoe UI, Arial, sans-serif" font-size="12"></text>
+
+  <text x="276" y="328" fill="#ffffff" font-family="Segoe UI, Arial, sans-serif" font-size="14" font-weight="600">AAPL</text>
+  <text x="380" y="328" fill="#ffffff" font-family="Segoe UI, Arial, sans-serif" font-size="14">40</text>
+  <text x="450" y="328" fill="#ffffff" font-family="Segoe UI, Arial, sans-serif" font-size="14">178.20</text>
+  <text x="540" y="328" fill="#ffffff" font-family="Segoe UI, Arial, sans-serif" font-size="14">191.05</text>
+  <text x="640" y="328" fill="#ffffff" font-family="Segoe UI, Arial, sans-serif" font-size="14">$7,642</text>
+  <text x="760" y="328" fill="#4caf50" font-family="Segoe UI, Arial, sans-serif" font-size="14">+$514</text>
+  <rect x="880" y="310" width="90" height="28" rx="14" fill="#f0858e"/>
+  <text x="902" y="329" fill="#12121a" font-family="Segoe UI, Arial, sans-serif" font-size="12" font-weight="700">Trade</text>
+
+  <text x="276" y="376" fill="#ffffff" font-family="Segoe UI, Arial, sans-serif" font-size="14" font-weight="600">MSFT</text>
+  <text x="380" y="376" fill="#ffffff" font-family="Segoe UI, Arial, sans-serif" font-size="14">18</text>
+  <text x="450" y="376" fill="#ffffff" font-family="Segoe UI, Arial, sans-serif" font-size="14">402.10</text>
+  <text x="540" y="376" fill="#ffffff" font-family="Segoe UI, Arial, sans-serif" font-size="14">415.60</text>
+  <text x="640" y="376" fill="#ffffff" font-family="Segoe UI, Arial, sans-serif" font-size="14">$7,481</text>
+  <text x="760" y="376" fill="#4caf50" font-family="Segoe UI, Arial, sans-serif" font-size="14">+$243</text>
+  <rect x="880" y="358" width="90" height="28" rx="14" fill="#f0858e"/>
+  <text x="902" y="377" fill="#12121a" font-family="Segoe UI, Arial, sans-serif" font-size="12" font-weight="700">Trade</text>
+
+  <text x="276" y="424" fill="#ffffff" font-family="Segoe UI, Arial, sans-serif" font-size="14" font-weight="600">NVDA</text>
+  <text x="380" y="424" fill="#ffffff" font-family="Segoe UI, Arial, sans-serif" font-size="14">25</text>
+  <text x="450" y="424" fill="#ffffff" font-family="Segoe UI, Arial, sans-serif" font-size="14">118.40</text>
+  <text x="540" y="424" fill="#ffffff" font-family="Segoe UI, Arial, sans-serif" font-size="14">126.90</text>
+  <text x="640" y="424" fill="#ffffff" font-family="Segoe UI, Arial, sans-serif" font-size="14">$3,173</text>
+  <text x="760" y="424" fill="#4caf50" font-family="Segoe UI, Arial, sans-serif" font-size="14">+$213</text>
+  <rect x="880" y="406" width="90" height="28" rx="14" fill="#f0858e"/>
+  <text x="902" y="425" fill="#12121a" font-family="Segoe UI, Arial, sans-serif" font-size="12" font-weight="700">Trade</text>
+
+  <text x="276" y="472" fill="#ffffff" font-family="Segoe UI, Arial, sans-serif" font-size="14" font-weight="600">AMZN</text>
+  <text x="380" y="472" fill="#ffffff" font-family="Segoe UI, Arial, sans-serif" font-size="14">30</text>
+  <text x="450" y="472" fill="#ffffff" font-family="Segoe UI, Arial, sans-serif" font-size="14">178.00</text>
+  <text x="540" y="472" fill="#ffffff" font-family="Segoe UI, Arial, sans-serif" font-size="14">172.40</text>
+  <text x="640" y="472" fill="#ffffff" font-family="Segoe UI, Arial, sans-serif" font-size="14">$5,172</text>
+  <text x="760" y="472" fill="#e57373" font-family="Segoe UI, Arial, sans-serif" font-size="14">-$168</text>
+  <rect x="880" y="454" width="90" height="28" rx="14" fill="#f0858e"/>
+  <text x="902" y="473" fill="#12121a" font-family="Segoe UI, Arial, sans-serif" font-size="12" font-weight="700">Trade</text>
+
+  <text x="276" y="520" fill="#ffffff" font-family="Segoe UI, Arial, sans-serif" font-size="14" font-weight="600">META</text>
+  <text x="380" y="520" fill="#ffffff" font-family="Segoe UI, Arial, sans-serif" font-size="14">12</text>
+  <text x="450" y="520" fill="#ffffff" font-family="Segoe UI, Arial, sans-serif" font-size="14">485.00</text>
+  <text x="540" y="520" fill="#ffffff" font-family="Segoe UI, Arial, sans-serif" font-size="14">502.10</text>
+  <text x="640" y="520" fill="#ffffff" font-family="Segoe UI, Arial, sans-serif" font-size="14">$6,025</text>
+  <text x="760" y="520" fill="#4caf50" font-family="Segoe UI, Arial, sans-serif" font-size="14">+$205</text>
+  <rect x="880" y="502" width="90" height="28" rx="14" fill="#f0858e"/>
+  <text x="902" y="521" fill="#12121a" font-family="Segoe UI, Arial, sans-serif" font-size="12" font-weight="700">Trade</text>
+
+  <!-- Trade ticket -->
+  <rect x="1032" y="184" width="368" height="300" rx="20" fill="#1c1c28"/>
+  <text x="1060" y="224" fill="#ffffff" font-family="Segoe UI, Arial, sans-serif" font-size="16" font-weight="700">Trade</text>
+  <rect x="1060" y="244" width="90" height="32" rx="16" fill="#f0858e"/>
+  <text x="1086" y="265" fill="#12121a" font-family="Segoe UI, Arial, sans-serif" font-size="13" font-weight="700">Buy</text>
+  <rect x="1160" y="244" width="90" height="32" rx="16" fill="#2a2a36"/>
+  <text x="1186" y="265" fill="#a0a0a0" font-family="Segoe UI, Arial, sans-serif" font-size="13">Sell</text>
+  <text x="1060" y="308" fill="#a0a0a0" font-family="Segoe UI, Arial, sans-serif" font-size="12">Symbol</text>
+  <rect x="1060" y="318" width="312" height="40" rx="12" fill="#12121a"/>
+  <text x="1080" y="343" fill="#ffffff" font-family="Segoe UI, Arial, sans-serif" font-size="14">AAPL</text>
+  <text x="1060" y="388" fill="#a0a0a0" font-family="Segoe UI, Arial, sans-serif" font-size="12">Quantity</text>
+  <rect x="1060" y="398" width="312" height="40" rx="12" fill="#12121a"/>
+  <text x="1080" y="423" fill="#ffffff" font-family="Segoe UI, Arial, sans-serif" font-size="14">100</text>
+  <rect x="1060" y="460" width="312" height="48" rx="16" fill="#f0858e"/>
+  <text x="1160" y="490" fill="#12121a" font-family="Segoe UI, Arial, sans-serif" font-size="15" font-weight="700">Submit order</text>
+
+  <!-- AI Mode teaser card -->
+  <rect x="1032" y="504" width="368" height="200" rx="20" fill="#1c1c28"/>
+  <text x="1060" y="544" fill="#ffffff" font-family="Segoe UI, Arial, sans-serif" font-size="16" font-weight="700">AI Mode</text>
+  <text x="1060" y="568" fill="#a0a0a0" font-family="Segoe UI, Arial, sans-serif" font-size="12">Tune trading agent</text>
+  <text x="1060" y="604" fill="#ffffff" font-family="Segoe UI, Arial, sans-serif" font-size="13">Strategy: Stable</text>
+  <text x="1060" y="632" fill="#ffffff" font-family="Segoe UI, Arial, sans-serif" font-size="13">LLM influence: 20%</text>
+  <text x="1060" y="660" fill="#a0a0a0" font-family="Segoe UI, Arial, sans-serif" font-size="12">Cannot bypass RiskEngine</text>
+  <rect x="1060" y="676" width="160" height="36" rx="18" fill="#2a1f24" stroke="#f0858e"/>
+  <text x="1088" y="699" fill="#f0858e" font-family="Segoe UI, Arial, sans-serif" font-size="13" font-weight="600">Open AI Mode</text>
+</svg>

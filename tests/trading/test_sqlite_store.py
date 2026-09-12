@@ -15,6 +15,10 @@ class TestSQLiteOrderStore(unittest.TestCase):
 
     def tearDown(self):
         try:
+            self.store.close()
+        except Exception:
+            pass
+        try:
             os.unlink(self.tmp.name)
         except OSError:
             pass
@@ -46,7 +50,9 @@ class TestSQLiteOrderStore(unittest.TestCase):
         path = self.tmp.name + ".factory"
         store = create_order_store(backend="sqlite", filepath=path)
         self.assertIsInstance(store, SQLiteOrderStore)
-        os.unlink(path) if os.path.exists(path) else None
+        store.close()
+        if os.path.exists(path):
+            os.unlink(path)
 
     def test_factory_json(self):
         path = self.tmp.name + ".json"

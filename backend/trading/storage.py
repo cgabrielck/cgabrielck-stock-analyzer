@@ -119,6 +119,13 @@ class SQLiteOrderStore:
             )
             self._conn.commit()
 
+    def close(self) -> None:
+        with self._lock:
+            try:
+                self._conn.close()
+            except Exception:
+                pass
+
     def save_order(self, order: Order) -> None:
         payload = json.dumps(order.model_dump(mode="json"))
         updated = (order.updated_at or datetime.now()).isoformat()

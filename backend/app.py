@@ -2448,7 +2448,12 @@ def _render_picks_news_result(ticker: str, result: Dict[str, Any], lang: str) ->
             impact_cols[1].metric(t("picks_news.magnitude", lang), t(f"picks_news.{impact.get('magnitude', 'low')}", lang))
             impact_cols[2].metric(t("picks_news.horizon", lang), t(f"picks_news.{impact.get('horizon', 'short_term')}", lang))
             impact_cols[3].metric(t("picks_news.confidence", lang), f"{impact.get('confidence', 0)}%")
-            st.caption(f"{t('picks_news.event_type', lang)}: {t(f'picks_news.event_{impact.get("event_type", "other")}', lang)} · {t('picks_news.analysis_source', lang)}: {t(f'picks_news.source_{article.get("analysis_source", "rules")}', lang)}")
+            _event_type = impact.get("event_type", "other")
+            _analysis_source = article.get("analysis_source", "rules")
+            st.caption(
+                f"{t('picks_news.event_type', lang)}: {t(f'picks_news.event_{_event_type}', lang)} · "
+                f"{t('picks_news.analysis_source', lang)}: {t(f'picks_news.source_{_analysis_source}', lang)}"
+            )
             if impact.get("thesis"):
                 st.write(impact["thesis"])
             if article.get("link"):

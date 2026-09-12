@@ -12,6 +12,9 @@ from typing import Dict
 from backend.trading.strategies.base import StrategyBase
 from backend.trading.strategies.stable import StableStrategy
 from backend.trading.strategies.aggressive import AggressiveStrategy
+from backend.trading.strategies.research_list import ResearchListStrategy
+
+KNOWN_STRATEGIES = ("stable", "aggressive", "hybrid", "research_list")
 
 
 class HybridStrategy(StrategyBase):
@@ -35,6 +38,15 @@ class HybridStrategy(StrategyBase):
     def populate_indicators(self, df):
         return df  # each sub-strategy does its own
 
+    def diagnose_entry(self, ticker, df, fundamental_score, llm_signal, current_positions):
+        skip = self._stable.diagnose_entry(ticker, df, fundamental_score, llm_signal, current_positions)
+        if skip is None:
+            return None
+        skip_a = self._aggressive.diagnose_entry(ticker, df, fundamental_score, llm_signal, current_positions)
+        if skip_a is None:
+            return None
+        return skip
+
     def generate_signal(self, ticker, df, fundamental_score, llm_signal, current_positions):
         sig = self._stable.generate_signal(ticker, df, fundamental_score, llm_signal, current_positions)
         if sig:
@@ -50,9 +62,10 @@ class HybridStrategy(StrategyBase):
 
 # Registry of all available strategies
 _INSTANCES: Dict[str, StrategyBase] = {
-    "stable":     StableStrategy(),
-    "aggressive": AggressiveStrategy(),
-    "hybrid":     HybridStrategy(),
+    "stable":         StableStrategy(),
+    "aggressive":     AggressiveStrategy(),
+    "hybrid":         HybridStrategy(),
+    "research_list":  ResearchListStrategy(),
 }
 
 STRATEGY_REGISTRY: Dict[str, StrategyBase] = _INSTANCES
@@ -67,7 +80,12 @@ def get_strategy(strategy_id: str, **overrides) -> StrategyBase:
             untouched) so backtests can sweep parameters safely.
     """
     if overrides:
-        cls_map = {"stable": StableStrategy, "aggressive": AggressiveStrategy, "hybrid": HybridStrategy}
+        cls_map = {
+            "stable": StableStrategy,
+            "aggressive": AggressiveStrategy,
+            "hybrid": HybridStrategy,
+            "research_list": ResearchListStrategy,
+        }
         cls = cls_map.get(strategy_id, StableStrategy)
         return cls(**overrides)
     return _INSTANCES.get(strategy_id, _INSTANCES["stable"])

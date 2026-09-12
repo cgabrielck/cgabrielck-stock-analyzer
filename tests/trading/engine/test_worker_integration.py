@@ -103,8 +103,12 @@ class TestWorkerIntegration(unittest.TestCase):
                 }
             worker._detect_regime = _fake_regime
 
-            # Mock fundamental score (positive)
-            worker._get_fundamental_score = lambda ticker: 75.0
+            # Mock fundamental score (fresh scan, not the stale-scan default of 50)
+            worker._get_fundamental_score_info = lambda ticker: {
+                "score": 75.0,
+                "stale": False,
+                "source": "last_scan",
+            }
 
             # Mock OHLCV fetcher to return data that triggers stable strategy entry:
             # Phase 1: 230 days uptrend -> Phase 2: 10 days sideways -> Phase 3: 12 days sharp drop
@@ -148,6 +152,7 @@ class TestWorkerIntegration(unittest.TestCase):
             self.assertEqual(order.status, OrderStatus.FILLED, "Shadow engine should have filled the order")
             self.assertIsNotNone(order.filled_avg_price, "Filled order should have avg price")
             self.assertIsNotNone(order.filled_at, "Filled order should have timestamp")
+            store.close()
 
     def test_shadow_mode_no_broker_calls(self):
         """Verify shadow mode never touches the real broker for order submission."""
@@ -180,7 +185,11 @@ class TestWorkerIntegration(unittest.TestCase):
 
             # Mock helpers — provide oversold OHLCV to trigger a natural entry signal
             worker._detect_regime = lambda: {"regime": "neutral", "vix": 15.0, "spy_sma_50": 450.0, "spy_sma_200": 440.0}
-            worker._get_fundamental_score = lambda ticker: 75.0
+            worker._get_fundamental_score_info = lambda ticker: {
+                "score": 75.0,
+                "stale": False,
+                "source": "last_scan",
+            }
 
             def _oversold_ohlcv(ticker: str, period: str = "1y") -> pd.DataFrame:
                 dates = pd.date_range(end=datetime.now(timezone.utc), periods=252, freq="D")
@@ -206,6 +215,7 @@ class TestWorkerIntegration(unittest.TestCase):
             # If we reach here without exception, shadow mode correctly bypassed broker
             strict_broker.submit_order.assert_not_called()
             strict_broker.get_order_status.assert_not_called()
+            store.close()
 
 
 if __name__ == "__main__":
