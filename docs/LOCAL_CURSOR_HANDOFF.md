@@ -9,6 +9,8 @@ Paste this file (or `@docs/LOCAL_CURSOR_HANDOFF.md`) into your **local Cursor** 
 
 **Also required:** `@docs/STRATEGY_ADOPTION.md` — what strategies we already use, what to adopt next, and what is forbidden.
 
+**Citation shortlist:** `@docs/CITATION_CANDIDATES.md` — recommended OSS to cite for model quality + agent/UI handoff (recommend-only; no build).
+
 ---
 
 ## 0. One-line status
