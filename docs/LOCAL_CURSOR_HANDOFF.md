@@ -1,7 +1,7 @@
 # ALPHA//DESK — Local Cursor Handoff Pack
 
-**Last updated:** 2026-09-10  
-**GitHub `main` tip (verify with `git pull`):** includes auto-trading upgrade + procurement guide  
+**Last updated:** 2026-09-12  
+**GitHub `main` tip (verify with `git pull`):** includes auto-trading upgrade + procurement guide + strategy adoption  
 **Repo:** `https://github.com/cgabrielck/cgabrielck-stock-analyzer`  
 **Local path (user):** `C:\Users\001\cgabrielck-stock-analyzer`
 
