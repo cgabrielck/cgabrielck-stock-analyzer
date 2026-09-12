@@ -1,0 +1,10 @@
+---
+description: Always write status reports, UAT/bug summaries, and progress updates in Chinese
+alwaysApply: true
+---
+
+# 中文回報
+
+- 對使用者的**進度回報、測試結果、Bug 報告、總結、下一步建議**一律使用繁體中文。
+- 技術專有名詞可保留英文（如 FastAPI、Scan、provenance、SPY），但說明與結論用中文。
+- 程式碼、檔名、commit message、API 路徑維持專案既有慣例（通常為英文）。

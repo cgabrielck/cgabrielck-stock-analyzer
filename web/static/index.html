@@ -245,6 +245,14 @@ const I18N = {
     "scan.fresh":"Fresh scan cache is feeding paper-worker fund scores.",
     "desk.scan.stale":"Scan past session freshness — research_list will not buy; Stable keeps last real fund scores (as-of). Wait for auto-scan or rescan.",
     "desk.scan.next":"Auto-scan next: {t}",
+    "desk.vs_spy":"Paper vs SPY",
+    "desk.alpha_net":"Alpha net cost",
+    "desk.beats_spy":"Beats SPY (net)",
+    "desk.no_alpha":"Does not beat SPY net of costs — sell as risk-gated research automation, not alpha.",
+    "prov.chip":"{v} · as-of {a}",
+    "prov.stale":"stale",
+    "prov.yahoo":"yahoo",
+    "prov.polygon":"polygon",
     "aimode.why":"Why no trade",
     "aimode.cap":"Universe this cycle",
     "scan.running":"Scanning… {n}/{t}",
@@ -363,6 +371,14 @@ const I18N = {
     "scan.fresh":"新鮮掃描快取正提供紙上 worker 基本面分數。",
     "desk.scan.stale":"掃描超過盤中新鮮度視窗 — research_list 不開新倉；Stable 保留上次真實分數（as-of）。請等自動掃描或手動掃描。",
     "desk.scan.next":"下次自動掃描：{t}",
+    "desk.vs_spy":"紙上 vs SPY",
+    "desk.alpha_net":"扣成本超额",
+    "desk.beats_spy":"勝過 SPY（扣成本）",
+    "desk.no_alpha":"扣成本後未勝過 SPY — 定位為風控研究名單自動化，不是 alpha。",
+    "prov.chip":"{v} · as-of {a}",
+    "prov.stale":"過期",
+    "prov.yahoo":"yahoo",
+    "prov.polygon":"polygon",
     "aimode.why":"為何沒買",
     "aimode.cap":"本輪宇宙",
     "scan.running":"掃描中… {n}/{t}",
@@ -575,11 +591,20 @@ async function desk(){
   if(!worker) await loadWorker();
   let ops={}, perf={}, orders=[];
   try { ops = await api("/api/ops"); } catch{}
-  try { perf = await api("/api/performance"); } catch{}
+  try { perf = await api("/api/performance?refresh=1"); } catch{}
   try { orders = (await api("/api/orders?status=open")).orders||[]; } catch{}
+  if(page!=="desk") return;
   const pos = account?.positions||[];
   const eq = account?.equity||account?.portfolio_value||0;
   const day = account?.day_pnl||0;
+  const paper = perf.paper || {};
+  const bench = paper.benchmark || {};
+  const beats = bench.beats_spy_net;
+  const alphaNet = bench.alpha_net_of_costs_pct;
+  const spyRet = bench.spy_return_pct ?? perf.spy_return_pct;
+  const alphaLine = beats === false
+    ? `<p class="muted" style="color:#e8b86d;margin:8px 0 0">${t("desk.no_alpha")}</p>`
+    : "";
   root.innerHTML = `
     ${autoBanner()}
     <div class="kpis">
@@ -590,10 +615,26 @@ async function desk(){
       <div class="card"><div class="lbl">Unrealized</div><div class="val ${cls(account?.unrealized_pl)}">${money(account?.unrealized_pl)}</div></div>
       <div class="card"><div class="lbl">Buying power</div><div class="val">${money(account?.buying_power)}</div></div>
     </div>
+    <div class="card" style="margin-bottom:14px">
+      <div class="row" style="justify-content:space-between">
+        <h3 style="margin:0">${t("desk.vs_spy")}</h3>
+        <span class="chip">${esc(paper.source||perf.source||"—")}</span>
+      </div>
+      <div class="grid3" style="margin-top:10px">
+        <div class="stat"><div class="lbl">Sharpe</div><div class="val">${perf.sharpe_ratio!=null?num(perf.sharpe_ratio,2):"—"}</div></div>
+        <div class="stat"><div class="lbl">Max DD</div><div class="val">${perf.max_drawdown_pct!=null?num(perf.max_drawdown_pct,1)+"%":"—"}</div></div>
+        <div class="stat"><div class="lbl">Turnover</div><div class="val">${(paper.trading&&paper.trading.turnover_pct)!=null?num(paper.trading.turnover_pct,1)+"%":"—"}</div></div>
+        <div class="stat"><div class="lbl">SPY</div><div class="val ${cls(spyRet)}">${spyRet!=null?num(spyRet,2)+"%":"—"}</div></div>
+        <div class="stat"><div class="lbl">${t("desk.alpha_net")}</div><div class="val ${cls(alphaNet)}">${alphaNet!=null?num(alphaNet,2)+"%":"—"}</div></div>
+        <div class="stat"><div class="lbl">${t("desk.beats_spy")}</div><div class="val">${beats===true?"YES":beats===false?"NO":"—"}</div></div>
+      </div>
+      ${alphaLine}
+      <p class="muted" style="margin:8px 0 0">${esc(paper.disclaimer||"")}</p>
+    </div>
     <div class="grid3">
-      <div class="card"><div class="lbl">Win rate (backtest)</div><div class="val">${perf.win_rate_pct??"—"}%</div></div>
+      <div class="card"><div class="lbl">Win rate</div><div class="val">${perf.win_rate_pct??"—"}%</div></div>
       <div class="card"><div class="lbl">Profit factor</div><div class="val">${perf.profit_factor??"—"}</div></div>
-      <div class="card"><div class="lbl">Max DD</div><div class="val">${perf.max_drawdown_pct??"—"}%</div></div>
+      <div class="card"><div class="lbl">Trades</div><div class="val">${perf.num_trades??"—"}</div></div>
     </div>
     <div class="layout">
       <div class="card">
@@ -786,6 +827,15 @@ function newsTape(items){
     return `<div class="news-line ${esc(n.sentiment||"")}">${esc(title)}</div>`;
   }).join("");
 }
+function provenanceChip(p){
+  if(!p) return "";
+  const vendor = p.vendor || p.vendor_primary || p.price_source || "—";
+  const asOf = p.as_of ? String(p.as_of).replace("T"," ").slice(0,19) : "—";
+  const stale = p.stale ? ` · ${t("prov.stale")}` : "";
+  const fb = p.fallback ? " · yahoo fallback" : "";
+  const llm = p.llm_overlay ? " · LLM" : "";
+  return `<span class="chip" title="${esc(p.note||p.price_source||"")}">${esc(vendor)} · as-of ${esc(asOf)}${stale}${fb}${llm}</span>`;
+}
 
 function renderScanBody(latest, job){
   const data = mergeScan(latest, job);
@@ -803,6 +853,7 @@ function renderScanBody(latest, job){
     : (resultHasRows(data)
         ? (stale ? t("scan.stale") : t("scan.complete",{p:picks.length, r:ranks.length}))
         : t("scan.empty"));
+  const bookProv = data.provenance || {};
   const blotter = focused ? `<div class="blotter">
       <div class="row" style="justify-content:space-between">
         <h3 style="margin:0">${t("scan.thesis")} · ${esc(focused.ticker)} ${esc(pickLabel(focused))}</h3>
@@ -811,6 +862,7 @@ function renderScanBody(latest, job){
           <button class="btn ghost" id="focusChart">${t("research.chart")}</button>
         </div>
       </div>
+      <div class="tape" style="margin:8px 0">${provenanceChip(focused.provenance)}</div>
       <div class="stat-grid">
         <div class="stat"><div class="lbl">${t("scan.rev")}</div><div class="val">${num(focused.revenue_growth)}%</div></div>
         <div class="stat"><div class="lbl">${t("scan.eps")}</div><div class="val">${num(focused.eps_growth)}%</div></div>
@@ -842,6 +894,7 @@ function renderScanBody(latest, job){
         <span class="chip">alloc ${alloc}</span>
         <span class="chip">${ranks.length||0} ranked · ${picks.length} picks</span>
         <span class="chip">${fmtTs(data.ts)}</span>
+        ${provenanceChip(bookProv)}
       </div>
     </div>
     <div class="card" style="margin-bottom:14px">
@@ -879,7 +932,7 @@ async function scanPage(){
   } catch{}
   try { latest = await api("/api/scan/latest"); } catch{}
   try { const st = await api("/api/scan/status"); job = st.job; } catch{}
-  const paint = () => { root.innerHTML = renderScanBody(latest, job); bind(); };
+  const paint = () => { if(page!=="scan") return; root.innerHTML = renderScanBody(latest, job); bind(); };
   const bind = () => {
     root.querySelectorAll(".pick-card, .rank-row").forEach(b=>b.onclick=()=>{ scanFocus=b.dataset.s; symbol=scanFocus; paint(); });
     const deep5 = $("#deep5");
@@ -970,6 +1023,7 @@ function renderResearchBody(universe, deep, job){
             <span class="badge ${badgeCls}">${esc(action.replaceAll("_"," ").toUpperCase())}</span>
           </div>
           <p class="muted">${t("research.stance")}: ${esc((plan.stance||"—").toUpperCase())} · ${money(r.technical?.price || plan.confirmation_price)}</p>
+          <div class="tape" style="margin:6px 0">${provenanceChip(r.provenance)}</div>
           <div class="ticket">
             <div><div class="lbl">${t("research.entry")}</div><div class="val" style="font-size:16px">${num(zone.low,2)} – ${num(zone.high,2)}</div></div>
             <div><div class="lbl">${t("research.stop")}</div><div class="val" style="font-size:16px">${num(plan.stop_loss,2)}</div></div>
@@ -1007,7 +1061,7 @@ async function research(){
     deep = {available:true, reports:{...(deep.reports||{}), ...job.result.reports}, latest_batch: job.result.tickers || deep.latest_batch};
   }
   if(!deepSelected.length && symbol) deepSelected=[symbol];
-  const paint = () => { root.innerHTML = renderResearchBody(universe, deep, job); bind(); };
+  const paint = () => { if(page!=="research") return; root.innerHTML = renderResearchBody(universe, deep, job); bind(); };
   const bind = () => {
     const refreshSel = ()=>{ const el=$("#selList"); if(el) el.textContent = deepSelected.join(", ")||"—"; };
     const addBtn = $("#addBtn");
@@ -1056,6 +1110,7 @@ async function research(){
 async function market(){
   root.innerHTML = `<div class="card"><h3>${t("page.market")}</h3><p class="muted">…</p></div>`;
   const [q,w] = await Promise.all([api("/api/quotes"), api("/api/watchlist")]);
+  if(page!=="market") return;
   root.innerHTML = `<div class="layout">
     <div class="card"><h3>${t("page.market")}</h3>
       <table><thead><tr><th>Symbol</th><th>Name</th><th>Last</th><th>Chg</th><th>Sector</th></tr></thead>

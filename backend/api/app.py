@@ -654,17 +654,85 @@ def add_journal(body: JournalIn) -> Dict[str, Any]:
 
 
 @app.get("/api/performance")
-def performance() -> Dict[str, Any]:
+def performance(refresh: bool = False) -> Dict[str, Any]:
+    """Paper book vs SPY (preferred) plus optional stable backtest summary."""
+    from backend.api import paper_performance
+
+    paper = paper_performance.build_paper_report(persist=True) if refresh else None
+    if paper is None:
+        cached = paper_performance.load_cached_paper_report()
+        if cached:
+            metrics = cached.get("metrics") or {}
+            trading_days = (cached.get("period") or {}).get("trading_days") or 0
+            num_trades = metrics.get("num_trades") or 0
+            empty_book = int(trading_days) == 0 and int(num_trades) == 0
+            paper = {
+                "available": True,
+                "empty_book": empty_book,
+                "source": "performance_paper.json",
+                "generated_at": cached.get("generated_at"),
+                "period": cached.get("period") or {},
+                "pnl": cached.get("pnl") or {},
+                "risk": {
+                    "sharpe_ratio": metrics.get("sharpe_ratio"),
+                    "max_drawdown_pct": metrics.get("max_drawdown_pct"),
+                },
+                "trading": {
+                    "num_trades": metrics.get("num_trades"),
+                    "turnover_pct": (cached.get("costs") or {}).get("turnover_pct"),
+                },
+                "benchmark": {
+                    "spy_return_pct": (cached.get("benchmark") or {}).get("spy_return_pct"),
+                    "alpha_gross_pct": (cached.get("costs") or {}).get("alpha_gross_pct"),
+                    "alpha_net_of_costs_pct": (cached.get("costs") or {}).get("alpha_net_of_costs_pct"),
+                    "assumed_cost_bps": (cached.get("costs") or {}).get("assumed_round_trip_bps"),
+                    "beats_spy_net": None if empty_book else cached.get("beats_spy_net"),
+                },
+                "seal_preview": {
+                    "passed": cached.get("seal_passed"),
+                    "reasons": cached.get("seal_reasons") or [],
+                },
+                "disclaimer": cached.get("disclaimer"),
+            }
+        else:
+            paper = paper_performance.build_paper_report(persist=True)
+
     summary_path = Path(DATA_DIR) / "strategy_backtest_stable_summary.json"
     summary = _read_json(summary_path, {})
+    empty = bool(paper.get("empty_book")) if paper else True
     return {
-        "source": "stable_strategy_backtest" if summary else "none",
-        "win_rate_pct": summary.get("win_rate_pct"),
-        "profit_factor": summary.get("profit_factor"),
-        "sharpe_ratio": summary.get("sharpe_ratio"),
-        "max_drawdown_pct": summary.get("max_drawdown_pct"),
-        "total_return_pct": summary.get("total_return_pct"),
-        "num_trades": summary.get("num_trades"),
+        "paper": paper,
+        "source": paper.get("source") if paper else "none",
+        "win_rate_pct": (paper.get("trading") or {}).get("win_rate_pct")
+        if paper and not empty
+        else summary.get("win_rate_pct"),
+        "profit_factor": (paper.get("trading") or {}).get("profit_factor")
+        if paper and not empty
+        else summary.get("profit_factor"),
+        "sharpe_ratio": (paper.get("risk") or {}).get("sharpe_ratio")
+        if paper and not empty
+        else summary.get("sharpe_ratio"),
+        "max_drawdown_pct": (paper.get("risk") or {}).get("max_drawdown_pct")
+        if paper and not empty
+        else summary.get("max_drawdown_pct"),
+        "total_return_pct": (paper.get("pnl") or {}).get("total_return_pct")
+        if paper and not empty
+        else summary.get("total_return_pct"),
+        "num_trades": (paper.get("trading") or {}).get("num_trades")
+        if paper
+        else summary.get("num_trades"),
+        "spy_return_pct": None if empty else (paper.get("benchmark") or {}).get("spy_return_pct"),
+        "alpha_net_of_costs_pct": None if empty else (paper.get("benchmark") or {}).get("alpha_net_of_costs_pct"),
+        "beats_spy_net": None if empty else (paper.get("benchmark") or {}).get("beats_spy_net"),
+        "backtest": {
+            "source": "stable_strategy_backtest" if summary else "none",
+            "win_rate_pct": summary.get("win_rate_pct"),
+            "profit_factor": summary.get("profit_factor"),
+            "sharpe_ratio": summary.get("sharpe_ratio"),
+            "max_drawdown_pct": summary.get("max_drawdown_pct"),
+            "total_return_pct": summary.get("total_return_pct"),
+            "num_trades": summary.get("num_trades"),
+        },
     }
 
 

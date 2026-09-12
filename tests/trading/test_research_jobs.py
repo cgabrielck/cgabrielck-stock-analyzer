@@ -26,6 +26,62 @@ def _write_scan(tmp_path: Path, monkeypatch, *, hours_ago: float = 1.0, score: f
     return path
 
 
+def test_latest_scan_backfills_provenance(tmp_path, monkeypatch):
+    """Old last_scan.json without provenance still gets chips on read."""
+    path = tmp_path / "last_scan.json"
+    path.write_text(
+        json.dumps(
+            {
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "recommendations": [{"ticker": "AAPL", "price": 100, "price_source": "yahoo_regular_market"}],
+                "rankings": [{"ticker": "AAPL", "rank": 1, "price_source": "yahoo_regular_market"}],
+                "top5_tickers": ["AAPL"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(rj, "LAST_SCAN_PATH", path)
+    scan = rj.latest_scan()
+    assert scan["available"] is True
+    assert isinstance(scan.get("provenance"), dict)
+    assert scan["provenance"].get("as_of")
+    assert isinstance(scan["recommendations"][0].get("provenance"), dict)
+    assert scan["recommendations"][0]["provenance"]["vendor"] == "yahoo"
+    assert isinstance(scan["rankings"][0].get("provenance"), dict)
+
+
+def test_latest_scan_refreshes_unknown_vendor(tmp_path, monkeypatch):
+    path = tmp_path / "last_scan.json"
+    path.write_text(
+        json.dumps(
+            {
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "recommendations": [
+                    {
+                        "ticker": "AAPL",
+                        "price": 100,
+                        "provenance": {"vendor": "unknown", "as_of": "2026-09-11T21:09:25+00:00"},
+                    }
+                ],
+                "rankings": [
+                    {
+                        "ticker": "AAPL",
+                        "rank": 1,
+                        "provenance": {"vendor": "unknown", "as_of": "2026-09-11T21:09:25+00:00"},
+                    }
+                ],
+                "provenance": {"vendor_primary": "yahoo", "as_of": "2026-09-11T21:09:25+00:00"},
+                "top5_tickers": ["AAPL"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(rj, "LAST_SCAN_PATH", path)
+    scan = rj.latest_scan()
+    assert scan["recommendations"][0]["provenance"]["vendor"] == "yahoo"
+    assert scan["provenance"].get("vendor") == "yahoo"
+
+
 def test_get_fund_score_from_fresh_scan(tmp_path, monkeypatch):
     _write_scan(tmp_path, monkeypatch, hours_ago=1, score=77)
     info = rj.get_fund_score("AAPL")

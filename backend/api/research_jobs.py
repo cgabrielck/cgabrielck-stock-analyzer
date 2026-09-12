@@ -261,11 +261,48 @@ def latest_scan() -> Dict[str, Any]:
     ranks = data.get("rankings") or []
     if not data or not (recs or ranks):
         return {"available": False, "stale": True, "recommendations": [], "rankings": []}
+    # Backfill / refresh provenance for caches written before thin Slice B
+    from backend.api.provenance import row_provenance, scan_book_provenance
+
+    def _prov_needs_refresh(prov: Any) -> bool:
+        if not isinstance(prov, dict):
+            return True
+        vendor = str(prov.get("vendor") or prov.get("vendor_primary") or "").strip().lower()
+        return not vendor or vendor in ("unknown", "none", "—", "-")
+
+    scan_ts = data.get("ts")
+    enriched_recs = []
+    for row in recs:
+        if not isinstance(row, dict):
+            continue
+        item = dict(row)
+        if _prov_needs_refresh(item.get("provenance")):
+            item["provenance"] = row_provenance(item, scan_ts=scan_ts)
+        enriched_recs.append(item)
+    enriched_ranks = []
+    for row in ranks:
+        if not isinstance(row, dict):
+            continue
+        item = dict(row)
+        if _prov_needs_refresh(item.get("provenance")):
+            item["provenance"] = row_provenance(item, scan_ts=scan_ts)
+        enriched_ranks.append(item)
+    if _prov_needs_refresh(data.get("provenance")) or not isinstance(data.get("provenance"), dict) or "vendor" not in (data.get("provenance") or {}):
+        data = {
+            **data,
+            "provenance": scan_book_provenance(
+                scan_ts=scan_ts,
+                use_llm=bool(data.get("use_llm")),
+                ranking_count=len(enriched_ranks),
+            ),
+        }
     return {
         "available": True,
         "stale": scan_is_stale(data),
         "age_hours": _age_hours(data.get("ts")),
         **data,
+        "recommendations": enriched_recs,
+        "rankings": enriched_ranks,
     }
 
 
@@ -273,7 +310,35 @@ def latest_deep() -> Dict[str, Any]:
     data = _read_json(LAST_DEEP_PATH, {})
     if not data:
         return {"available": False, "reports": {}}
-    return {"available": True, "age_hours": _age_hours(data.get("ts")), **data}
+    from backend.api.provenance import row_provenance
+
+    deep_ts = data.get("ts")
+    reports = dict(data.get("reports") or {})
+    enriched = {}
+    for ticker, report in reports.items():
+        if not isinstance(report, dict):
+            enriched[ticker] = report
+            continue
+        item = dict(report)
+        if not item.get("error") and not isinstance(item.get("provenance"), dict):
+            technical = item.get("technical") or {}
+            item["provenance"] = row_provenance(
+                {
+                    "price_source": technical.get("price_source") or item.get("price_source"),
+                    "price_quote_time": technical.get("price_quote_time") or item.get("price_quote_time"),
+                    "price_session": technical.get("price_session"),
+                    "price_stale": technical.get("price_stale"),
+                    "fetched_at": item.get("fetched_at") or deep_ts,
+                },
+                scan_ts=deep_ts,
+            )
+        enriched[ticker] = item
+    return {
+        "available": True,
+        "age_hours": _age_hours(data.get("ts")),
+        **data,
+        "reports": enriched,
+    }
 
 
 def get_job(job_id: str) -> Optional[Dict[str, Any]]:
@@ -333,7 +398,9 @@ def map_engine_progress(current: int, total: int, universe: int = 74) -> Dict[st
     }
 
 
-def _slim_recommendation(rec: Dict[str, Any]) -> Dict[str, Any]:
+def _slim_recommendation(rec: Dict[str, Any], *, scan_ts: Optional[str] = None) -> Dict[str, Any]:
+    from backend.api.provenance import row_provenance
+
     sentiment = rec.get("sentiment") or {}
     risk = rec.get("risk_metrics") or {}
     ticker = rec.get("ticker")
@@ -360,6 +427,11 @@ def _slim_recommendation(rec: Dict[str, Any]) -> Dict[str, Any]:
             "sector": rec.get("sector") or meta.get("sector"),
             "universe_tier": rec.get("universe_tier") or meta.get("universe_tier"),
             "price": _num(rec.get("price"), 4),
+            "price_source": rec.get("price_source"),
+            "price_session": rec.get("price_session"),
+            "price_quote_time": rec.get("price_quote_time"),
+            "price_market_state": rec.get("price_market_state"),
+            "price_stale": rec.get("price_stale"),
             "growth_score": _num(rec.get("growth_score"), 1),
             "model_score": _num(rec.get("total_score"), 1),
             "risk_adjusted_score": _num(rec.get("risk_adjusted_score"), 1),
@@ -380,11 +452,14 @@ def _slim_recommendation(rec: Dict[str, Any]) -> Dict[str, Any]:
             "beta": _num(rec.get("beta"), 2),
             "reasoning": reasoning,
             "news": headlines,
+            "provenance": row_provenance(rec, scan_ts=scan_ts),
         }
     )
 
 
-def _slim_ranking(row: Dict[str, Any]) -> Dict[str, Any]:
+def _slim_ranking(row: Dict[str, Any], *, scan_ts: Optional[str] = None) -> Dict[str, Any]:
+    from backend.api.provenance import row_provenance
+
     ticker = row.get("ticker")
     meta = _meta_for(ticker)
     return sanitize(
@@ -395,6 +470,10 @@ def _slim_ranking(row: Dict[str, Any]) -> Dict[str, Any]:
             "name_zh": meta.get("name_tw") or meta.get("name_cn") or row.get("name"),
             "sector": row.get("sector") or meta.get("sector"),
             "price": _num(row.get("price"), 4),
+            "price_source": row.get("price_source"),
+            "price_session": row.get("price_session"),
+            "price_quote_time": row.get("price_quote_time"),
+            "price_stale": row.get("price_stale"),
             "growth_score": _num(row.get("growth_score"), 1),
             "model_score": _num(row.get("model_score"), 1),
             "risk_penalty": _num(row.get("risk_penalty"), 1),
@@ -409,6 +488,7 @@ def _slim_ranking(row: Dict[str, Any]) -> Dict[str, Any]:
             "profit_margin": _num(row.get("profit_margin"), 1),
             "peg": _num(row.get("peg"), 2),
             "roe": _num(row.get("roe"), 1),
+            "provenance": row_provenance(row, scan_ts=scan_ts),
         }
     )
 
@@ -467,14 +547,30 @@ def _run_scan_job(job_id: str, lang: str, llm_weight: float, use_llm: bool, forc
             use_llm_analysis=use_llm,
         )
         _update_job(job_id, pct=92, phase="score", message="Ranking, sentiment & risk gates…")
-        rankings = [_slim_ranking(r) for r in (result.get("all_rankings") or []) if isinstance(r, dict)]
-        recommendations = [_slim_recommendation(r) for r in (result.get("recommendations") or [])]
+        scan_ts = _now_iso()
+        rankings = [
+            _slim_ranking(r, scan_ts=scan_ts)
+            for r in (result.get("all_rankings") or [])
+            if isinstance(r, dict)
+        ]
+        recommendations = [
+            _slim_recommendation(r, scan_ts=scan_ts)
+            for r in (result.get("recommendations") or [])
+        ]
         regime = sanitize(result.get("market_regime") or {})
         top5 = [r.get("ticker") for r in recommendations if r.get("ticker")]
         scores_by_ticker = _build_scores_index(rankings, result.get("recommendations") or [])
 
+        from backend.api.provenance import scan_book_provenance
+
+        provenance = scan_book_provenance(
+            scan_ts=scan_ts,
+            use_llm=bool(result.get("use_llm")),
+            ranking_count=len(rankings),
+        )
+
         payload = {
-            "ts": _now_iso(),
+            "ts": scan_ts,
             "job_id": job_id,
             "lang": engine_lang,
             "universe_size": len(STOCK_UNIVERSE),
@@ -486,6 +582,7 @@ def _run_scan_job(job_id: str, lang: str, llm_weight: float, use_llm: bool, forc
             "scores_by_ticker": scores_by_ticker,
             "pick_count": len(recommendations),
             "ranking_count": len(rankings),
+            "provenance": provenance,
             "error": result.get("error"),
         }
         _write_json(LAST_SCAN_PATH, payload)
@@ -511,6 +608,7 @@ def _run_scan_job(job_id: str, lang: str, llm_weight: float, use_llm: bool, forc
             "scores_by_ticker": scores_by_ticker,
             "pick_count": len(recommendations),
             "ranking_count": len(rankings),
+            "provenance": provenance,
             "stale": False,
             "available": True,
         }
@@ -567,7 +665,9 @@ def start_scan(
     return get_job(job_id) or job
 
 
-def _slim_deep_report(report: Dict[str, Any]) -> Dict[str, Any]:
+def _slim_deep_report(report: Dict[str, Any], *, deep_ts: Optional[str] = None) -> Dict[str, Any]:
+    from backend.api.provenance import row_provenance
+
     technical = report.get("technical") or {}
     slim_tech = {
         "price": technical.get("price"),
@@ -575,6 +675,18 @@ def _slim_deep_report(report: Dict[str, Any]) -> Dict[str, Any]:
         "rsi_14": technical.get("rsi_14"),
         "atr_14": technical.get("atr_14"),
         "signal_pillars": technical.get("signal_pillars"),
+        "price_source": technical.get("price_source"),
+        "price_session": technical.get("price_session"),
+        "price_quote_time": technical.get("price_quote_time"),
+        "price_stale": technical.get("price_stale"),
+    }
+    prov_row = {
+        "price_source": technical.get("price_source") or report.get("price_source"),
+        "price_quote_time": technical.get("price_quote_time") or report.get("price_quote_time"),
+        "price_session": technical.get("price_session"),
+        "price_market_state": technical.get("price_market_state"),
+        "price_stale": technical.get("price_stale"),
+        "fetched_at": report.get("fetched_at") or deep_ts,
     }
     return sanitize(
         {
@@ -600,6 +712,7 @@ def _slim_deep_report(report: Dict[str, Any]) -> Dict[str, Any]:
             "risk_adjusted_score": report.get("risk_adjusted_score"),
             "technical": slim_tech,
             "enrichment_errors": report.get("enrichment_errors"),
+            "provenance": row_provenance(prov_row, scan_ts=deep_ts),
         }
     )
 
@@ -648,13 +761,17 @@ def _run_deep_job(job_id: str, tickers: List[str], lang: str, force_refresh: boo
             force_refresh=force_refresh,
             progress_callback=progress,
         )
-        reports = {t: _slim_deep_report(raw.get(t) or {"ticker": t, "error": "missing"}) for t in tickers}
+        deep_ts = _now_iso()
+        reports = {
+            t: _slim_deep_report(raw.get(t) or {"ticker": t, "error": "missing"}, deep_ts=deep_ts)
+            for t in tickers
+        }
         # Merge with previous deep cache so older names remain available
         previous = _read_json(LAST_DEEP_PATH, {})
         merged = dict(previous.get("reports") or {})
         merged.update(reports)
         payload = {
-            "ts": _now_iso(),
+            "ts": deep_ts,
             "job_id": job_id,
             "lang": engine_lang,
             "tickers": tickers,
