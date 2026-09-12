@@ -9,6 +9,8 @@ See [`docs/ARCHITECTURE_DECISION.md`](docs/ARCHITECTURE_DECISION.md), [`docs/CGA
 
 **Local Cursor handoff (plans / todos / reports pack):** [`docs/LOCAL_CURSOR_HANDOFF.md`](docs/LOCAL_CURSOR_HANDOFF.md) — paste into local Agent to continue this work.
 
+**Strategy adoption (what to cite / not cite):** [`docs/STRATEGY_ADOPTION.md`](docs/STRATEGY_ADOPTION.md) — three-pass audit; binding for Agents.
+
 **World-class upgrade (grade vs OSS, two SKUs, P0–P4):** [`docs/CGAB_WORLD_CLASS_UPGRADE.md`](docs/CGAB_WORLD_CLASS_UPGRADE.md).
 
 ## Quick Wins (1-2 hours total)

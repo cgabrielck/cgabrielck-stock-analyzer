@@ -7,6 +7,8 @@
 
 Paste this file (or `@docs/LOCAL_CURSOR_HANDOFF.md`) into your **local Cursor** Agent chat so it inherits context from the Cloud Agent sessions.
 
+**Also required:** `@docs/STRATEGY_ADOPTION.md` — what strategies we already use, what to adopt next, and what is forbidden.
+
 ---
 
 ## 0. One-line status
@@ -99,6 +101,7 @@ Full text: [`docs/ARCHITECTURE_DECISION.md`](ARCHITECTURE_DECISION.md)
 - [ ] Rotate any API key that was ever pasted/shared (QW8)
 
 ### Next engineering (local or Cloud Agent)
+- [ ] **Follow [`STRATEGY_ADOPTION.md`](STRATEGY_ADOPTION.md)** — unify research↔worker signals; real RS; ATR risk units; paid bars + shadow seal; Quality split. Do **not** add HFT/MM/stat-arb-neutral/DL-RL-entry without a new ADR.
 - [ ] Wire/verify end-to-end: local Streamlit + shadow worker with real Alpaca paper  
 - [ ] Confirm `POLYGON_API_KEY` path in worker on Windows + VPS  
 - [ ] Accumulate shadow evidence calendar window; fill `STAGE2_SEAL_REPORT`  
