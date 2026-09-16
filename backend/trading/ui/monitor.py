@@ -30,7 +30,7 @@ import pandas as pd
 from backend.trading.storage import JSONOrderStore
 from backend.trading.models import Order, OrderStatus, OrderSide
 from backend.trading.safety import kill_switch
-from backend.trading.safety.mandate import load_mandate
+from backend.trading.safety.mandate import load_mandate, resolve_mandate_path
 from backend.utils.constants import DATA_DIR
 
 # ============================================================================
@@ -38,7 +38,7 @@ from backend.utils.constants import DATA_DIR
 # ============================================================================
 SHADOW_STORE_PATH = Path(DATA_DIR) / "trading" / "shadow_orders.json"
 PAPER_STORE_PATH = Path(DATA_DIR) / "trading" / "paper_orders.json"
-MANDATE_PATH = Path(DATA_DIR).parent / "config" / "mandate.json"
+MANDATE_PATH = resolve_mandate_path()
 
 
 def _inject_terminal_css():
@@ -197,23 +197,18 @@ def render_header():
 
 def render_kill_switch_panel():
     st.markdown('<div class="sidebar-section">Kill Switch</div>', unsafe_allow_html=True)
+    st.caption("Lab read-only. Start/stop paper, tickets, and kill live on FastAPI Desk (loopback or operator token).")
     if kill_switch.is_halted():
         st.markdown(
             '<span class="status-badge halted">🛑 HALTED</span>',
             unsafe_allow_html=True,
         )
         st.caption(f"**Reason:** {kill_switch.get_reason() or 'Manual halt'}")
-        if st.button("🔓 Resume Trading", use_container_width=True):
-            kill_switch.disengage()
-            st.rerun()
     else:
         st.markdown(
             '<span class="status-badge active">✓ ACTIVE</span>',
             unsafe_allow_html=True,
         )
-        if st.button("🛑 Emergency Stop", use_container_width=True, type="primary"):
-            kill_switch.engage(reason="Manual emergency stop via UI")
-            st.rerun()
 
 
 def render_mandate_panel():

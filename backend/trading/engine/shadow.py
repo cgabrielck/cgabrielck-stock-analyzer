@@ -69,7 +69,15 @@ class ShadowTradingEngine:
         order.submitted_at = datetime.now(timezone.utc)
         self._save(order)
 
-        # No forward bars -> legacy instant fill at limit price.
+        if next_bars is not None and len(next_bars) > 0 and isinstance(next_bars.index, pd.DatetimeIndex):
+            try:
+                from backend.utils.us_equity_calendar import filter_us_equity_daily_bars
+
+                next_bars = filter_us_equity_daily_bars(next_bars)
+            except Exception:
+                pass
+
+        # No forward US-session bars -> legacy instant fill at limit price.
         if next_bars is None or len(next_bars) == 0:
             self._mark_filled(order, fill_price=order.limit_price or 0.0, slippage=0.0)
             logger.info("[SHADOW] Instant fill %s @ %s (no forward bars)",

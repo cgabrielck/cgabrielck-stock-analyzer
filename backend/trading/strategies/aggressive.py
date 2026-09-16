@@ -1,14 +1,15 @@
 """
-Breakout Strategy (id: aggressive) — Minervini VCP + real RS vs SPY.
+Breakout Strategy (id: aggressive) — Minervini VCP + RS filter + MACD hist gate.
 
 Entry logic (ALL conditions must be met):
   1. VCP pattern detected (volatility contracting)
   2. Today's volume >= 1.5× 20-day avg volume
   3. Price breaks above the VCP resistance level
   4. Price > SMA50
-  5. 12-week relative strength vs SPY > 0  (implemented)
-  6. LLM not explicitly bearish
-  7. Not already holding this ticker
+  5. 12-week RS vs SPY > 0 (6m/12m recorded as filter/sort meta only)
+  6. MACD histogram ≥ 0 (same helper as diagnose / worker / backtest)
+  7. LLM not explicitly bearish
+  8. Not already holding this ticker
 
 Exit:
   A. ATR / pivot stop (worker may trail)
@@ -24,7 +25,7 @@ from typing import Any, Dict, List, Optional
 import pandas as pd
 
 from backend.trading.strategies.base import ExitSignal, Signal, StrategyBase
-from backend.trading.strategies.stage2 import atr_stop, relative_strength_vs_spy
+from backend.trading.strategies.stage2 import atr_stop, macd_hist_ok, rs_entry_ok
 
 
 class AggressiveStrategy(StrategyBase):
@@ -95,18 +96,19 @@ class AggressiveStrategy(StrategyBase):
         if vol20 <= 0 or (vol / vol20) < self.VOLUME_SURGE:
             return "volume_weak", None
         # Do not require RSI not overbought for entry — Stage-2 breakouts often print high RSI.
-        rs, rs_code = relative_strength_vs_spy(work["Close"], self.spy_close, self.RS_LOOKBACK)
-        if self.spy_close is not None and (rs is None or rs <= 0):
+        rs_ok, rs_code, rs_bundle = rs_entry_ok(work["Close"], self.spy_close, hard_lookback=int(self.RS_LOOKBACK))
+        if not rs_ok:
             return rs_code or "rs_weak", None
-        if rs is None:
-            rs = 0.0
+        macd_ok, macd_code = macd_hist_ok(row.get("macd_hist"))
+        if not macd_ok:
+            return macd_code or "macd_weak", None
         vcp = detect_vcp(work, min_contractions=int(self.VCP_MIN_CONTRACTIONS))
         if not vcp["found"]:
             return "no_vcp", None
         breakout_level = vcp["breakout_level"]
         if close < breakout_level * 0.98:
             return "no_vcp", None
-        return None, (row, close, sma50, vol, vol20, rsi, vcp, breakout_level, rs)
+        return None, (row, close, sma50, vol, vol20, rsi, vcp, breakout_level, rs_bundle)
 
     def populate_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
         df = df.copy()
@@ -131,7 +133,9 @@ class AggressiveStrategy(StrategyBase):
         skip, packed = self._entry_skip(ticker, df, fundamental_score, llm_signal, current_positions)
         if skip or packed is None:
             return None
-        row, close, sma50, vol, vol20, rsi, vcp, breakout_level, rs = packed
+        row, close, sma50, vol, vol20, rsi, vcp, breakout_level, rs_bundle = packed
+        rs = float(rs_bundle.get("rs_63") or 0.0)
+        macd_hist = float(row["macd_hist"]) if not pd.isna(row.get("macd_hist")) else 0.0
 
         atr = float(row["atr"]) if "atr" in row and not pd.isna(row["atr"]) else close * 0.02
         pivot_stop = round(breakout_level * 0.98, 4)
@@ -146,7 +150,8 @@ class AggressiveStrategy(StrategyBase):
         reason = (
             f"VCP breakout at {breakout_level:.2f}, "
             f"{vcp['contractions']} contractions, "
-            f"vol_surge={vol/vol20:.1f}×, RS_12w={rs*100:.1f}%, SMA50={sma50:.2f}"
+            f"vol_surge={vol/vol20:.1f}×, RS_12w={rs*100:.1f}% (filter), "
+            f"MACD_hist={macd_hist:.4f}, SMA50={sma50:.2f}"
         )
 
         return Signal(
@@ -166,7 +171,11 @@ class AggressiveStrategy(StrategyBase):
                 "vol_surge": round(vol / vol20, 2),
                 "rsi": rsi,
                 "sma50": sma50,
-                "rs_12w": round(rs, 4),
+                "rs_role": "filter_only",
+                "rs_12w": None if rs_bundle.get("rs_63") is None else round(float(rs_bundle["rs_63"]), 4),
+                "rs_126": None if rs_bundle.get("rs_126") is None else round(float(rs_bundle["rs_126"]), 4),
+                "rs_252": None if rs_bundle.get("rs_252") is None else round(float(rs_bundle["rs_252"]), 4),
+                "macd_hist": round(macd_hist, 6),
             },
         )
 

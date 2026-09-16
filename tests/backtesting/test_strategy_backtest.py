@@ -120,10 +120,26 @@ class TestStrategyBacktest(unittest.TestCase):
         self.assertEqual(result.num_trades, 0)
         self.assertTrue(result.warnings)
 
-    def test_invalid_strategy_falls_back_to_adaptive(self):
-        from backend.trading.strategies.registry import get_strategy
-        s = get_strategy("does_not_exist")
-        self.assertEqual(s.strategy_id, "adaptive")
+    def test_weekend_crypto_bars_are_not_session_days(self):
+        from backend.utils.us_equity_calendar import equity_session_days
+
+        spy = _synthetic_data(n_days=80, seed=1)
+        crypto = spy.copy()
+        extra = pd.DataFrame(
+            {
+                "Open": [1.0, 1.0],
+                "High": [1.0, 1.0],
+                "Low": [1.0, 1.0],
+                "Close": [1.0, 1.0],
+                "Volume": [1, 1],
+            },
+            index=pd.to_datetime(["2026-09-12", "2026-09-13"]),
+        )
+        mixed = pd.concat([crypto, extra]).sort_index()
+        days = equity_session_days({"AAPL": mixed}, spy=spy)
+        as_dates = {pd.Timestamp(d).strftime("%Y-%m-%d") for d in days}
+        self.assertNotIn("2026-09-12", as_dates)
+        self.assertNotIn("2026-09-13", as_dates)
 
 
 if __name__ == "__main__":

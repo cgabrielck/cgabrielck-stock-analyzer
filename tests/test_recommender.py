@@ -54,3 +54,43 @@ def test_analysis_resorts_after_technical_scores_and_preserves_sector_limit(monk
     picks = result["recommendations"]
     assert [stock["ticker"] for stock in picks] == ["B", "C", "E", "F", "D"]
     assert sum(stock["sector"] == "Tech" for stock in picks) == 2
+
+
+def test_rankings_copy_quality_split_columns(monkeypatch) -> None:
+    stocks = [
+        {
+            "ticker": "A",
+            "sector": "Tech",
+            "growth_score": 70,
+            "total_score": 70,
+            "metrics_used": 6,
+            "quality_score": 61,
+            "quality_roe_score": 80,
+            "quality_margin_score": 40,
+            "quality_leverage_score": 90,
+            "growth_component_score": 55,
+            "value_component_score": 70,
+        },
+    ]
+    technical = {"A": {"technical_score": 50}}
+    monkeypatch.setattr(recommender, "fetch_all_stocks", lambda *args, **kwargs: {})
+    monkeypatch.setattr(recommender, "calculate_all_scores", lambda *args, **kwargs: stocks)
+    monkeypatch.setattr(recommender, "compute_all_technical", lambda *args, **kwargs: technical)
+    monkeypatch.setattr(recommender, "llm_available", lambda: False)
+    monkeypatch.setattr(recommender, "get_latest_filing", lambda *args, **kwargs: {})
+    monkeypatch.setattr(recommender, "fetch_news", lambda *args, **kwargs: [])
+    monkeypatch.setattr(recommender, "fetch_risk_metrics", lambda *args, **kwargs: {})
+    monkeypatch.setattr(recommender, "detect_global_market_regime", lambda **kwargs: {
+        "regime": "bull", "entry_threshold": 60.0, "fill_threshold": 50.0, "target_allocation": 0.9,
+    })
+    monkeypatch.setattr(recommender, "STOCK_UNIVERSE", [
+        {"ticker": "A", "name_cn": "A", "sector": "Tech", "universe_tier": "core"},
+    ])
+    monkeypatch.setattr(recommender.agent_state, "log_recommendation", lambda *args: None)
+    monkeypatch.setattr(recommender.agent_state, "log_upgrade", lambda *args: None)
+
+    result = recommender.run_full_analysis()
+    row = result["all_rankings"][0]
+    assert row["quality_score"] == 61
+    assert row["quality_roe_score"] == 80
+    assert row["quality_leverage_score"] == 90

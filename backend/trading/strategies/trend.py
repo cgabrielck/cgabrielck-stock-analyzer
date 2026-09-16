@@ -25,7 +25,7 @@ from backend.trading.strategies.stage2 import (
     atr_stop,
     near_52w_high,
     pullback_entry_ok,
-    relative_strength_vs_spy,
+    rs_entry_ok,
     stage2_ok,
 )
 
@@ -95,11 +95,11 @@ class TrendStrategy(StrategyBase):
         ok, code = near_52w_high(row, self.MAX_DD_FROM_HIGH)
         if not ok:
             return code, None
-        rs, rs_code = relative_strength_vs_spy(work["Close"], self.spy_close, self.RS_LOOKBACK)
-        if self.spy_close is not None and (rs is None or rs <= 0):
+        rs_ok, rs_code, rs_bundle = rs_entry_ok(
+            work["Close"], self.spy_close, hard_lookback=int(self.RS_LOOKBACK)
+        )
+        if not rs_ok:
             return rs_code or "rs_weak", None
-        if rs is None:
-            rs = 0.01  # offline / no SPY series — don't block unit tests
         ok, code = pullback_entry_ok(
             row,
             self.PULLBACK_BAND,
@@ -107,7 +107,7 @@ class TrendStrategy(StrategyBase):
         )
         if not ok:
             return code, None
-        return None, (work, row, rs)
+        return None, (work, row, rs_bundle)
 
     def generate_signal(
         self,
@@ -120,7 +120,8 @@ class TrendStrategy(StrategyBase):
         skip, packed = self._entry_skip(ticker, df, fundamental_score, llm_signal, current_positions)
         if skip or packed is None:
             return None
-        work, row, rs = packed
+        work, row, rs_bundle = packed
+        rs = float(rs_bundle.get("rs_63") or 0.0)
         close = float(row["Close"])
         atr = float(row["atr"]) if not pd.isna(row["atr"]) else close * 0.02
         sma50 = float(row["sma50"])
@@ -142,7 +143,7 @@ class TrendStrategy(StrategyBase):
             strategy_id=self.strategy_id,
             confidence=round(min(1.0, 0.45 + max(0.0, rs) * 2), 3),
             reason=(
-                f"Stage-2 pullback, RS_12w={rs*100:.1f}%, "
+                f"Stage-2 pullback, RS_12w={rs*100:.1f}% (filter), "
                 f"fund={fundamental_score:.0f}, ATR_stop={stop:.2f}"
             ),
             entry_price=round(close, 4),
@@ -152,7 +153,10 @@ class TrendStrategy(StrategyBase):
             avg_loss_pct=self.expected_loss_pct,
             meta={
                 "entry_kind": "trend",
-                "rs_12w": round(rs, 4),
+                "rs_role": "filter_only",
+                "rs_12w": None if rs_bundle.get("rs_63") is None else round(float(rs_bundle["rs_63"]), 4),
+                "rs_126": None if rs_bundle.get("rs_126") is None else round(float(rs_bundle["rs_126"]), 4),
+                "rs_252": None if rs_bundle.get("rs_252") is None else round(float(rs_bundle["rs_252"]), 4),
                 "sma50": sma50,
                 "atr": atr,
                 "trail_atr_mult": self.TRAIL_ATR_MULT,

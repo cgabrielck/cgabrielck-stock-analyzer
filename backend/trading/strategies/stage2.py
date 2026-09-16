@@ -82,12 +82,16 @@ def pullback_entry_ok(row: pd.Series, band_pct: float = 0.03, *, prior_closes: O
     return False, "not_pullback"
 
 
+# ~3m / 6m / 12m trading days. RS is a filter/sort overlay, not a momentum book.
+RS_WINDOWS: Tuple[int, ...] = (63, 126, 252)
+
+
 def relative_strength_vs_spy(
     stock_close: pd.Series,
     spy_close: Optional[pd.Series],
     lookback: int = 63,
 ) -> Tuple[Optional[float], Optional[str]]:
-    """12-week (≈63 trading days) relative return vs SPY. Positive = outperforming."""
+    """Relative return vs SPY over *lookback* trading days. Positive = outperforming."""
     if spy_close is None or len(stock_close) < lookback + 1 or len(spy_close) < lookback + 1:
         return None, "rs_weak"
     s = stock_close.iloc[-(lookback + 1) :]
@@ -98,6 +102,66 @@ def relative_strength_vs_spy(
     stock_ret = float(s.iloc[-1] / s.iloc[0] - 1.0)
     spy_ret = float(b.iloc[-1] / b.iloc[0] - 1.0)
     return stock_ret - spy_ret, None
+
+
+def relative_strength_bundle(
+    stock_close: pd.Series,
+    spy_close: Optional[pd.Series],
+    lookbacks: Tuple[int, ...] = RS_WINDOWS,
+) -> Dict[str, Any]:
+    """Auditable 12w/6m/12m RS vs SPY. Role is always filter_only."""
+    out: Dict[str, Any] = {
+        "role": "filter_only",
+        "windows": {"rs_63": 63, "rs_126": 126, "rs_252": 252},
+        "rs_63": None,
+        "rs_126": None,
+        "rs_252": None,
+    }
+    if spy_close is None:
+        return out
+    for lb in lookbacks:
+        val, _code = relative_strength_vs_spy(stock_close, spy_close, lb)
+        out[f"rs_{lb}"] = val
+    return out
+
+
+def rs_entry_ok(
+    stock_close: pd.Series,
+    spy_close: Optional[pd.Series],
+    *,
+    hard_lookback: int = 63,
+) -> Tuple[bool, Optional[str], Dict[str, Any]]:
+    """Hard gate: 12-week RS vs SPY > 0 when a SPY series is present.
+
+    6-month / 12-month windows are metadata for ranking/audit only.
+    Missing SPY (unit tests / offline) does not block; live worker injects SPY.
+    """
+    bundle = relative_strength_bundle(stock_close, spy_close)
+    if spy_close is None:
+        return True, None, bundle
+    val = bundle.get(f"rs_{hard_lookback}")
+    if val is None or val <= 0:
+        return False, "rs_weak", bundle
+    return True, None, bundle
+
+
+def macd_histogram(close: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9) -> pd.Series:
+    ema_fast = close.ewm(span=fast, adjust=False).mean()
+    ema_slow = close.ewm(span=slow, adjust=False).mean()
+    macd_line = ema_fast - ema_slow
+    signal_line = macd_line.ewm(span=signal, adjust=False).mean()
+    return macd_line - signal_line
+
+
+def macd_hist_ok(hist_value: Any) -> Tuple[bool, Optional[str]]:
+    """Breakout hard gate: MACD histogram must be ≥ 0 (claimed in STRATEGY_ADOPTION §1)."""
+    try:
+        hist = float(hist_value)
+    except (TypeError, ValueError):
+        return False, "macd_weak"
+    if pd.isna(hist) or hist < 0:
+        return False, "macd_weak"
+    return True, None
 
 
 def classify_spy_regime(spy_close: Optional[pd.Series]) -> str:

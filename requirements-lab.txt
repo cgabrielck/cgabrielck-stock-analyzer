@@ -1,0 +1,14 @@
+# Optional lab extras for branch lab/citation-try.
+# Install:  .venv/Scripts/pip install -r requirements-lab.txt
+# All features are OFF unless env flags are set. Never place orders.
+#
+# Do NOT put FinRL, CrewAI, full OpenBB/LEAN/Qlib/FinGPT stacks here.
+
+instructor>=1.0.0
+quantstats>=0.0.62
+# FinBERT soft sentiment (heavy; optional)
+transformers>=4.40.0
+torch>=2.0.0
+# Optional advisory graph (research draft only — never OrderManager)
+langgraph>=0.2.0
+langchain-core>=0.3.0

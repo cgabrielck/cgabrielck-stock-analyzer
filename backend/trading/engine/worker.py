@@ -29,9 +29,12 @@ from backend.trading.engine.signal_processor import SignalProcessor
 from backend.trading.models import Order, OrderSide, OrderStatus, OrderType
 from backend.trading.reconciliation.service import ReconciliationService
 from backend.trading.risk.gates import RiskEngine, RiskLimits
-from backend.trading.risk.position_sizer import shares_to_buy
+from backend.trading.risk.position_sizer import cap_shares_to_notional, shares_to_buy
 from backend.trading.strategies.base import StrategyBase
 from backend.trading.strategies.registry import KNOWN_STRATEGIES, get_strategy
+from backend.trading.strategies.stage2 import size_shares_by_risk
+from backend.trading.engine.cadence import allows_new_entries as cadence_allows_new_entries
+from backend.trading.engine.cadence import resolve_cadence
 from backend.trading.engine.fetch_policy import (
     env_universe_cap,
     parse_fetch_batch,
@@ -100,13 +103,19 @@ class TradingWorker:
             shadow_engine=shadow_engine,
         )
 
-        # Default universe — can be overridden
+        # Default universe — can be overridden. Named strategies may pin a
+        # exclusive list (defensive_gld → GLD) without rewriting research_list.
         if ticker_universe is None:
             try:
                 from backend.utils.constants import STOCK_UNIVERSE
                 self.ticker_universe = [s["ticker"] for s in STOCK_UNIVERSE]
             except Exception:
                 self.ticker_universe = ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA"]
+            override = getattr(self.strategy, "universe_override", None)
+            if override:
+                names = [str(s).upper().strip() for s in override if str(s).strip()]
+                if names:
+                    self.ticker_universe = names
         else:
             self.ticker_universe = ticker_universe
 
@@ -130,9 +139,13 @@ class TradingWorker:
         self.last_regime: Optional[Dict[str, Any]] = None
         self._telegram_sent: set[str] = set()
         self.last_skip_counts: Dict[str, int] = {}
+        self.last_skip_by_ticker: Dict[str, str] = {}
         self.last_universe_cap: int = len(self.ticker_universe)
         self.last_fetched: int = 0
         self.last_scan_stale: bool = False
+        self.last_ohlcv_vendor: Optional[str] = None
+        self.last_ohlcv_fallback: bool = False
+        self.last_cadence: str = "intraday"
 
     # ------------------------------------------------------------------
     # Public control API
@@ -208,6 +221,12 @@ class TradingWorker:
         """Core auto-trading: fetch data, check exits, generate entries."""
         summary_rows: List[Dict[str, Any]] = []
         skip_counts: Dict[str, int] = {}
+        skip_by_ticker: Dict[str, str] = {}
+
+        def note(ticker: Optional[str], code: str) -> None:
+            skip_codes.bump(skip_counts, code)
+            if ticker:
+                skip_by_ticker[str(ticker).upper()] = code
 
         # 0. Kill switch — highest-priority manual override.
         # When engaged, we still run EXITS (must be able to close positions)
@@ -246,9 +265,9 @@ class TradingWorker:
             if symbol in fetched_u:
                 continue
             if symbol in fetch_u:
-                skip_codes.bump(skip_counts, "no_price")
+                note(symbol, "no_price")
             else:
-                skip_codes.bump(skip_counts, "universe_capped")
+                note(symbol, "universe_capped")
 
         if not price_history:
             logger.warning(
@@ -258,6 +277,7 @@ class TradingWorker:
             )
             skip_counts.setdefault("no_price", len(to_fetch) or 1)
             self.last_skip_counts = skip_counts
+            self.last_skip_by_ticker = skip_by_ticker
             self.last_signal_summary = [{"action": "NO_PRICE", "tried": len(to_fetch), "cap": cap}]
             return
 
@@ -291,6 +311,11 @@ class TradingWorker:
         regime = self._detect_regime()
         self.last_regime = regime
         target_allocation = float(regime.get("target_allocation", 0.70)) if regime else 0.70
+        if hasattr(self.strategy, "set_regime"):
+            try:
+                self.strategy.set_regime(regime)
+            except Exception as exc:
+                logger.debug("set_regime skipped: %s", exc)
 
         # 3. Clean expired cooldowns
         now = datetime.now(timezone.utc)
@@ -315,6 +340,11 @@ class TradingWorker:
             meta = self._position_meta.get(symbol, {})
             strategy_id = meta.get("strategy_id", self.strategy.strategy_id)
             strat = get_strategy(strategy_id)
+            if hasattr(strat, "set_regime"):
+                try:
+                    strat.set_regime(regime)
+                except Exception:
+                    pass
 
             # Dynamic trailing stop for aggressive strategy
             trailing_stop = meta.get("stop_loss_price", pos.average_entry_price * 0.95)
@@ -358,8 +388,22 @@ class TradingWorker:
             mark = float(px["Close"].iloc[-1]) if px is not None and len(px) else float(p.average_entry_price)
             invested_value += mark * float(p.quantity)
         exposure_ratio = invested_value / portfolio_value if portfolio_value > 0 else 0.0
-        allow_new_entries = exposure_ratio < target_allocation
-        if not allow_new_entries:
+        cadence = self._resolve_cadence()
+        self.last_cadence = cadence
+        cadence_ok = cadence_allows_new_entries(cadence, now, regime)
+        if not cadence_ok:
+            logger.info(
+                "Cadence=%s blocks new entries (US Monday rebalance or PANIC exception).",
+                cadence,
+            )
+            skip_codes.bump(skip_counts, "cadence_wait")
+            summary_rows.append({
+                "action": "CADENCE_WAIT",
+                "cadence": cadence,
+                "regime": (regime or {}).get("regime", "n/a"),
+            })
+        allow_new_entries = exposure_ratio < target_allocation and cadence_ok
+        if exposure_ratio >= target_allocation:
             logger.info(
                 "Regime=%s exposure gate: invested %.0f%% >= target %.0f%% — no new entries.",
                 (regime or {}).get("regime", "n/a"), exposure_ratio * 100, target_allocation * 100,
@@ -377,8 +421,8 @@ class TradingWorker:
             price_history.keys(),
             key=lambda t: (0 if t in top5 else 1, t),
         )
+        pending_buys = self._pending_buy_symbols()
         research_stale_logged = False
-        requires_fresh = bool(getattr(self.strategy, "requires_fresh_scan", False))
         self.last_scan_stale = False
 
         for ticker in ordered_tickers:
@@ -387,22 +431,48 @@ class TradingWorker:
             df = price_history[ticker]
             if ticker in open_positions:
                 continue  # already holding — not a skip for new-entry diagnostics
+            if ticker.upper() in pending_buys:
+                note(ticker, "order_open")
+                summary_rows.append(
+                    {"ticker": ticker, "action": "ORDER_OPEN", "reason": "working order already submitted"}
+                )
+                continue
 
             fund_info = self._get_fundamental_score_info(ticker)
             fund_score = float(fund_info.get("score", 50.0))
             if fund_info.get("stale"):
+                # Wave 1 fail-closed: Scan/signal as-of past SIGNAL max-age → no new buys
+                # for any strategy. Last real fund scores are kept (not rewritten to 50).
                 self.last_scan_stale = True
                 if not research_stale_logged:
+                    max_age = None
+                    try:
+                        from backend.api.research_jobs import signal_max_age_hours
+
+                        max_age = signal_max_age_hours()
+                    except Exception:
+                        max_age = None
                     logger.warning(
-                        "research_stale: last_scan missing or older than session window — "
-                        "research_list blocks new buys; Stable keeps last real fund score"
+                        "research_stale: last_scan missing or older than SIGNAL max-age "
+                        "(%s h) — no new buys; last real fund scores kept",
+                        max_age if max_age is not None else "session",
                     )
                     research_stale_logged = True
-                    summary_rows.append({"action": "RESEARCH_STALE", "scan_ts": fund_info.get("scan_ts")})
-                if requires_fresh:
-                    skip_codes.bump(skip_counts, "research_stale")
-                    continue
-            llm_signal = None   # LLM not called in worker to avoid latency
+                    summary_rows.append(
+                        {
+                            "action": "RESEARCH_STALE",
+                            "scan_ts": fund_info.get("scan_ts"),
+                            "signal_max_age_hours": max_age,
+                        }
+                    )
+                note(ticker, "research_stale")
+                continue
+            # Pass Scan-cache LLM label into the same _entry_skip as research/backtest.
+            # Never call an LLM from the worker; never place orders from text.
+            llm_signal = self._cached_llm_signal(fund_info)
+            if self._sentiment_veto(fund_info):
+                note(ticker, "sentiment_veto")
+                continue
 
             signal = self.strategy.generate_signal(
                 ticker=ticker,
@@ -416,7 +486,7 @@ class TradingWorker:
                 code = self.strategy.diagnose_entry(
                     ticker, df, fund_score, llm_signal, current_positions_list,
                 ) or "no_setup"
-                skip_codes.bump(skip_counts, code)
+                note(ticker, code)
                 continue
 
             # Overlay Deep Research stop / target as suggestions (RiskEngine still gates)
@@ -457,7 +527,7 @@ class TradingWorker:
                 audit.log_mandate_decision(ticker, "buy", approved=False,
                                            reason="kill_switch_engaged")
                 summary_rows.append({"ticker": ticker, "action": "BLOCKED", "reason": "kill_switch"})
-                skip_codes.bump(skip_counts, "kill_switch")
+                note(ticker, "kill_switch")
                 continue
 
             # Mandate gate (authorization check before committing capital)
@@ -480,12 +550,12 @@ class TradingWorker:
                 logger.info("BLOCKED %s: %s", ticker, mandate_decision.reason)
                 summary_rows.append({"ticker": ticker, "action": "BLOCKED",
                                     "reason": mandate_decision.reason})
-                skip_codes.bump(skip_counts, "mandate")
+                note(ticker, "mandate")
                 continue
 
-            # Kelly position sizing
+            # Kelly cap, then ATR / 1R risk units (same formula as backtest).
             vix_mult = self.risk_engine.vix_size_multiplier(vix_level)
-            qty = shares_to_buy(
+            qty_kelly = shares_to_buy(
                 portfolio_value=account.portfolio_value * vix_mult,
                 current_price=signal.entry_price,
                 win_rate=self.strategy.expected_win_rate,
@@ -495,9 +565,24 @@ class TradingWorker:
                 max_fraction=self.risk_engine.limits.max_position_concentration,
                 min_shares=1,
             )
+            cash_now = float(getattr(account, "cash", 0.0) or getattr(account, "buying_power", 0.0) or 0.0)
+            qty_risk = size_shares_by_risk(
+                equity=float(account.portfolio_value) * vix_mult,
+                cash=cash_now,
+                fill_price=float(signal.entry_price),
+                stop_price=float(signal.stop_loss_price or signal.entry_price * 0.95),
+                risk_pct=float(os.getenv("WORKER_RISK_PCT", "0.01") or 0.01),
+                max_position_pct=float(self.risk_engine.limits.max_position_concentration),
+            )
+            qty = min(qty_kelly, qty_risk) if qty_kelly > 0 and qty_risk > 0 else 0
+            qty = cap_shares_to_notional(
+                qty,
+                float(signal.entry_price),
+                float(self.risk_engine.limits.max_order_notional),
+            )
 
             if qty <= 0:
-                skip_codes.bump(skip_counts, "kelly_zero")
+                note(ticker, "kelly_zero")
                 continue
 
             # Inject extra args for RiskEngine 2.0 via SignalProcessor
@@ -548,7 +633,7 @@ class TradingWorker:
                     "ticker": ticker, "action": "BLOCKED",
                     "reason": result.error_message,
                 })
-                skip_codes.bump(skip_counts, "risk_rejected")
+                note(ticker, "risk_rejected")
                 continue
 
             audit.log_risk_decision(ticker, "buy", qty, True, "approved_via_signal_processor")
@@ -601,6 +686,7 @@ class TradingWorker:
                                   "reason": signal.reason})
 
         self.last_skip_counts = skip_counts
+        self.last_skip_by_ticker = skip_by_ticker
         self.last_signal_summary = summary_rows
         if skip_counts:
             logger.info("why_no_trade this cycle: %s", skip_counts)
@@ -608,6 +694,26 @@ class TradingWorker:
     # ------------------------------------------------------------------
     # Order sync  (from 1.0)
     # ------------------------------------------------------------------
+
+    def _pending_buy_symbols(self) -> set:
+        """Symbols with a non-terminal BUY already in the local ledger."""
+        terminal = {
+            OrderStatus.FILLED,
+            OrderStatus.CANCELLED,
+            OrderStatus.REJECTED,
+            OrderStatus.EXPIRED,
+        }
+        found = set()
+        try:
+            for order in self.store.get_recent_orders(limit=100):
+                if order.side != OrderSide.BUY:
+                    continue
+                if order.status in terminal:
+                    continue
+                found.add(str(order.symbol or "").upper())
+        except Exception:
+            return found
+        return found
 
     def _sync_orders(self) -> None:
         active_states = {OrderStatus.SUBMITTED, OrderStatus.ACCEPTED, OrderStatus.PARTIALLY_FILLED}
@@ -670,6 +776,23 @@ class TradingWorker:
         hour = now_utc.hour + now_utc.minute / 60
         return MARKET_OPEN_UTC_HOUR + 0.5 <= hour <= MARKET_CLOSE_UTC_HOUR
 
+    def _resolve_cadence(self) -> str:
+        """Operator cadence from env or ai_mode.json. Default = current 24h demo."""
+        cfg: Dict[str, Any] = {}
+        try:
+            from backend.utils.constants import DATA_DIR as _data_dir
+
+            cfg_path = Path(_data_dir) / "ai_mode.json"
+            if cfg_path.exists():
+                import json as _json
+
+                raw = _json.loads(cfg_path.read_text(encoding="utf-8"))
+                if isinstance(raw, dict):
+                    cfg = raw
+        except Exception as exc:
+            logger.debug("cadence ai_mode read skipped: %s", exc)
+        return resolve_cadence(cfg)
+
     def _safe_get_account(self):
         try:
             return self.broker.get_account_summary()
@@ -678,26 +801,23 @@ class TradingWorker:
             return None
 
     def _fetch_ohlcv(self, ticker: str, period: str = "1y") -> Optional[pd.DataFrame]:
-        """Fetch daily OHLCV — Polygon preferred when keyed, else Yahoo."""
+        """Fetch daily OHLCV — Polygon preferred when keyed, Yahoo labeled fallback."""
         ensure_backend_on_path()
+        min_bars = 1 if str(period or "").lower() in ("5d", "1d") else 30
         try:
-            from backend.agents import polygon_equity
-            if polygon_equity.is_configured():
-                poly = polygon_equity.fetch_chart_data_polygon(ticker, period_hint=period)
-                if not poly.get("error") and poly.get("data") is not None and not poly["data"].empty:
-                    return poly["data"]
-        except Exception as exc:
-            logger.debug("Polygon OHLCV fetch failed for %s: %s", ticker, exc)
-        try:
-            import yfinance as yf
+            from backend.utils.equity_ohlcv import fetch_daily_ohlcv
 
-            hist = yf.Ticker(ticker).history(period=period or "1y", interval="1d", auto_adjust=False)
-            if hist is not None and not hist.empty and len(hist) >= 30:
-                return hist
+            result = fetch_daily_ohlcv(ticker, period=period, min_bars=min_bars)
+            if result.get("provider"):
+                self.last_ohlcv_vendor = str(result.get("provider"))
+                self.last_ohlcv_fallback = bool(result.get("fallback"))
+            if result.get("ok") and result.get("data") is not None and not result["data"].empty:
+                return result["data"]
         except Exception as exc:
-            logger.debug("Yahoo OHLCV fetch failed for %s: %s", ticker, exc)
+            logger.debug("Preferred OHLCV fetch failed for %s: %s", ticker, exc)
         try:
             from backend.utils.chart_utils import fetch_chart_data
+            from backend.utils.us_equity_calendar import filter_us_equity_daily_bars
 
             result = fetch_chart_data(ticker, "1d", False)
             if result.get("error"):
@@ -706,7 +826,9 @@ class TradingWorker:
             df = result.get("data")
             if df is None or df.empty:
                 return None
-            return df
+            self.last_ohlcv_vendor = str(result.get("provider") or "yahoo")
+            self.last_ohlcv_fallback = True
+            return filter_us_equity_daily_bars(df)
         except Exception as exc:
             logger.warning("OHLCV fetch failed for %s: %s", ticker, exc)
             return None
@@ -824,6 +946,28 @@ class TradingWorker:
             logger.debug("Regime detection failed: %s", exc)
             return None
 
+    def _cached_llm_signal(self, fund_info: Dict[str, Any]) -> Optional[str]:
+        raw = fund_info.get("llm_key_signal") or fund_info.get("llm_signal")
+        if not raw:
+            return None
+        return str(raw).strip().lower() or None
+
+    def _sentiment_veto(self, fund_info: Dict[str, Any]) -> bool:
+        """Optional Scan-cache veto. Default off. Never places orders."""
+        flag = os.getenv("WORKER_SENTIMENT_VETO", "0").strip().lower()
+        if flag not in ("1", "true", "yes"):
+            return False
+        label = str(fund_info.get("sentiment_label") or "").strip().lower()
+        if label in ("negative", "bearish"):
+            return True
+        try:
+            score = fund_info.get("sentiment_score")
+            if score is not None and float(score) < 40.0:
+                return True
+        except (TypeError, ValueError):
+            return False
+        return False
+
     def _get_fundamental_score(self, ticker: str) -> float:
         return float(self._get_fundamental_score_info(ticker).get("score", 50.0))
 
@@ -918,22 +1062,23 @@ class TradingWorker:
             logger.error("SELL submission failed for %s: %s", symbol, exc)
 
     def _fetch_next_bar(self, symbol: str, ref_price: float) -> Optional[pd.DataFrame]:
+        """Next US equity session bar for shadow fill (not wall-clock 24h / BTC).
+
+        Live next-open is not known yet, so we use the last complete NYSE session
+        bar as a conservative estimate — weekend/crypto dates are dropped.
         """
-        Fetch a single next-day bar for shadow fill simulation.
-        
-        In real shadow mode we'd wait for tomorrow's actual bar. For now we 
-        approximate with today's last bar as a conservative fill estimate.
-        """
+        from backend.utils.us_equity_calendar import filter_us_equity_daily_bars
+
         df = self._fetch_ohlcv(symbol, period="5d")
-        if df is None or len(df) < 2:
-            # Fallback: synthetic bar at ref_price
+        session_bars = filter_us_equity_daily_bars(df)
+        if session_bars is None or session_bars.empty:
             return pd.DataFrame({
                 "Open": [ref_price],
                 "High": [ref_price * 1.002],
                 "Low": [ref_price * 0.998],
                 "Close": [ref_price],
             })
-        return df.tail(1)
+        return session_bars.tail(1)
 
 
 # ---------------------------------------------------------------------------
@@ -997,9 +1142,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     import signal
 
     parser = argparse.ArgumentParser(description="ALPHA//DESK standalone trading worker")
-    parser.add_argument("--strategy", default="stable",
+    parser.add_argument("--strategy", default="breakout",
                         choices=list(KNOWN_STRATEGIES),
-                        help="Strategy to run (default: stable)")
+                        help="Strategy to run (default: breakout)")
     parser.add_argument("--mode", default="shadow", choices=["paper", "shadow"],
                         help="Execution mode: 'paper' submits to broker, 'shadow' simulates fills locally (default: shadow)")
     parser.add_argument("--interval", type=int, default=60,
@@ -1056,6 +1201,30 @@ def main(argv: Optional[List[str]] = None) -> int:
                      "without --allow-live. This protects against accidental live trading.")
         return 2
 
+    # Advertise liveness before _build_worker() — Alpaca + strategy wiring can
+    # take ~14s, longer than the old 8s start() wait (venv stub vs interpreter).
+    if args.heartbeat_file:
+        try:
+            Path(args.heartbeat_file).parent.mkdir(parents=True, exist_ok=True)
+            Path(args.heartbeat_file).write_text(
+                json.dumps(
+                    {
+                        "ts": datetime.now(timezone.utc).isoformat(),
+                        "running": True,
+                        "pid": os.getpid(),
+                        "mode": args.mode,
+                        "strategy": args.strategy,
+                        "paper": is_paper,
+                        "interval_seconds": args.interval,
+                    },
+                    indent=2,
+                    default=str,
+                ),
+                encoding="utf-8",
+            )
+        except Exception as exc:
+            logger.error("Early heartbeat write failed: %s", exc)
+
     worker = _build_worker(args.strategy, args.tickers, execution_mode=args.mode)
     logger.info("Worker initialized: mode=%s strategy=%s universe=%d interval=%ds paper=%s",
                 args.mode, args.strategy, len(worker.ticker_universe), args.interval, is_paper)
@@ -1078,15 +1247,64 @@ def main(argv: Optional[List[str]] = None) -> int:
                 "universe_size": len(list(getattr(worker, "ticker_universe", []) or [])),
                 "fetched": getattr(worker, "last_fetched", None) if isinstance(getattr(worker, "last_fetched", None), (int, float)) else None,
                 "scan_stale": bool(getattr(worker, "last_scan_stale", False) is True),
+                "signal_max_age_hours": None,
                 "mode": args.mode,
                 "strategy": args.strategy,
+                "named_strategy": True,
                 "paper": is_paper,
                 "pid": os.getpid(),
                 "interval_seconds": args.interval,
                 "halted": worker.is_halted,
                 "ignore_market_hours": os.getenv("IGNORE_MARKET_HOURS", "").strip().lower()
                 in ("1", "true", "yes"),
+                "cadence": getattr(worker, "last_cadence", None) or "intraday",
+                "polygon_configured": False,
+                "ohlcv_vendor": getattr(worker, "last_ohlcv_vendor", None),
+                "ohlcv_fallback": bool(getattr(worker, "last_ohlcv_fallback", False)),
+                "calendar": "us_equity",
+                "paper_vs_spy": None,
+                "pending_buys": [],
+                "skip_by_ticker": {},
             }
+            try:
+                payload["pending_buys"] = sorted(worker._pending_buy_symbols())
+            except Exception:
+                payload["pending_buys"] = []
+            by_ticker = getattr(worker, "last_skip_by_ticker", {})
+            if isinstance(by_ticker, dict):
+                payload["skip_by_ticker"] = {
+                    str(k).upper(): str(v) for k, v in list(by_ticker.items())[:80] if k
+                }
+            try:
+                from backend.api.research_jobs import signal_max_age_hours as _signal_max_age
+
+                payload["signal_max_age_hours"] = _signal_max_age()
+            except Exception:
+                payload["signal_max_age_hours"] = None
+            try:
+                from backend.agents.polygon_equity import is_configured as polygon_configured
+
+                payload["polygon_configured"] = bool(polygon_configured())
+                if not payload.get("ohlcv_vendor"):
+                    payload["ohlcv_vendor"] = "polygon" if payload["polygon_configured"] else "yahoo"
+            except Exception:
+                pass
+            try:
+                from backend.api.paper_performance import load_cached_paper_report
+
+                cached = load_cached_paper_report()
+                if isinstance(cached, dict):
+                    metrics = cached.get("metrics") or {}
+                    payload["paper_vs_spy"] = {
+                        "total_return_pct": (cached.get("pnl") or {}).get("total_return_pct"),
+                        "spy_return_pct": (cached.get("benchmark") or {}).get("spy_return_pct"),
+                        "alpha_net_of_costs_pct": (cached.get("costs") or {}).get("alpha_net_of_costs_pct"),
+                        "num_trades": metrics.get("num_trades"),
+                        "generated_at": cached.get("generated_at"),
+                        "source": "performance_paper.json",
+                    }
+            except Exception:
+                pass
             with open(args.heartbeat_file, "w") as fh:
                 json.dump(payload, fh, default=str)
         except Exception as exc:  # pragma: no cover - best-effort monitoring

@@ -33,4 +33,8 @@ backend/data/last_scan.json
 backend/data/last_deep.json
 backend/data/watchlist.json
 backend/data/performance_*.json
+backend/data/lab_*.json
+backend/data/lab_quantstats_tear.html
+backend/data/agent_state_*.json
+config/mandate.json
 *.log

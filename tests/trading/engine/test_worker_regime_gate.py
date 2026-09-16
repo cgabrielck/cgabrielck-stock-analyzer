@@ -69,7 +69,8 @@ class TestWorkerRegimeGate(unittest.TestCase):
         with patch.object(worker, "_detect_regime", return_value=bear_regime), \
              patch.object(worker, "_fetch_vix", return_value=None), \
              patch.object(worker, "_fetch_ohlcv", side_effect=lambda t, **k: price_data.get(t)), \
-             patch.object(worker, "_get_fundamental_score", return_value=80.0):
+             patch.object(worker, "_get_fundamental_score", return_value=80.0), \
+             patch.object(worker, "_safe_get_account", return_value=account):
             worker._run_strategy_signals(account)
 
         # No new BUY orders while over the exposure cap. Exits (sells) are still
@@ -100,12 +101,68 @@ class TestWorkerRegimeGate(unittest.TestCase):
         with patch.object(worker, "_detect_regime", return_value=bull_regime), \
              patch.object(worker, "_fetch_vix", return_value=None), \
              patch.object(worker, "_fetch_ohlcv", side_effect=lambda t, **k: price_data.get(t)), \
-             patch.object(worker, "_get_fundamental_score", return_value=80.0):
+             patch.object(worker, "_get_fundamental_score", return_value=80.0), \
+             patch.object(worker, "_safe_get_account", return_value=account):
             worker._run_strategy_signals(account)
 
         # The exposure gate must NOT have fired (entries permitted).
         actions = {row.get("action") for row in worker.last_signal_summary}
         self.assertNotIn("REGIME_GATE", actions)
+
+
+    def test_stale_scan_fail_closed_blocks_stable_buys(self):
+        """Wave 1: stale Scan/signal as-of blocks new buys for Stable, not only research_list."""
+        from backend.trading.models import OrderSide
+        from backend.trading.safety.mandate import TradingMandate
+        from backend.trading.strategies.base import Signal
+
+        worker, manager = _build_worker()
+        worker.mandate_gate.mandate = TradingMandate.permissive()
+        account = AccountSummary(
+            cash=90_000.0, buying_power=90_000.0, portfolio_value=100_000.0, positions=[]
+        )
+        price_data = {"AAPL": _synthetic_df(seed=1), "MSFT": _synthetic_df(seed=2)}
+
+        def _buy_signal(ticker, df, fundamental_score, llm_signal, current_positions):
+            close = float(df["Close"].iloc[-1])
+            return Signal(
+                ticker=ticker,
+                side="buy",
+                strategy_id="stable",
+                confidence=0.7,
+                reason="would-buy-if-fresh",
+                entry_price=close,
+                stop_loss_price=round(close * 0.96, 4),
+                take_profit_price=round(close * 1.05, 4),
+                avg_win_pct=0.05,
+                avg_loss_pct=0.04,
+            )
+
+        worker.strategy.generate_signal = _buy_signal
+        worker.strategy.diagnose_entry = lambda *a, **k: None
+        worker._pending_buy_symbols = lambda: set()
+        worker._resolve_cadence = lambda: "intraday"
+
+        with patch.object(worker, "_detect_regime", return_value={"regime": "bull", "target_allocation": 0.90}), \
+             patch.object(worker, "_fetch_vix", return_value=None), \
+             patch.object(worker, "_fetch_ohlcv", side_effect=lambda t, **k: price_data.get(t)), \
+             patch.object(
+                 worker,
+                 "_get_fundamental_score_info",
+                 return_value={"score": 80.0, "stale": True, "source": "last_scan_stale", "scan_ts": "2026-09-10T00:00:00+00:00"},
+             ), \
+             patch.object(worker, "_safe_get_account", return_value=account):
+            worker._run_strategy_signals(account)
+
+        buy_orders = [
+            c.args[0] for c in manager.submit_new_order.call_args_list
+            if c.args and getattr(c.args[0], "side", None) == OrderSide.BUY
+        ]
+        self.assertEqual(buy_orders, [])
+        self.assertTrue(worker.last_scan_stale)
+        self.assertGreater(worker.last_skip_counts.get("research_stale", 0), 0)
+        actions = {row.get("action") for row in worker.last_signal_summary}
+        self.assertIn("RESEARCH_STALE", actions)
 
 
 if __name__ == "__main__":

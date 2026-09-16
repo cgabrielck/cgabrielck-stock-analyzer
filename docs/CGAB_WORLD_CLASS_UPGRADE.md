@@ -1,6 +1,6 @@
 # Cgab — World-class upgrade plan
 
-**Last updated:** 2026-09-12 (review: sequencing corrected)  
+**Last updated:** 2026-09-17 (wait-state: Waves 1–5 landed; Wave 6 next)  
 **Status:** Operating strategy. **No trading-code changes until you approve a coding slice.**  
 **Architecture:** [`ARCHITECTURE_DECISION.md`](ARCHITECTURE_DECISION.md) **ADR-002** (ADR-001 superseded, kept as history).  
 **This file is the canonical copy** of the grade, OSS catalog, steal/refuse list, two-SKU design, and slices.
@@ -265,5 +265,23 @@ This is the best first move. It does not require FinBERT or a debate UI.
 
 ## Coding wait-state
 
-**Landed:** ADR-002 docs; Slice A paper-truth; session-timed auto Scan + keep-real-scores; **thin Slice B evidence** (desk provenance chips, paper vs SPY net of costs, post-close Telegram digest); **trading-AI redesign** (Stage-2 `trend`, regime `adaptive`, Connors `stable`/`reversion`, breakout+RS, risk-pct sizing, bakeoff vs SPY).
-**Not approved next:** full Slice B committee / FinBERT; Slice C IC/IR factory.
+Agent execution order is **Wave 0→8** in the unified Cgab roadmap (local Cursor
+plan: *Unified Cgab roadmap*). Do **not** keep a parallel “next = Slice B/C / P3–P6”
+queue. This file remains the grade / OSS catalog; Waves are the coding sequence.
+
+| Wave | Status | Meaning (old names in parentheses) |
+|------|--------|--------------------------------------|
+| 0 | Landed | Slice A, thin Slice B, STRATEGY P0–P2, paper ops / Telegram / hourly Scan |
+| 1 | Landed | Paper evidence window + fail-closed: Desk/Telegram 日報 (filled vs pending, skips, paper vs SPY net of costs), tightened `mandate.json`, Scan/signal max-age fail-closed, adoption freeze in this runbook |
+| 2 | Landed | Polygon daily bars + US session calendar (STRATEGY P3); no key → Yahoo fallback OK |
+| 3 | Landed | Full Slice B on FastAPI (Desk tear, advisory **does not** place orders, digest) |
+| 4 | Landed | IC/IR factory + Quality split (Slice C / P4); fixture net-of-costs did not beat SPY → no alpha claim |
+| 5 | Landed | Named optional `defensive_gld` / weekly cadence — operator chooses; default remains `research_list` |
+| 6 | **Next** | Lean/Nautilus sim sidecars; FinBERT soft gate (Slice E, P5–P6) |
+| 7 | After 6 | Live gate: seal + ≥30 trading-day paper runbook + small capital + first-week human (Slice F) |
+| 8 | Last | Account isolation / commercial (Slice G) |
+
+**Landed (Waves 0–5):** ADR-002; Slice A paper-truth; session-timed auto Scan + keep-real-scores; Desk evidence (provenance, paper vs SPY net of costs, digest/tear/advisory); Polygon+calendar path; factor IC/IR lab; optional `defensive_gld`; trading-AI redesign (Stage-2 `trend`, regime `adaptive`, Connors `stable`/`reversion`, breakout+RS, risk-pct sizing, bakeoff vs SPY). Default paper strategy remains `research_list`.
+
+**Do not start next (Wave 6+):** Lean/Nautilus sidecars; FinBERT as a trading gate; live; silently rewriting `research_list` / Stable. Those wait for their Wave.
+

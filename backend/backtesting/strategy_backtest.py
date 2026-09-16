@@ -154,8 +154,34 @@ def run_strategy_backtest(
         result.warnings.append("No usable price data at all.")
         return result
 
-    all_dates = sorted(set().union(*[set(d.index) for d in aligned.values()]))
-    all_dates = [d for d in all_dates if pd.Timestamp(start) <= d <= pd.Timestamp(end_date)]
+    try:
+        from backend.utils.us_equity_calendar import (
+            equity_session_days,
+            filter_us_equity_daily_bars,
+        )
+    except ImportError:
+        from utils.us_equity_calendar import (  # type: ignore
+            equity_session_days,
+            filter_us_equity_daily_bars,
+        )
+
+    for ticker, frame in list(aligned.items()):
+        aligned[ticker] = filter_us_equity_daily_bars(frame)
+    aligned = {t: f for t, f in aligned.items() if f is not None and not f.empty}
+    if spy_frame is not None:
+        spy_frame = filter_us_equity_daily_bars(spy_frame)
+        spy_close = spy_frame["Close"] if spy_frame is not None and not spy_frame.empty else spy_close
+        if hasattr(strategy, "set_spy_close"):
+            strategy.set_spy_close(spy_close)
+        elif hasattr(strategy, "spy_close"):
+            strategy.spy_close = spy_close
+
+    all_dates = equity_session_days(
+        aligned,
+        start=start,
+        end=end_date,
+        spy=spy_frame,
+    )
     if len(all_dates) < 30:
         result.warnings.append("Too few trading dates for a meaningful backtest.")
         return result
@@ -241,6 +267,8 @@ def run_strategy_backtest(
                 "entry_date": day.strftime("%Y-%m-%d"),
                 "entry_day_idx": day_idx,
                 "meta": dict(signal.meta or {}),
+                "reason": signal.reason,
+                "fund_score": fund_score,
                 "entry_kind": (signal.meta or {}).get("entry_kind") or signal.strategy_id,
             }
             del pending_entries[ticker]
@@ -295,6 +323,7 @@ def run_strategy_backtest(
                 cash += proceeds
                 pnl = (exit_price - pos["entry_price"]) * pos["qty"]
                 pnl_pct = pnl / (pos["entry_price"] * pos["qty"]) * 100.0 if pos["entry_price"] else 0.0
+                meta = pos.get("meta") or {}
                 trade_records.append({
                     "ticker": ticker,
                     "side": "long",
@@ -308,6 +337,13 @@ def run_strategy_backtest(
                     "exit_reason": exit_reason,
                     "strategy": strategy_id,
                     "entry_kind": pos.get("entry_kind"),
+                    "reason": pos.get("reason"),
+                    "fund_score": pos.get("fund_score"),
+                    "rs_role": meta.get("rs_role"),
+                    "rs_12w": meta.get("rs_12w"),
+                    "rs_126": meta.get("rs_126"),
+                    "rs_252": meta.get("rs_252"),
+                    "macd_hist": meta.get("macd_hist"),
                 })
                 del positions[ticker]
 

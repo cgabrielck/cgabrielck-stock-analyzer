@@ -139,7 +139,30 @@ class TestWorkerIntegration(unittest.TestCase):
             # Mock account getter
             worker._safe_get_account = lambda: FakeAccount()
 
-            # Run one cycle — the synthetic oversold OHLCV should trigger the strategy
+            # Named-strategy signal (not Scan top-5). Inject so this test covers
+            # worker Kelly ∩ 1R sizing + shadow fill, not Connors Stage-2 timing.
+            from backend.trading.strategies.base import Signal
+
+            def _test_signal(ticker, df, fundamental_score, llm_signal, current_positions):
+                close = float(df["Close"].iloc[-1])
+                return Signal(
+                    ticker=ticker,
+                    side="buy",
+                    strategy_id="stable",
+                    confidence=0.7,
+                    reason="integration_harness Stage-2 reversion",
+                    entry_price=close,
+                    stop_loss_price=round(close * 0.965, 4),
+                    take_profit_price=round(close * 1.05, 4),
+                    avg_win_pct=0.05,
+                    avg_loss_pct=0.035,
+                    meta={"entry_kind": "reversion", "rs_role": "filter_only"},
+                )
+
+            worker.strategy.generate_signal = _test_signal
+            worker.strategy.diagnose_entry = lambda *a, **k: None
+
+            # Run one cycle — injected signal should size via min(Kelly, 1R) and fill
             worker._run_strategy_signals(FakeAccount())
 
             # Verify order was created and filled

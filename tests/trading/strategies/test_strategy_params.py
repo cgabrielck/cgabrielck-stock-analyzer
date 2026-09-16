@@ -65,6 +65,20 @@ class TestAggressive3R(unittest.TestCase):
         reward = sig.take_profit_price - sig.entry_price
         self.assertAlmostEqual(reward / risk, 2.0, places=2)
 
+    def test_negative_macd_hist_skips(self):
+        df = _uptrend()
+        strat = AggressiveStrategy()
+        work = strat.populate_indicators(df)
+        work = work.copy()
+        work["macd_hist"] = -0.05
+        close = float(work["Close"].iloc[-1])
+        fake_vcp = {"found": True, "contractions": 3, "breakout_level": close * 0.99,
+                    "last_pullback_pct": 0.05, "avg_volume_trend": "declining"}
+        with patch.object(strat, "populate_indicators", return_value=work):
+            with patch("backend.trading.strategies.aggressive.detect_vcp", return_value=fake_vcp):
+                skip = strat.diagnose_entry("TEST", df, 60.0, None, [])
+        self.assertEqual(skip, "macd_weak")
+
 
 class TestParameterOverride(unittest.TestCase):
     def test_stable_override_applies(self):

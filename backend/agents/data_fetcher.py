@@ -688,6 +688,16 @@ _NEGATIVE_KEYWORDS: set[str] = {
 
 
 def _analyze_news_sentiment(title: str, summary: str) -> str:
+    # Lab FinBERT soft path (LAB_FINBERT=1); else VADER. Never places orders.
+    try:
+        from backend.lab.flags import finbert_enabled
+        from backend.lab.finbert_sentiment import classify_news_sentiment
+
+        if finbert_enabled():
+            label, _meta = classify_news_sentiment(title, summary)
+            return label
+    except Exception:
+        pass
     text = (title + " " + summary).strip()
     try:
         from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer

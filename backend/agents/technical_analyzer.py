@@ -145,7 +145,7 @@ def calculate_technical_score(data: Dict[str, Any]) -> float:
 def compute_technical_indicators(
     ticker: str, period: str = "6mo", force_refresh: bool = False,
 ) -> Dict[str, Any]:
-    cache_key = f"tech_v3_{ticker}_{period}"
+    cache_key = f"tech_v4_{ticker}_{period}"
     if not force_refresh:
         cached = cache.get(cache_key, "info")
         if cached:
@@ -156,15 +156,31 @@ def compute_technical_indicators(
     try:
         stock = yf.Ticker(ticker)
         history_source = "yfinance_history"
+        bars_vendor = "yahoo"
+        bars_fallback = False
+        hist = pd.DataFrame()
         try:
-            hist = stock.history(period=period, auto_adjust=True)
-        except Exception:
-            hist = pd.DataFrame()
+            from utils.equity_ohlcv import fetch_daily_ohlcv
+        except ImportError:
+            from backend.utils.equity_ohlcv import fetch_daily_ohlcv  # type: ignore
+        ohlcv = fetch_daily_ohlcv(ticker, period=period, min_bars=50)
+        if ohlcv.get("ok") and ohlcv.get("data") is not None and len(ohlcv["data"]) >= 50:
+            hist = ohlcv["data"]
+            provider = str(ohlcv.get("provider") or "yahoo").lower()
+            bars_fallback = bool(ohlcv.get("fallback"))
+            if provider == "polygon":
+                history_source = "polygon_aggs"
+                bars_vendor = "polygon"
+            else:
+                history_source = "yfinance_history"
+                bars_vendor = "yahoo"
         if hist is None or hist.empty or len(hist) < 50:
             alpha_history = fetch_daily_adjusted(ticker, period=period, force_refresh=force_refresh)
             if alpha_history:
                 hist = alpha_history["data"]
                 history_source = "alpha_vantage_daily_adjusted"
+                bars_vendor = "alpha_vantage"
+                bars_fallback = True
         if hist is None or hist.empty or len(hist) < 50:
             return {"ticker": ticker, "error": "insufficient_history"}
 
@@ -218,6 +234,8 @@ def compute_technical_indicators(
             "price_market_state": latest_quote["market_state"],
             "price_stale": latest_quote["stale"],
             "technical_source": history_source,
+            "bars_vendor": bars_vendor,
+            "bars_fallback": bars_fallback,
             "technical_adjusted": True,
             "technical_price_basis": "latest_share_basis",
             "history_last_close": round(last_close, 4),

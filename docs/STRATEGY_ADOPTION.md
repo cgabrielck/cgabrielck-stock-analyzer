@@ -1,6 +1,6 @@
 # ALPHA//DESK — 策略引用採納報告（Strategy Adoption）
 
-**Last updated:** 2026-09-12  
+**Last updated:** 2026-09-16  
 **Audience:** 本機／Cloud Cursor Agent、產品負責人  
 **Method:** 三輪獨立覆核（①代碼對照名單盤點 ②投委／交易員應引審核 ③「唔好引」壓力測試）  
 **Related:** [`ARCHITECTURE_DECISION.md`](ARCHITECTURE_DECISION.md) · [`PROCUREMENT_GUIDE.md`](PROCUREMENT_GUIDE.md) · [`LOCAL_CURSOR_HANDOFF.md`](LOCAL_CURSOR_HANDOFF.md) · [`AUTO_TRADING_ROADMAP.md`](AUTO_TRADING_ROADMAP.md)
@@ -13,7 +13,7 @@
 
 - **質素／成長複合選股** + **上升趨勢內均值回歸（Stable）** + **VCP／突破（Aggressive）**
 - 執行層用 **半 Kelly + 硬風控閘**（倉位帽、相關、日虧、殺開關、mandate、bracket）
-- **下一步**：訊號統一、真相對強度、ATR 風險單位、付費日 K、多月 shadow 封印  
+- **下一步**：P0–P2 已落地（訊號統一、真 RS filter、ATR 1R）。**Wave 2 是 P3 的編碼切片**（Polygon 主路徑 + 美股 session calendar；無 key 則 Yahoo 標成 fallback，**唔改對外敘事／唔當 live**）。多月 paper vs SPY 封印仍係 P3 運維剩餘。見 [`PAID_DATA_PIT_PLAN.md`](PAID_DATA_PIT_PLAN.md)。  
 - **唔係**：FF 多空因子書、CTA／TSMOM 期貨盤、做市／HFT、端到端 RL／深度學習下單機
 
 任何新策略／模型若**不能**寫成「可審計規則 + 風控硬閘 + OOS／shadow 封印」，**禁止**進入主交易路徑。
@@ -24,21 +24,37 @@
 
 | 名單類別 | 狀態 | 置信度 | 說明 |
 |----------|------|--------|------|
-| 均值回歸（RSI + 布林帶 + SMA200 上升過濾） | **已引用** | 高 | Stable 主策略＝swing MR-in-uptrend |
-| 趨勢／突破（SMA／MACD／ADX／ATR 停／VCP） | **已引用** | 高 | Aggressive ≈ Minervini SEPA／VCP；非 Donchian/Turtle |
-| 相對強度 vs SPY／板塊 | **部分** | 中 | 短窗差價有；**非** 12 月 Jegadeesh 截面動量；docstring 宣稱 12 週 RS Rank **未完整編碼** |
+| 均值回歸（Connors RSI2 + SMA21 回踩，Stage-2／SMA200 上升過濾） | **已引用** | 高 | Stable 主策略＝swing MR-in-uptrend（非深超賣 RSI14<32+BB） |
+| 趨勢／突破（SMA／MACD hist≥0／ADX／ATR 停／VCP） | **已引用** | 高 | Aggressive／breakout ≈ Minervini SEPA／VCP；MACD 柱線硬閘與 diagnose／worker／回測同一 helper；非 Donchian/Turtle |
+| 相對強度 vs SPY／板塊 | **已引用（filter only）** | 高 | 63／126／252 日 vs SPY 可審計；**硬閘僅 12 週>0**；6／12 月只做排序／審計 meta。同業板塊 ETF 未穩故本輪 SPY-only。**非**獨立動量 book |
 | TSMOM／Carhart WML | **缺席** | — | — |
 | 基本面「因子味」（成長／PEG／ROE／槓桿；價值／股息分數） | **已引用（啟發式）** | 高 | multi-metric 複合分，**非** FF HML/SMB/RMW 回歸組合 |
 | 體制（SPY SMA + VIX → 曝險／權重） | **已引用** | 高 | 規則體制；**非** HMM |
-| 情緒（VADER 類新聞分 ± 細權重；LLM 軟混） | **已引用** | 高 | FinBERT **未做**；LLM **不可**繞過風控 |
+| 情緒（VADER 類新聞分 ± 細權重；LLM 軟混） | **已引用** | 高 | FinBERT **未做**；Scan 快取 `llm_key_signal` 可進 worker 否決；`WORKER_SENTIMENT_VETO` 預設關；LLM **不可**下單 |
 | 事件（業績衝突降權／黑窗） | **部分** | 中 | 有防護；**無** PEAD 交易規則 |
-| 風險鐵則（半 Kelly、25%/90%、相關、日虧、殺開關、mandate、β／ATR、bracket） | **已引用** | 高 | 產品最大優勢層 |
+| 風險鐵則（半 Kelly、25%/90%、相關、日虧、殺開關、mandate、β／ATR、bracket） | **已引用** | 高 | 產品最大優勢層；worker 倉位 = min(Kelly, 權益 1%／1R ATR) |
 | 驗證（walk-forward、成本、filing lag、校準閘 Kelly、PIT 宇宙） | **已引用／加強中** | 高 | 仍非機構 CRSP／purged CV |
 | 組合（Kelly／等權 + 板塊帽） | **已引用** | 高 | **無** risk parity／Black–Litterman |
 | 執行（Alpaca shadow／paper、bracket） | **已引用** | 高 | live 需人類閘 |
 | Stat-arb／做市／HFT／VRP／GARCH／XGBoost／LSTM／PPO | **缺席** | — | roadmap 提及 ≠ 已上線 |
 
 **指紋：** 體制感知質素成長選股 + MR-in-uptrend + VCP 突破袖 + 硬風控殼。
+
+### 1.1 訊號對照（P0 單一真相）
+
+同一 ticker、同一 as-of：research 分數／入場理由 = worker skip reason = 回測 entry log 字段（`reason` / `rs_*` / `macd_hist` / `entry_kind`）。
+
+- Scan `risk_adjusted_score` → worker／回測 fund，經 `get_fund_score` as-of（過期唔改寫成 50）。
+- Desk `entry_threshold` → **只**改 `research_list.MIN_FUND_SCORE`；trend／breakout 模板門檻唔受此旋鈕偷改。
+- 各策略自有 `MIN_FUND_SCORE`：research_list 65、stable 60、trend 55、breakout 50。
+- 停損：breakout／trend = ATR（兼 pivot／SMA）；stable／research_list = 固定 %。
+- MACD hist≥0：只在 **breakout 路徑**（含 adaptive 路由到 breakout）；desk `diagnose_entry`、worker `generate_signal`、回測共用 `_entry_skip`。
+- RS 63／126／252 vs SPY：用途標明 `filter_only`；硬閘僅 12 週&gt;0。
+- 紙上具名策略：`adaptive` / `trend` / `breakout` / `research_list` / `defensive_gld`。Scan top-N 只經操作員揀 `research_list`，禁止默默「Scan top 5 自動買」。`defensive_gld`（RED／PANIC 轉 GLD）同週頻節奏都要操作員喺 AI Mode 揀，唔搶預設。
+- 節奏：預設仍係現況全日 demo（`IGNORE_MARKET_HOURS` 照舊）。`cadence=weekly` 先改做美東週一再平衡 + PANIC 例外。
+- 情緒／LLM：只讀 Scan 快取否決；`WORKER_SENTIMENT_VETO` 預設關；永遠唔下單。
+
+Lab 對照（唔搶 P3）：見 [`LAB_CITATION_TRY.md`](LAB_CITATION_TRY.md)／[`CITATION_REFUSALS.md`](CITATION_REFUSALS.md)。分支 `lab/citation-try` 可選 Instructor／FinBERT／QuantStats／Advisory；**永不下單**，唔用 bakeoff 贏 SPY 當 A/B。
 
 ---
 
@@ -89,7 +105,7 @@
 | P0 | 統一 research 與 worker 訊號／門檻 | **應** |
 | P1 | 實作真 RS（中期 vs SPY／同業） | **應** |
 | P2 | 每筆風險%／ATR 單位 sizing | **應** |
-| P3 | Polygon 日 K + 多月 shadow seal | **應** |
+| P3 | Polygon 日 K + 多月 shadow seal | **應**（**Wave 2 = 編碼切片**：worker／Scan／回測／shadow 有 key 優先 Polygon，Yahoo 標 fallback；美股 session 日曆，唔混 24h／BTC lag。無 key 唔改 Yahoo 對外敘事。多月 seal 仍按 PROCUREMENT Phase 2 買 key 後跑） |
 | P4 | Quality 因子拆賬歸因 | **應** |
 | P5 | FinBERT 軟情緒／窄 PEAD 旗標 | 可選 |
 | P6 | 外部 LEAN 回測 | 可選 |
@@ -116,4 +132,8 @@ No live trading without paper/shadow seal per PAPER_VALIDATION_RUNBOOK.md.
 
 | 日期 | 變更 |
 |------|------|
+| 2026-09-16 | Wave 5：具名 `defensive_gld`（RED／PANIC 轉 GLD）+ 操作員週頻節奏開關；預設仍 `research_list`／現況全日 demo，唔搶主策略。 |
+| 2026-09-16 | Wave 2 編碼切片：Polygon 主路徑 + 美股 session calendar。無 `POLYGON_API_KEY` 維持 Yahoo fallback 敘事。見 PAID_DATA_PIT_PLAN。 |
+| 2026-09-14 | Lab citation-try：可選 Instructor／FinBERT／QuantStats／Advisory（預設關）；主線仍 P3 paper／shadow 封印。見 LAB_CITATION_TRY / CITATION_REFUSALS。 |
+| 2026-09-13 | P0–P2 落地：訊號一體化、真 RS（filter only）、ATR 1R sizing、breakout MACD hist≥0。P3 仍為 §4「應做」，本 sprint defer（金鑰／運維），下一步見 PROCUREMENT_GUIDE。未贏 SPY 唔宣稱 alpha。 |
 | 2026-09-12 | 初版：三輪覆核寫入；應引／唔應引定稿並推送 `main` |

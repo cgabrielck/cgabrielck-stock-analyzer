@@ -37,6 +37,24 @@ class TestAlpacaBracketOrders(unittest.TestCase):
         self.assertIsNotNone(req.take_profit)
         self.assertIsNotNone(req.stop_loss)
 
+    def test_bracket_prices_round_to_penny_for_names_over_one_dollar(self):
+        order = Order(
+            id="3",
+            symbol="GOOGL",
+            side=OrderSide.BUY,
+            order_type=OrderType.LIMIT,
+            quantity=28,
+            limit_price=349.3901,
+            take_profit_price=384.329,
+            stop_loss_price=328.4266,
+            order_class="bracket",
+            idempotency_key="br-googl",
+        )
+        req = self.broker._build_order_request(order)
+        self.assertEqual(req.limit_price, 349.39)
+        self.assertEqual(float(req.take_profit.limit_price), 384.33)
+        self.assertEqual(float(req.stop_loss.stop_price), 328.43)
+
     def test_simple_orders_have_no_bracket_legs(self):
         order = Order(
             id="2",

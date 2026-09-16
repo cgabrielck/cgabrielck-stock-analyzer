@@ -55,7 +55,7 @@ from utils.cache import cache
 from utils.constants import STOCK_UNIVERSE, SCORING_WEIGHTS
 from utils.selection import MIN_RECOMMENDATION_METRICS, select_recommendations
 
-FILING_LAG_DAYS: int = 60
+FILING_LAG_DAYS: int = 60  # SEC calendar days (not 24h/BTC). Bar lag uses US sessions.
 MAX_WORKERS: int = 5
 DEFAULT_START: str = (datetime.now() - timedelta(days=3 * 365)).strftime("%Y-%m-%d")
 TECH_CANDIDATES: int = 15
@@ -73,15 +73,27 @@ ProgressCb = Optional[Callable[[int, int, str], None]]
 
 def _fetch_single_price(ticker: str, start: str, end: str) -> Optional[pd.DataFrame]:
     try:
+        from utils.equity_ohlcv import fetch_daily_ohlcv
+    except ImportError:
+        from backend.utils.equity_ohlcv import fetch_daily_ohlcv  # type: ignore
+    try:
+        from utils.us_equity_calendar import filter_us_equity_daily_bars
+    except ImportError:
+        from backend.utils.us_equity_calendar import filter_us_equity_daily_bars  # type: ignore
+
+    ohlcv = fetch_daily_ohlcv(ticker, start=start, end=end, min_bars=1)
+    if ohlcv.get("ok") and ohlcv.get("data") is not None and not ohlcv["data"].empty:
+        return filter_us_equity_daily_bars(ohlcv["data"])
+    try:
         stock = yf.Ticker(ticker)
         df = stock.history(start=start, end=end, auto_adjust=True)
         if df is not None and not df.empty:
-            return df
+            return filter_us_equity_daily_bars(df)
     except Exception:
         pass
     alpha_history = fetch_daily_adjusted(ticker, start=start, end=end)
     if alpha_history:
-        return alpha_history["data"]
+        return filter_us_equity_daily_bars(alpha_history["data"])
     return None
 
 
@@ -137,7 +149,13 @@ def _fetch_single_balance_sheet(ticker: str) -> Optional[pd.DataFrame]:
 
 
 def _find_recent_quarter(qf: pd.DataFrame, as_of: pd.Timestamp) -> Tuple[int, int]:
-    cutoff = as_of - timedelta(days=FILING_LAG_DAYS)
+    try:
+        from utils.us_equity_calendar import last_session_on_or_before
+    except ImportError:
+        from backend.utils.us_equity_calendar import last_session_on_or_before  # type: ignore
+
+    as_of_session = last_session_on_or_before(as_of)
+    cutoff = as_of_session - timedelta(days=FILING_LAG_DAYS)
     available = [c for c in qf.columns if pd.Timestamp(c) <= cutoff]
     if not available:
         return -1, -1
@@ -160,6 +178,11 @@ def _extract_fundamentals_as_of(
         return {}
 
     filing_as_of = as_of.tz_localize(None) if as_of.tzinfo is not None else as_of
+    try:
+        from utils.us_equity_calendar import last_session_on_or_before
+    except ImportError:
+        from backend.utils.us_equity_calendar import last_session_on_or_before  # type: ignore
+    filing_as_of = last_session_on_or_before(filing_as_of)
     idx, prev = _find_recent_quarter(qf, filing_as_of)
     if idx < 0 or prev < 0:
         # Never substitute a future report for an unavailable historical one.
@@ -410,6 +433,19 @@ def run_backtest(
         end=pd.Timestamp(end_date),
         freq="ME",
     ))
+    try:
+        from utils.us_equity_calendar import last_session_on_or_before
+    except ImportError:
+        from backend.utils.us_equity_calendar import last_session_on_or_before  # type: ignore
+    snapped: List[pd.Timestamp] = []
+    seen_reb = set()
+    for d in rebalance_dates:
+        session = last_session_on_or_before(d)
+        key = session.normalize()
+        if key not in seen_reb:
+            seen_reb.add(key)
+            snapped.append(session)
+    rebalance_dates = snapped
     end_timestamp = pd.Timestamp(end_date)
 
     sample_tz = next((df.index.tz for df in price_data.values() if df is not None and not df.empty), None)
@@ -487,6 +523,7 @@ def run_backtest(
             score = tech_score
             fund_score: Optional[float] = None
             metrics_used = 0
+            quality: Dict[str, Any] = {}
 
             if use_fundamentals and ticker in fund_data:
                 qf = fund_data[ticker]
@@ -495,12 +532,13 @@ def run_backtest(
                     fund["ticker"] = ticker
                     fund["sector"] = sector_map.get(ticker, "Unknown")
 
-                    from agents.fundamental_analyzer import calculate_growth_score
+                    from agents.fundamental_analyzer import calculate_growth_score, quality_attribution
                     gscore_val, details, metrics_used = calculate_growth_score(fund)
                     if metrics_used > 0:
                         fundamental_count += 1
                         fund_score = gscore_val
                         score = round(gscore_val * 0.7 + tech_score * 0.3, 1)
+                        quality = quality_attribution(fund)
 
             entry = {
                 "ticker": ticker,
@@ -509,6 +547,12 @@ def run_backtest(
                 "total_score": score,
                 "tech_score": tech_score,
                 "fund_score": fund_score,
+                "quality_score": quality.get("quality_score"),
+                "quality_roe_score": quality.get("quality_roe_score"),
+                "quality_margin_score": quality.get("quality_margin_score"),
+                "quality_leverage_score": quality.get("quality_leverage_score"),
+                "growth_component_score": quality.get("growth_component_score"),
+                "value_component_score": quality.get("value_component_score"),
                 "metrics_used": metrics_used,
                 "model_scope": result.model_scope,
                 "price": tech.get("price"),

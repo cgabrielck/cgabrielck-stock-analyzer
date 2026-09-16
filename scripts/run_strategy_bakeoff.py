@@ -8,7 +8,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "backend"))
 
 from dotenv import load_dotenv
 
@@ -97,10 +102,21 @@ def main() -> None:
         }
         for r in rows
     ]
+    payload = {
+        "disclaimer": (
+            "12-name smoke bakeoff 2023-08..2026-08 unless --limit overridden. "
+            "Do not claim alpha unless a named mode beats SPY net of costs. "
+            "Default paper mode=breakout. P3 Polygon+shadow seal is still required (deferred)."
+        ),
+        "rows": table,
+        "start": START,
+        "end": END,
+        "limit": args.limit or None,
+    }
     bakeoff_path = OUT_DIR / "strategy_bakeoff_summary.json"
-    bakeoff_path.write_text(json.dumps(table, indent=2), encoding="utf-8")
+    bakeoff_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     print(f"\nBakeoff table → {bakeoff_path}")
-    print(json.dumps(table, indent=2))
+    print(json.dumps(payload, indent=2, ensure_ascii=False))
 
 
 if __name__ == "__main__":

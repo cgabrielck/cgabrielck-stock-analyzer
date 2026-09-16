@@ -88,6 +88,9 @@ def run_full_analysis(
         if tech.get("price") is not None:
             for key in ("price", "price_session", "price_source", "price_quote_time", "price_market_state", "price_stale"):
                 stock[key] = tech.get(key)
+        for key in ("technical_source", "bars_vendor", "bars_fallback"):
+            if tech.get(key) is not None:
+                stock[key] = tech.get(key)
         if tech_score is not None:
             stock["base_score"] = round(stock.get("growth_score", 0) * 0.7 + tech_score * 0.3, 1)
             stock["total_score"] = stock["base_score"]
@@ -182,6 +185,12 @@ def run_full_analysis(
             "peg": s.get("peg"),
             "roe": s.get("roe"),
             "debt_equity": s.get("debt_equity"),
+            "quality_score": s.get("quality_score"),
+            "quality_roe_score": s.get("quality_roe_score"),
+            "quality_margin_score": s.get("quality_margin_score"),
+            "quality_leverage_score": s.get("quality_leverage_score"),
+            "growth_component_score": s.get("growth_component_score"),
+            "value_component_score": s.get("value_component_score"),
         }
         if use_llm:
             entry["llm_score"] = s.get("llm_score")

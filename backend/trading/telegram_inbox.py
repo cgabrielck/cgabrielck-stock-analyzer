@@ -10,7 +10,7 @@ import logging
 import threading
 import time
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import requests
 
@@ -24,10 +24,15 @@ _HELP = (
     "請用下方選單點選功能。\n"
     "\n"
     "狀態／持倉 — 查看自動交易與模擬盤\n"
-    "啟動／停止 — 紙上自動交易\n"
+    "待買 — 已送券商、尚未成交的限價單（例如 GOOGL 28 股）\n"
+    "日報 — 今日成交 vs 排隊、skip、紙上 vs SPY（扣成本）；未成交不算封印\n"
+    "理由 — Scan 為何挑這些股；也可傳「為何 GOOGL」\n"
+    "啟動／停止 — 紙上自動交易（啟動會用 AI Mode 已存策略）\n"
+    "跟掃描 — 改為 research_list，只買最新 Scan 前 N 名（仍過 Stage-2 與風控；不會改成 defensive_gld）\n"
     "急停／恢復 — 暫停新買入或解除\n"
     "掃描 — 掃 74 檔\n"
     "\n"
+    "防禦 GLD 與週頻節奏請到 Desk「AI 模式」手動選擇，Telegram 不會自動開啟。\n"
     "沒有「買入」按鈕。下單必須通過風控。"
 )
 
@@ -61,10 +66,32 @@ _ALIASES = {
     "掃描": "scan",
     "扫描": "scan",
     "scan": "scan",
+    "跟掃描": "follow_scan",
+    "跟扫描": "follow_scan",
+    "跟名單": "follow_scan",
+    "跟名单": "follow_scan",
+    "research_list": "follow_scan",
+    "scanlist": "follow_scan",
+    "follow_scan": "follow_scan",
     "持倉": "positions",
     "持仓": "positions",
     "倉位": "positions",
     "positions": "positions",
+    "待買": "pending",
+    "待买": "pending",
+    "排隊": "pending",
+    "排队": "pending",
+    "pending": "pending",
+    "queue": "pending",
+    "日報": "digest",
+    "日报": "digest",
+    "digest": "digest",
+    "daily": "digest",
+    "理由": "why",
+    "為何": "why",
+    "为何": "why",
+    "why": "why",
+    "reason": "why",
 }
 
 _ORDER_WORDS = {"買", "賣", "买", "卖", "buy", "sell", "下單", "下单", "order"}
@@ -78,14 +105,16 @@ def parse_command(text: str) -> Tuple[str, str]:
     if not raw:
         return "empty", ""
     token = raw.splitlines()[0].strip().lstrip("/")
-    first = token.split()[0] if token else ""
+    parts = token.split()
+    first = parts[0] if parts else ""
+    rest = " ".join(parts[1:]).strip()
     lowered = first.lower()
     if first in _ORDER_WORDS or lowered in _ORDER_WORDS:
         return "reject_order", first
     if first in _ALIASES:
-        return _ALIASES[first], first
+        return _ALIASES[first], rest
     if lowered in _ALIASES:
-        return _ALIASES[lowered], first
+        return _ALIASES[lowered], rest
     return "unknown", first
 
 
@@ -94,9 +123,11 @@ def reply_keyboard() -> Dict[str, Any]:
     return {
         "keyboard": [
             [{"text": "狀態"}, {"text": "持倉"}],
+            [{"text": "待買"}, {"text": "理由"}],
             [{"text": "啟動"}, {"text": "停止"}],
+            [{"text": "跟掃描"}, {"text": "掃描"}],
             [{"text": "急停"}, {"text": "恢復"}],
-            [{"text": "掃描"}, {"text": "選單"}],
+            [{"text": "選單"}, {"text": "日報"}],
         ],
         "resize_keyboard": True,
         "is_persistent": True,
@@ -123,7 +154,7 @@ def _write_offset(offset: int) -> None:
     OFFSET_PATH.write_text(json.dumps({"offset": int(offset)}), encoding="utf-8")
 
 
-def handle_command(command: str) -> str:
+def handle_command(command: str, argument: str = "") -> str:
     if command == "help":
         return _HELP
     if command == "empty":
@@ -131,9 +162,18 @@ def handle_command(command: str) -> str:
     if command == "reject_order":
         return "不會從 Telegram 下單。請用工作台或等紙上自動交易通過風控後再買。"
     if command == "unknown":
+        maybe = str(argument or "").upper().strip()
+        if _is_universe_ticker(maybe):
+            return _cmd_why(maybe)
         return "無法辨識。請點下方選單，或傳「選單」。不會從這裡下單。"
     if command == "status":
         return _cmd_status()
+    if command == "pending":
+        return _cmd_pending()
+    if command == "digest":
+        return _cmd_digest()
+    if command == "why":
+        return _cmd_why(argument)
     if command == "start_auto":
         return _cmd_start_auto()
     if command == "stop_auto":
@@ -144,6 +184,8 @@ def handle_command(command: str) -> str:
         return _cmd_resume()
     if command == "scan":
         return _cmd_scan()
+    if command == "follow_scan":
+        return _cmd_follow_scan()
     if command == "positions":
         return _cmd_positions()
     return _HELP
@@ -156,8 +198,8 @@ def handle_update(update: Dict[str, Any], expected_chat_id: str) -> Optional[str
         logger.info("Ignored Telegram update from chat_id=%s", chat.get("id"))
         return None
     text = msg.get("text") or ""
-    command, _token = parse_command(text)
-    return handle_command(command)
+    command, argument = parse_command(text)
+    return handle_command(command, argument)
 
 
 def _cmd_status() -> str:
@@ -189,20 +231,373 @@ def _cmd_status() -> str:
     ]
     if skips:
         lines.append(f"為何沒買：{skips}")
+    lines.append(_open_orders_brief())
+    try:
+        from backend.api.paper_performance import digest_status_line
+
+        lines.append(digest_status_line())
+    except Exception:
+        lines.append("今日成交／排隊：點「日報」。未成交不算封印。")
     lines.append(f"最近訊號：{st.get('last_signals') or '無'}")
+    if str(st.get("strategy") or "") != "research_list":
+        lines.append("若要跟 Scan 前五名買，點「跟掃描」（仍過風控，不會從這裡直接下單）。")
     return "\n".join(lines)
+
+
+def _is_universe_ticker(symbol: str) -> bool:
+    from backend.utils.constants import STOCK_UNIVERSE
+
+    want = str(symbol or "").upper().strip()
+    return bool(want) and any(str(row.get("ticker") or "").upper() == want for row in STOCK_UNIVERSE)
+
+
+def working_buy_orders() -> List[Dict[str, Any]]:
+    """Open BUY orders from Alpaca paper. Empty list if none; raises on broker failure."""
+    from alpaca.trading.enums import QueryOrderStatus
+    from alpaca.trading.requests import GetOrdersRequest
+
+    from backend.trading.alpaca_broker import AlpacaBroker
+
+    rows = AlpacaBroker().api.get_orders(
+        filter=GetOrdersRequest(status=QueryOrderStatus.OPEN, limit=20)
+    )
+    out: List[Dict[str, Any]] = []
+    for order in rows or []:
+        if str(getattr(order.side, "value", order.side)).lower() != "buy":
+            continue
+        px = getattr(order, "limit_price", None)
+        out.append(
+            {
+                "id": str(getattr(order, "id", "") or ""),
+                "symbol": str(order.symbol or "").upper(),
+                "qty": float(order.qty or 0),
+                "limit_price": float(px) if px else None,
+                "status": str(getattr(order.status, "value", order.status) or ""),
+                "submitted_at": str(getattr(order, "submitted_at", "") or ""),
+            }
+        )
+    return out
+
+
+def _format_buy_order(order: Dict[str, Any]) -> str:
+    px = order.get("limit_price")
+    px_s = f" @ ${float(px):.2f}" if px else ""
+    status = order.get("status") or "open"
+    return f"{order.get('symbol')} 限價買 {float(order.get('qty') or 0):g}{px_s}（{status}）"
+
+
+def _heartbeat_pending() -> List[str]:
+    try:
+        from backend.api import worker_ctl
+
+        return [str(s).upper() for s in (worker_ctl.status().get("pending_buys") or []) if s]
+    except Exception:
+        return []
+
+
+def _open_orders_brief() -> str:
+    """Name working orders so status is not mistaken for the AAPL ticket default."""
+    try:
+        buys = working_buy_orders()
+    except Exception as exc:
+        pending = _heartbeat_pending()
+        if pending:
+            return f"未完成訂單：{', '.join(pending)}（Alpaca 連線暫時失敗，用本地紀錄）"
+        return f"未完成訂單：讀不到（{exc}）"
+    if not buys:
+        return "未完成訂單：無。成交（filled）= 券商已買到股票入帳。"
+    parts = [_format_buy_order(order) for order in buys[:5]]
+    return (
+        "未完成訂單："
+        + "；".join(parts)
+        + "。這不是等 AAPL。成交（filled）要等限價被碰到，券商才入帳。"
+    )
+
+
+def _cmd_pending() -> str:
+    try:
+        buys = working_buy_orders()
+        broker_ok = True
+    except Exception as exc:
+        buys = []
+        broker_ok = False
+        broker_err = str(exc)
+    lines = [
+        "待買清單（已送 Alpaca paper，還沒成交）",
+        "狀態 new／accepted = 排隊中。filled 才入帳。",
+    ]
+    if buys:
+        for order in buys[:8]:
+            submitted = str(order.get("submitted_at") or "").replace("T", " ")[:19]
+            extra = f" · 送出 {submitted}" if submitted else ""
+            lines.append("- " + _format_buy_order(order) + extra)
+    else:
+        pending = _heartbeat_pending()
+        if pending:
+            lines.append("本地心跳待買：" + ", ".join(pending))
+            if not broker_ok:
+                lines.append(f"Alpaca 連線失敗：{broker_err}")
+        elif not broker_ok:
+            lines.append(f"讀不到未完成訂單：{broker_err}")
+        else:
+            lines.append("目前沒有排隊中的買單。")
+    lines.append("點「理由」看為何挑這些股。Telegram 不會從這裡下單。")
+    return "\n".join(lines)
+
+
+def _cmd_digest() -> str:
+    try:
+        from backend.api.paper_performance import build_daily_digest, format_digest_html
+
+        digest = build_daily_digest()
+        return format_digest_html(digest)
+    except Exception as exc:
+        return f"日報讀取失敗：{exc}\n未成交限價單不算封印。Telegram 不會從這裡下單。"
+
+
+def _scan_pick(symbol: str) -> Optional[Dict[str, Any]]:
+    try:
+        from backend.api.research_jobs import latest_scan
+
+        scan = latest_scan()
+    except Exception:
+        return None
+    want = str(symbol or "").upper()
+    top = [str(t).upper() for t in (scan.get("top5_tickers") or []) if t]
+    recs = scan.get("recommendations") or []
+    ranks = scan.get("rankings") or []
+    rec = next((r for r in recs if str((r or {}).get("ticker") or "").upper() == want), None)
+    rank_row = next((r for r in ranks if str((r or {}).get("ticker") or "").upper() == want), None)
+    if rec is None and rank_row is None and want not in top:
+        return None
+    row = dict(rec or rank_row or {})
+    rank = top.index(want) + 1 if want in top else None
+    return {
+        "ticker": want,
+        "name": row.get("name_zh") or row.get("name") or want,
+        "rank": rank,
+        "in_top5": want in top,
+        "top5": top,
+        "risk_adjusted_score": row.get("risk_adjusted_score"),
+        "growth_score": row.get("growth_score") or row.get("model_score"),
+        "llm_key_signal": row.get("llm_key_signal"),
+        "reasoning": str(row.get("reasoning") or "")[:220],
+        "stale": bool(scan.get("stale") or not scan.get("available")),
+        "as_of": str(scan.get("ts") or "")[:19],
+    }
+
+
+def _worker_skip_for(symbol: str) -> Optional[str]:
+    try:
+        from backend.api import worker_ctl
+
+        by_ticker = worker_ctl.status().get("skip_by_ticker") or {}
+    except Exception:
+        return None
+    if not isinstance(by_ticker, dict):
+        return None
+    code = by_ticker.get(str(symbol).upper())
+    return str(code) if code else None
+
+
+def _why_one(symbol: str) -> str:
+    from backend.trading.strategies.skip_codes import label
+
+    sym = str(symbol or "").upper().strip()
+    if not sym:
+        return _cmd_why("")
+    pick = _scan_pick(sym)
+    skip = _worker_skip_for(sym)
+    order = None
+    try:
+        order = next((o for o in working_buy_orders() if o.get("symbol") == sym), None)
+    except Exception:
+        order = None
+        if sym in _heartbeat_pending():
+            order = {"symbol": sym, "qty": None, "limit_price": None, "status": "pending"}
+
+    lines = [f"{sym} 選股／下單追蹤"]
+    if pick:
+        rank_s = f"Scan 第 {pick['rank']} 名" if pick.get("rank") else "不在 Scan 前五"
+        score = pick.get("risk_adjusted_score")
+        score_s = f"風險調整分 {score}" if score is not None else "尚無掃描分"
+        lines.append(f"{pick.get('name') or sym} · {rank_s} · {score_s}")
+        if pick.get("llm_key_signal"):
+            lines.append(f"掃描 LLM 標籤：{pick['llm_key_signal']}（只當標籤，不下單）")
+        if pick.get("reasoning"):
+            lines.append(pick["reasoning"])
+        if pick.get("stale"):
+            lines.append("掃描／訊號 as-of 已過期，worker 不會再開新倉。")
+    else:
+        lines.append("這一檔不在最新 Scan 前五，自動買不會碰它。")
+
+    if order:
+        if order.get("qty") is not None:
+            lines.append("已送券商：" + _format_buy_order(order))
+        else:
+            lines.append(f"本地心跳顯示 {sym} 有未完成買單。")
+        lines.append("還在等限價成交，不是模型還在想。美股開盤碰到限價才入帳。")
+    elif skip:
+        lines.append(f"本輪沒買：{label(skip, 'zh')}（{skip}）")
+        if skip == "not_stage2":
+            lines.append("Scan 分數高不夠：價格還要在 Minervini Stage-2（站上 SMA50>150>200 且 SMA200 向上）。")
+        elif skip == "not_in_scan_list":
+            lines.append("跟掃描模式只買最新 Scan 前 N 名。")
+    else:
+        lines.append("本輪沒有這檔的未完成買單。點「待買」看排隊中的限價單。")
+    lines.append("Stage-2／Kelly／$10k／RiskEngine 是毫秒規則閘，不是 LLM 長考。")
+    return "\n".join(lines)
+
+
+def _cmd_why(argument: str = "") -> str:
+    from backend.trading.strategies.skip_codes import label
+
+    ticker = str(argument or "").strip().upper()
+    if ticker:
+        return _why_one(ticker.split()[0])
+    top: List[str] = []
+    try:
+        from backend.api.research_jobs import latest_scan
+
+        scan = latest_scan()
+        top = [str(t).upper() for t in (scan.get("top5_tickers") or []) if t]
+    except Exception:
+        top = []
+    lines = ["為何挑這些股（Scan 前五 → 規則閘 → 限價單）"]
+    if not top:
+        lines.append("還沒有新鮮 Scan 名單。請點「掃描」。")
+        return "\n".join(lines)
+    for idx, sym in enumerate(top[:5], start=1):
+        row = _scan_pick(sym) or {"ticker": sym}
+        score = row.get("risk_adjusted_score")
+        score_s = f"分 {score}" if score is not None else "—"
+        skip = _worker_skip_for(sym)
+        if skip == "order_open":
+            gate = "已送限價單，等成交"
+        elif skip:
+            gate = label(skip, "zh")
+        else:
+            gate = "本輪未記錄閘碼"
+        lines.append(f"{idx}. {sym} {score_s} — {gate}")
+    try:
+        buys = working_buy_orders()
+    except Exception:
+        buys = []
+    if buys:
+        lines.append("排隊中：" + "；".join(_format_buy_order(o) for o in buys[:5]))
+    lines.append("傳「為何 GOOGL」可看單檔理由。閘門是規則計算，不是 AI 慢慢想。")
+    return "\n".join(lines)
+
+
+def _ai_mode_path() -> Path:
+    return Path(DATA_DIR) / "ai_mode.json"
+
+
+def _load_ai_mode() -> Dict[str, Any]:
+    default = {
+        "strategy": "breakout",
+        "llm_influence": 20.0,
+        "entry_threshold": 70.0,
+        "max_positions": 10,
+        "risk_tolerance": "medium",
+        "worker_enabled": False,
+        "ignore_market_hours": False,
+        "cadence": "intraday",
+    }
+    path = _ai_mode_path()
+    if not path.exists():
+        return dict(default)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return dict(default)
+    if not isinstance(data, dict):
+        return dict(default)
+    return {**default, **data}
+
+
+def _save_ai_mode(payload: Dict[str, Any]) -> None:
+    path = _ai_mode_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
+
+
+def _apply_research_list_threshold(threshold: float) -> None:
+    try:
+        from backend.trading.strategies.registry import get_strategy
+
+        get_strategy("research_list").MIN_FUND_SCORE = float(threshold or 65)
+    except Exception:
+        pass
+
+
+def _set_saved_strategy(strategy: str, worker_enabled: Optional[bool] = None) -> Dict[str, Any]:
+    cfg = _load_ai_mode()
+    cfg["strategy"] = strategy
+    if worker_enabled is not None:
+        cfg["worker_enabled"] = bool(worker_enabled)
+    if strategy == "research_list":
+        _apply_research_list_threshold(float(cfg.get("entry_threshold") or 65))
+    _save_ai_mode(cfg)
+    return cfg
+
+
+def _scan_picks_line() -> str:
+    try:
+        from backend.api.research_jobs import latest_scan
+
+        scan = latest_scan()
+    except Exception:
+        return "掃描名單：—"
+    picks = ", ".join((scan.get("top5_tickers") or [])[:5]) or "—"
+    stale = bool(scan.get("stale") or not scan.get("available"))
+    as_of = str(scan.get("ts") or "—").replace("T", " ")[:19]
+    flag = "過期（不開新倉）" if stale else "新鮮"
+    return f"掃描 {flag} · as-of {as_of} · 前五 {picks}"
 
 
 def _cmd_start_auto() -> str:
     from backend.api import worker_ctl
 
+    cfg = _load_ai_mode()
+    strategy = str(cfg.get("strategy") or "breakout")
     try:
-        result = worker_ctl.start(strategy="stable", interval=60)
+        result = worker_ctl.restart(strategy=strategy, interval=60)
     except Exception as exc:
         return f"啟動失敗：{exc}"
+    _set_saved_strategy(strategy, worker_enabled=True)
     if result.get("already_running"):
-        return "紙上自動交易本來就在跑。"
-    return "已啟動紙上自動交易（stable）。頂欄應顯示 AUTO ON。"
+        live = result.get("strategy") or strategy
+        extra = ""
+        if str(live) != "research_list":
+            extra = " 若要改成跟 Scan 買，請點「跟掃描」。"
+        return f"紙上自動交易本來就在跑（策略 {live}）。{extra}".strip()
+    return f"已啟動紙上自動交易（{strategy}）。頂欄應顯示 AUTO ON。\n{_scan_picks_line()}"
+
+
+def _cmd_follow_scan() -> str:
+    """Operator-chosen Scan top-N buys — never a silent rewrite, never defensive_gld."""
+    from backend.api import worker_ctl
+
+    _set_saved_strategy("research_list", worker_enabled=True)
+    try:
+        current = worker_ctl.status()
+        if current.get("running"):
+            result = worker_ctl.restart(strategy="research_list", interval=60)
+            switched = "已把紙上策略改成 research_list 並重啟。"
+        else:
+            result = worker_ctl.start(strategy="research_list", interval=60)
+            switched = "已啟動紙上自動交易（research_list）。"
+    except Exception as exc:
+        return f"跟掃描失敗：{exc}\n已把 AI Mode 存成 research_list，可稍後再點「啟動」。"
+    live = result.get("strategy") or "research_list"
+    lines = [
+        switched,
+        f"策略：{live}",
+        "只買最新 Scan 前 N 名；仍要過 Stage-2、凱利與風控。Telegram 不會直接下單，也不會改成 defensive_gld。",
+        _scan_picks_line(),
+    ]
+    return "\n".join(lines)
 
 
 def _cmd_stop_auto() -> str:
@@ -212,6 +607,7 @@ def _cmd_stop_auto() -> str:
         worker_ctl.stop()
     except Exception as exc:
         return f"停止失敗：{exc}"
+    _set_saved_strategy(str(_load_ai_mode().get("strategy") or "breakout"), worker_enabled=False)
     return "已停止紙上自動交易。"
 
 

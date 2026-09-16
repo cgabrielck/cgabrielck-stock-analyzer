@@ -1,8 +1,9 @@
 """
 Strategy registry — maps strategy_id strings to strategy instances.
 
-Canonical desk modes: adaptive | trend | breakout | research_list
+Canonical desk modes: adaptive | trend | breakout | research_list | defensive_gld
 Legacy aliases: hybrid→adaptive, aggressive→breakout, stable→reversion (same class)
+defensive_gld is operator-chosen only — never the default.
 """
 from __future__ import annotations
 
@@ -11,6 +12,7 @@ from typing import Dict
 from backend.trading.strategies.adaptive import AdaptiveStrategy
 from backend.trading.strategies.aggressive import AggressiveStrategy
 from backend.trading.strategies.base import StrategyBase
+from backend.trading.strategies.defensive_gld import DefensiveGldStrategy
 from backend.trading.strategies.research_list import ResearchListStrategy
 from backend.trading.strategies.stable import StableStrategy
 from backend.trading.strategies.trend import TrendStrategy
@@ -20,6 +22,7 @@ KNOWN_STRATEGIES = (
     "trend",
     "breakout",
     "research_list",
+    "defensive_gld",
     # legacy aliases
     "hybrid",
     "aggressive",
@@ -42,6 +45,7 @@ _INSTANCES: Dict[str, StrategyBase] = {
     "breakout": AggressiveStrategy(),
     "aggressive": AggressiveStrategy(),  # alias
     "research_list": ResearchListStrategy(),
+    "defensive_gld": DefensiveGldStrategy(),
     "stable": StableStrategy(),  # Connors reversion
     "reversion": StableStrategy(),
     "hybrid": HybridStrategy(),
@@ -55,6 +59,7 @@ _CLS_MAP = {
     "breakout": AggressiveStrategy,
     "aggressive": AggressiveStrategy,
     "research_list": ResearchListStrategy,
+    "defensive_gld": DefensiveGldStrategy,
     "stable": StableStrategy,
     "reversion": StableStrategy,
     "hybrid": HybridStrategy,
