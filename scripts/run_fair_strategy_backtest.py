@@ -35,11 +35,18 @@ from backend.trading.engine.shadow import DEFAULT_SLIPPAGE_BPS
 from backend.utils.constants import STOCK_UNIVERSE
 
 # Locked fair-test knobs — do not vary per strategy.
+# Strategy implementations are the rewritten desk modes from lab/citation-try
+# (stable = Connors reversion, aggressive = VCP+RS breakout, hybrid = Adaptive).
+STRATEGY_SOURCE_BRANCH = "origin/lab/citation-try"
+STRATEGY_SOURCE_COMMIT = "852b4dd"
 START = "2023-09-28"
 END = "2026-09-26"
 TRANSACTION_COST_BPS = 10.0
 MAX_POSITIONS = 10
 INITIAL_CAPITAL = STARTING_CAPITAL
+SIZING_MODE = "risk_pct"
+RISK_PCT = 0.01
+MAX_POSITION_PCT = 0.25
 STRATEGIES = ("stable", "aggressive", "hybrid")
 
 
@@ -159,6 +166,10 @@ def _summarize_strategy(strategy_id: str, result) -> Dict[str, Any]:
     summary = {k: v for k, v in d.items() if k not in ("trades", "equity_curve")}
     summary["strategy_id"] = strategy_id
     summary["kind"] = "strategy"
+    summary["avg_cash_pct"] = d.get("avg_cash_pct")
+    summary["avg_invested_pct"] = d.get("avg_invested_pct")
+    summary["spy_return_pct"] = d.get("spy_return_pct")
+    summary["alpha_gross_pct"] = d.get("alpha_gross_pct")
     summary["annualized_return_pct"] = round(
         _annualized_return(float(summary.get("total_return_pct") or 0.0), START, END), 2
     )
@@ -180,7 +191,11 @@ def main() -> None:
     print(
         f"Universe size: {len(tickers)} | capital={INITIAL_CAPITAL} | "
         f"cost={TRANSACTION_COST_BPS}bps + slip={DEFAULT_SLIPPAGE_BPS}bps | "
-        f"max_positions={MAX_POSITIONS}",
+        f"max_positions={MAX_POSITIONS} | sizing={SIZING_MODE} risk={RISK_PCT}",
+        flush=True,
+    )
+    print(
+        f"Strategy source: {STRATEGY_SOURCE_BRANCH} @ {STRATEGY_SOURCE_COMMIT}",
         flush=True,
     )
     print("Fetching shared price snapshot (once)...", flush=True)
@@ -206,7 +221,10 @@ def main() -> None:
             transaction_cost_bps=TRANSACTION_COST_BPS,
             max_positions=MAX_POSITIONS,
             initial_capital=INITIAL_CAPITAL,
-            price_data=strategy_prices,
+            sizing_mode=SIZING_MODE,
+            risk_pct=RISK_PCT,
+            max_position_pct=MAX_POSITION_PCT,
+            price_data=shared,
         )
         rows.append(_summarize_strategy(sid, result))
         print(
@@ -247,17 +265,27 @@ def main() -> None:
         "fairness_protocol": {
             "start": START,
             "end": END,
+            "strategy_source_branch": STRATEGY_SOURCE_BRANCH,
+            "strategy_source_commit": STRATEGY_SOURCE_COMMIT,
+            "strategy_identities": {
+                "stable": "Connors-style Stage-2 reversion (legacy id stable)",
+                "aggressive": "VCP breakout + 12-week RS vs SPY + MACD hist (legacy id aggressive)",
+                "hybrid": "Adaptive regime router (legacy id hybrid → AdaptiveStrategy)",
+            },
             "universe": "STOCK_UNIVERSE excluding SPY",
             "universe_size_requested": len(tickers),
             "universe_size_loaded": len(strategy_prices),
             "initial_capital": INITIAL_CAPITAL,
             "max_positions": MAX_POSITIONS,
-            "position_slice_pct": 5.0,
+            "sizing_mode": SIZING_MODE,
+            "risk_pct": RISK_PCT,
+            "max_position_pct": MAX_POSITION_PCT,
             "transaction_cost_bps": TRANSACTION_COST_BPS,
             "slippage_bps": DEFAULT_SLIPPAGE_BPS,
             "fill_model": "signal on close → next-bar open + slippage",
-            "fundamental_scores": "neutral pass-through (70 stable/hybrid, 50 aggressive)",
+            "fundamental_scores": "neutral pass-through (stable 70, hybrid 60, aggressive 55)",
             "shared_price_snapshot": True,
+            "supersedes": "Earlier run on origin/main 6ff4501 used the pre-rewrite RSI/BB Stable and VCP Aggressive.",
             "excluded": {
                 "research_list": "Depends on live Scan book; not historically reproducible.",
             },
@@ -288,20 +316,26 @@ def _render_markdown(report: Dict[str, Any]) -> str:
         "",
         f"**Generated (UTC):** {report['generated_at_utc']}  ",
         f"**Window:** `{proto['start']}` → `{proto['end']}`  ",
+        f"**Strategy source:** `{proto['strategy_source_branch']}` @ `{proto['strategy_source_commit']}`  ",
         f"**Universe loaded:** {proto['universe_size_loaded']} / {proto['universe_size_requested']} tickers  ",
         "",
         "## Fairness protocol",
         "",
         "| Knob | Value |",
         "|------|-------|",
+        f"| stable | {proto['strategy_identities']['stable']} |",
+        f"| aggressive | {proto['strategy_identities']['aggressive']} |",
+        f"| hybrid | {proto['strategy_identities']['hybrid']} |",
         f"| Capital | ${proto['initial_capital']:,.0f} |",
         f"| Max positions | {proto['max_positions']} |",
-        f"| Position slice | {proto['position_slice_pct']}% of cash |",
+        f"| Sizing | {proto['sizing_mode']} @ {proto['risk_pct']} risk, cap {proto['max_position_pct']} |",
         f"| Transaction cost | {proto['transaction_cost_bps']} bps |",
         f"| Slippage | {proto['slippage_bps']} bps |",
         f"| Fill model | {proto['fill_model']} |",
         f"| Fundamentals | {proto['fundamental_scores']} |",
         f"| Shared price snapshot | {proto['shared_price_snapshot']} |",
+        "",
+        f"**Supersedes:** {proto['supersedes']}",
         "",
         "**Excluded:** `research_list` — " + proto["excluded"]["research_list"],
         "",
@@ -315,12 +349,12 @@ def _render_markdown(report: Dict[str, Any]) -> str:
         "",
         "## Results",
         "",
-        "| Strategy | Kind | Total return % | Ann. return % | Excess vs SPY % | Sharpe | Max DD % | Win rate % | Profit factor | Trades |",
-        "|----------|------|----------------|---------------|-----------------|--------|----------|------------|---------------|--------|",
+        "| Strategy | Kind | Total return % | Ann. return % | Excess vs SPY % | Sharpe | Max DD % | Win rate % | Profit factor | Trades | Avg invested % |",
+        "|----------|------|----------------|---------------|-----------------|--------|----------|------------|---------------|--------|----------------|",
     ]
     for row in report["results"]:
         lines.append(
-            "| {sid} | {kind} | {ret} | {ann} | {xs} | {sh} | {dd} | {wr} | {pf} | {n} |".format(
+            "| {sid} | {kind} | {ret} | {ann} | {xs} | {sh} | {dd} | {wr} | {pf} | {n} | {inv} |".format(
                 sid=row.get("strategy_id"),
                 kind=row.get("kind"),
                 ret=_fmt(row.get("total_return_pct")),
@@ -331,6 +365,7 @@ def _render_markdown(report: Dict[str, Any]) -> str:
                 wr=_fmt(row.get("win_rate_pct")),
                 pf=_fmt(row.get("profit_factor")),
                 n=row.get("num_trades") if row.get("num_trades") is not None else "—",
+                inv=_fmt(row.get("avg_invested_pct")),
             )
         )
 

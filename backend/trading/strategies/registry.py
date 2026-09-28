@@ -1,91 +1,75 @@
 """
 Strategy registry — maps strategy_id strings to strategy instances.
 
-Usage:
-    from backend.trading.strategies.registry import get_strategy
-    strategy = get_strategy("stable")
+Canonical desk modes: adaptive | trend | breakout | research_list | defensive_gld
+Legacy aliases: hybrid→adaptive, aggressive→breakout, stable→reversion (same class)
+defensive_gld is operator-chosen only — never the default.
 """
 from __future__ import annotations
 
 from typing import Dict
 
-from backend.trading.strategies.base import StrategyBase
-from backend.trading.strategies.stable import StableStrategy
+from backend.trading.strategies.adaptive import AdaptiveStrategy
 from backend.trading.strategies.aggressive import AggressiveStrategy
+from backend.trading.strategies.base import StrategyBase
+from backend.trading.strategies.defensive_gld import DefensiveGldStrategy
 from backend.trading.strategies.research_list import ResearchListStrategy
+from backend.trading.strategies.stable import StableStrategy
+from backend.trading.strategies.trend import TrendStrategy
 
-KNOWN_STRATEGIES = ("stable", "aggressive", "hybrid", "research_list")
+KNOWN_STRATEGIES = (
+    "adaptive",
+    "trend",
+    "breakout",
+    "research_list",
+    "defensive_gld",
+    # legacy aliases
+    "hybrid",
+    "aggressive",
+    "stable",
+    "reversion",
+)
 
 
-class HybridStrategy(StrategyBase):
-    """
-    Hybrid — runs both Stable and Aggressive and returns whichever fires first.
-    Stable signals take priority (lower risk profile).
-    """
-    strategy_id  = "hybrid"
-    display_name = "混合型 Hybrid (Stable + Aggressive)"
-    risk_profile = "hybrid"
-    expected_win_rate  = 0.54
-    expected_win_pct   = 0.10
-    expected_loss_pct  = 0.06
+class HybridStrategy(AdaptiveStrategy):
+    """Legacy name for AdaptiveStrategy (kept for ai_mode.json / old workers)."""
 
-    def __init__(self, **overrides):
-        stable_overrides = {k: v for k, v in overrides.items() if hasattr(StableStrategy(), k.upper())}
-        aggr_overrides = {k: v for k, v in overrides.items() if hasattr(AggressiveStrategy(), k.upper())}
-        self._stable     = StableStrategy(**stable_overrides)
-        self._aggressive = AggressiveStrategy(**aggr_overrides)
-
-    def populate_indicators(self, df):
-        return df  # each sub-strategy does its own
-
-    def diagnose_entry(self, ticker, df, fundamental_score, llm_signal, current_positions):
-        skip = self._stable.diagnose_entry(ticker, df, fundamental_score, llm_signal, current_positions)
-        if skip is None:
-            return None
-        skip_a = self._aggressive.diagnose_entry(ticker, df, fundamental_score, llm_signal, current_positions)
-        if skip_a is None:
-            return None
-        return skip
-
-    def generate_signal(self, ticker, df, fundamental_score, llm_signal, current_positions):
-        sig = self._stable.generate_signal(ticker, df, fundamental_score, llm_signal, current_positions)
-        if sig:
-            return sig
-        return self._aggressive.generate_signal(ticker, df, fundamental_score, llm_signal, current_positions)
-
-    def check_exit(self, ticker, entry_price, current_price, df, stop_loss_price, take_profit_price):
-        exit_sig = self._stable.check_exit(ticker, entry_price, current_price, df, stop_loss_price, take_profit_price)
-        if exit_sig:
-            return exit_sig
-        return self._aggressive.check_exit(ticker, entry_price, current_price, df, stop_loss_price, take_profit_price)
+    strategy_id = "hybrid"
+    display_name = "混合型 Hybrid → Adaptive"
 
 
 # Registry of all available strategies
 _INSTANCES: Dict[str, StrategyBase] = {
-    "stable":         StableStrategy(),
-    "aggressive":     AggressiveStrategy(),
-    "hybrid":         HybridStrategy(),
-    "research_list":  ResearchListStrategy(),
+    "adaptive": AdaptiveStrategy(),
+    "trend": TrendStrategy(),
+    "breakout": AggressiveStrategy(),
+    "aggressive": AggressiveStrategy(),  # alias
+    "research_list": ResearchListStrategy(),
+    "defensive_gld": DefensiveGldStrategy(),
+    "stable": StableStrategy(),  # Connors reversion
+    "reversion": StableStrategy(),
+    "hybrid": HybridStrategy(),
 }
 
 STRATEGY_REGISTRY: Dict[str, StrategyBase] = _INSTANCES
 
+_CLS_MAP = {
+    "adaptive": AdaptiveStrategy,
+    "trend": TrendStrategy,
+    "breakout": AggressiveStrategy,
+    "aggressive": AggressiveStrategy,
+    "research_list": ResearchListStrategy,
+    "defensive_gld": DefensiveGldStrategy,
+    "stable": StableStrategy,
+    "reversion": StableStrategy,
+    "hybrid": HybridStrategy,
+}
+
 
 def get_strategy(strategy_id: str, **overrides) -> StrategyBase:
-    """Return a strategy instance by ID.  Defaults to 'stable' if unknown.
-
-    Args:
-        **overrides: Parameter overrides applied to a fresh instance. When
-            provided, a new instance is built (the shared singleton is left
-            untouched) so backtests can sweep parameters safely.
-    """
+    """Return a strategy instance by ID. Defaults to 'adaptive' if unknown."""
+    sid = (strategy_id or "adaptive").lower()
     if overrides:
-        cls_map = {
-            "stable": StableStrategy,
-            "aggressive": AggressiveStrategy,
-            "hybrid": HybridStrategy,
-            "research_list": ResearchListStrategy,
-        }
-        cls = cls_map.get(strategy_id, StableStrategy)
+        cls = _CLS_MAP.get(sid, AdaptiveStrategy)
         return cls(**overrides)
-    return _INSTANCES.get(strategy_id, _INSTANCES["stable"])
+    return _INSTANCES.get(sid, _INSTANCES["adaptive"])

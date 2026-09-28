@@ -1,20 +1,15 @@
 """
-Strategy backtesting engine — validates Stable/Aggressive/Hybrid strategies
-against historical OHLCV data with realistic fills.
+Strategy backtesting engine — validates Stable/Aggressive/Hybrid/Trend/Adaptive
+against historical OHLCV data with realistic fills and SPY benchmark.
 
 Design:
   - Daily bars per ticker (warmup window prepended so indicators are valid).
   - For each trading day after warmup:
       * Check exits on open positions first (stop / take-profit / signal reversal).
       * Then scan the universe for entry signals via StrategyBase.generate_signal().
-  - Fills use the ShadowTradingEngine 2.0 model (next-bar open + slippage for
-    market orders; limit-touch for limit orders), so results are cost-aware.
-  - Returns per-trade P&L, win rate, profit factor, Sharpe, and max drawdown.
-
-Known limitation (recorded in UPGRADE_RECOVERY_LOG): price data comes from
-yfinance so the universe reflects today's constituents — survivorship bias is
-unavoidable without a licensed point-in-time snapshot. Fundamental scores are
-not available per historical date here; strategies run with a neutral score.
+  - Fills use next-bar open + slippage; costs applied on entry and exit.
+  - Sizing: fixed cash slice (legacy) or risk-based (Van Tharp 1R).
+  - Reports SPY buy-and-hold, alpha gross/net of stated cost, cash drag.
 """
 from __future__ import annotations
 
@@ -25,14 +20,16 @@ import numpy as np
 import pandas as pd
 
 from backend.backtesting.engine import fetch_price_data
-from backend.trading.engine.shadow import ShadowTradingEngine, DEFAULT_SLIPPAGE_BPS
+from backend.trading.engine.shadow import DEFAULT_SLIPPAGE_BPS
 from backend.trading.strategies.registry import get_strategy
+from backend.trading.strategies.stage2 import size_shares_by_risk
 from backend.utils.constants import STOCK_UNIVERSE
 
 WARMUP_DAYS = 250
 MAX_POSITIONS = 10
 STARTING_CAPITAL = 100_000.0
 BACKTEST_FETCH_WORKERS = 12
+ASSUMED_ROUND_TRIP_BPS = 10.0
 
 
 class StrategyBacktestResult:
@@ -46,6 +43,14 @@ class StrategyBacktestResult:
         self.max_drawdown_pct: float = 0.0
         self.num_trades: int = 0
         self.total_fees_pct: float = 0.0
+        self.spy_return_pct: Optional[float] = None
+        self.alpha_gross_pct: Optional[float] = None
+        self.alpha_net_of_costs_pct: Optional[float] = None
+        self.avg_cash_pct: Optional[float] = None
+        self.avg_invested_pct: Optional[float] = None
+        self.turnover_pct: Optional[float] = None
+        self.sizing_mode: str = "fixed_pct"
+        self.strategy_id: str = ""
         self.warnings: List[str] = []
 
     def to_dict(self) -> Dict[str, Any]:
@@ -59,8 +64,28 @@ class StrategyBacktestResult:
             "max_drawdown_pct": round(self.max_drawdown_pct, 2),
             "num_trades": self.num_trades,
             "total_fees_pct": round(self.total_fees_pct, 2),
+            "spy_return_pct": None if self.spy_return_pct is None else round(self.spy_return_pct, 2),
+            "alpha_gross_pct": None if self.alpha_gross_pct is None else round(self.alpha_gross_pct, 2),
+            "alpha_net_of_costs_pct": None
+            if self.alpha_net_of_costs_pct is None
+            else round(self.alpha_net_of_costs_pct, 2),
+            "avg_cash_pct": None if self.avg_cash_pct is None else round(self.avg_cash_pct, 2),
+            "avg_invested_pct": None if self.avg_invested_pct is None else round(self.avg_invested_pct, 2),
+            "turnover_pct": None if self.turnover_pct is None else round(self.turnover_pct, 2),
+            "sizing_mode": self.sizing_mode,
+            "strategy_id": self.strategy_id,
             "warnings": self.warnings,
         }
+
+
+def _neutral_fund_score(strategy_id: str) -> float:
+    """Neutral fund for backtests without PIT scores — labeled as bias in warnings."""
+    sid = (strategy_id or "").lower()
+    if sid in ("stable", "reversion", "research_list"):
+        return 70.0
+    if sid in ("trend", "adaptive", "hybrid"):
+        return 60.0
+    return 55.0  # aggressive / breakout
 
 
 def run_strategy_backtest(
@@ -73,18 +98,22 @@ def run_strategy_backtest(
     initial_capital: float = STARTING_CAPITAL,
     max_workers: int = BACKTEST_FETCH_WORKERS,
     strategy_params: Optional[Dict[str, Any]] = None,
+    sizing_mode: str = "risk_pct",
+    risk_pct: float = 0.01,
+    max_position_pct: float = 0.25,
+    fixed_cash_pct: float = 0.05,
     price_data: Optional[Dict[str, pd.DataFrame]] = None,
 ) -> StrategyBacktestResult:
     """Run a daily-frequency backtest of a single strategy over *start*..*end*.
 
-    Args:
-        strategy_params: Optional dict of parameter overrides passed to the
-            strategy constructor (e.g. {"rsi_entry": 30, "volume_surge": 2.0}).
-        price_data: Optional pre-fetched OHLCV map. When provided, all strategies
-            share the same price snapshot (fair head-to-head comparison).
+    sizing_mode:
+      - ``fixed_pct``: legacy cash * fixed_cash_pct per entry (old Stable runs).
+      - ``risk_pct``: Van Tharp shares = equity*risk_pct / |entry-stop|.
     """
     strategy = get_strategy(strategy_id, **(strategy_params or {}))
     result = StrategyBacktestResult()
+    result.sizing_mode = sizing_mode
+    result.strategy_id = strategy_id
 
     if tickers is None:
         tickers = [s["ticker"] for s in STOCK_UNIVERSE]
@@ -94,22 +123,19 @@ def run_strategy_backtest(
     if start is None:
         start = (pd.Timestamp(end_date) - pd.DateOffset(years=3)).strftime("%Y-%m-%d")
 
-    # Warmup: fetch data starting WARMUP_DAYS before the requested start so that
-    # SMA200 / SMA50 etc. have enough history on day one.
     if price_data is None:
         fetch_start = (pd.Timestamp(start) - pd.DateOffset(days=WARMUP_DAYS + 60)).strftime("%Y-%m-%d")
         fetch_end = (pd.Timestamp(end_date) + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
-        price_data = fetch_price_data(tickers, fetch_start, fetch_end, max_workers=max_workers)
+        fetch_list = list(tickers) + ["SPY"]
+        price_data = fetch_price_data(fetch_list, fetch_start, fetch_end, max_workers=max_workers)
     else:
-        # Restrict to the requested universe so shared snapshots (e.g. with SPY)
-        # cannot leak extra symbols into the trade loop.
-        price_data = {t: price_data[t] for t in tickers if t in price_data}
+        keep = set(tickers) | {"SPY"}
+        price_data = {t: price_data[t] for t in keep if t in price_data}
 
     missing = [t for t in tickers if t not in price_data]
     if missing:
         result.warnings.append(f"No price data for: {', '.join(missing[:8])}")
 
-    # Align all series to their local dates and normalize timezone to None.
     aligned: Dict[str, pd.DataFrame] = {}
     for ticker, df in price_data.items():
         if df is None or df.empty:
@@ -117,41 +143,70 @@ def run_strategy_backtest(
         d = df.copy()
         if d.index.tz is not None:
             d.index = d.index.tz_localize(None)
-        # Keep required OHLCV columns only.
         cols = [c for c in ("Open", "High", "Low", "Close", "Volume") if c in d.columns]
         d = d[cols].dropna()
         d = d[~d.index.duplicated(keep="last")]
         aligned[ticker] = d
 
+    spy_frame = aligned.pop("SPY", None)
+    spy_close = spy_frame["Close"] if spy_frame is not None else None
+    if hasattr(strategy, "set_spy_close"):
+        strategy.set_spy_close(spy_close)
+    elif hasattr(strategy, "spy_close"):
+        strategy.spy_close = spy_close
+
     if not aligned:
         result.warnings.append("No usable price data at all.")
         return result
 
-    # Precompute causal indicators once per ticker. Trailing rolling windows at
-    # row i only use data[:i+1], so slicing the enriched frame through day t
-    # matches recomputing on each prefix — at far lower cost.
-    aligned = _precompute_indicators(strategy, strategy_id, aligned)
+    try:
+        from backend.utils.us_equity_calendar import (
+            equity_session_days,
+            filter_us_equity_daily_bars,
+        )
+    except ImportError:
+        from utils.us_equity_calendar import (  # type: ignore
+            equity_session_days,
+            filter_us_equity_daily_bars,
+        )
 
-    # Common trading calendar = union of all available dates.
-    all_dates = sorted(set().union(*[set(d.index) for d in aligned.values()]))
-    all_dates = [d for d in all_dates if pd.Timestamp(start) <= d <= pd.Timestamp(end_date)]
+    for ticker, frame in list(aligned.items()):
+        aligned[ticker] = filter_us_equity_daily_bars(frame)
+    aligned = {t: f for t, f in aligned.items() if f is not None and not f.empty}
+    if spy_frame is not None:
+        spy_frame = filter_us_equity_daily_bars(spy_frame)
+        spy_close = spy_frame["Close"] if spy_frame is not None and not spy_frame.empty else spy_close
+        if hasattr(strategy, "set_spy_close"):
+            strategy.set_spy_close(spy_close)
+        elif hasattr(strategy, "spy_close"):
+            strategy.spy_close = spy_close
+
+    all_dates = equity_session_days(
+        aligned,
+        start=start,
+        end=end_date,
+        spy=spy_frame,
+    )
     if len(all_dates) < 30:
         result.warnings.append("Too few trading dates for a meaningful backtest.")
         return result
 
-    # Positions: {ticker: {entry_price, qty, stop, target, entry_date, entry_day_idx, meta}}
     positions: Dict[str, Dict[str, Any]] = {}
-    # Signals fire on a bar's close but fill on the NEXT bar's open (no same-bar
-    # look-ahead), matching the ShadowTradingEngine market-order model.
     pending_entries: Dict[str, Any] = {}
     cash = initial_capital
     trade_records: List[Dict[str, Any]] = []
     equity_curve: List[Dict[str, Any]] = []
+    cash_pcts: List[float] = []
+    invested_pcts: List[float] = []
 
     slippage = DEFAULT_SLIPPAGE_BPS / 10000.0
     time_stop_days = getattr(strategy, "MAX_HOLD_DAYS", None)
+    fund_score = _neutral_fund_score(strategy_id)
 
     for day_idx, day in enumerate(all_dates):
+        if hasattr(strategy, "set_asof"):
+            strategy.set_asof(day)
+
         # 0. Fill entries signalled on the previous bar at today's open + slippage.
         for ticker in list(pending_entries.keys()):
             signal = pending_entries[ticker]
@@ -163,7 +218,7 @@ def run_strategy_backtest(
                 if isinstance(row, pd.DataFrame):
                     row = row.iloc[-1]
             except KeyError:
-                continue  # ticker not trading today; keep waiting for its next bar
+                continue
             if len(positions) >= max_positions or ticker in positions:
                 del pending_entries[ticker]
                 continue
@@ -171,12 +226,40 @@ def run_strategy_backtest(
             if fill_price <= 0:
                 del pending_entries[ticker]
                 continue
-            alloc = cash * 0.05  # fixed 5% slice for determinism
-            qty = max(1, int(alloc / fill_price))
-            cost = qty * fill_price
-            if cost > cash:
-                qty = max(1, int(cash / fill_price))
+
+            # Mark-to-market equity for risk sizing.
+            equity_now = cash
+            for t_held, p_held in positions.items():
+                if t_held in aligned:
+                    try:
+                        r = aligned[t_held].loc[day]
+                        if isinstance(r, pd.DataFrame):
+                            r = r.iloc[-1]
+                        equity_now += p_held["qty"] * float(r["Close"])
+                    except KeyError:
+                        equity_now += p_held["qty"] * p_held["entry_price"]
+                else:
+                    equity_now += p_held["qty"] * p_held["entry_price"]
+
+            stop = float(signal.stop_loss_price or fill_price * 0.95)
+            if sizing_mode == "fixed_pct":
+                alloc = cash * fixed_cash_pct
+                qty = max(1, int(alloc / fill_price))
                 cost = qty * fill_price
+                if cost > cash:
+                    qty = max(1, int(cash / fill_price))
+                    cost = qty * fill_price
+            else:
+                qty = size_shares_by_risk(
+                    equity=equity_now,
+                    cash=cash,
+                    fill_price=fill_price,
+                    stop_price=stop,
+                    risk_pct=risk_pct,
+                    max_position_pct=max_position_pct,
+                )
+                cost = qty * fill_price
+
             if qty <= 0 or cost <= 0 or cost > cash:
                 del pending_entries[ticker]
                 continue
@@ -188,11 +271,14 @@ def run_strategy_backtest(
                 "target": signal.take_profit_price,
                 "entry_date": day.strftime("%Y-%m-%d"),
                 "entry_day_idx": day_idx,
-                "meta": signal.meta,
+                "meta": dict(signal.meta or {}),
+                "reason": signal.reason,
+                "fund_score": fund_score,
+                "entry_kind": (signal.meta or {}).get("entry_kind") or signal.strategy_id,
             }
             del pending_entries[ticker]
 
-        # 1. Check exits before entries (respect stop/target on the bar's OHLC).
+        # 1. Exits
         for ticker in list(positions.keys()):
             if ticker not in aligned:
                 continue
@@ -202,7 +288,7 @@ def run_strategy_backtest(
                 if isinstance(row, pd.DataFrame):
                     row = row.iloc[-1]
             except KeyError:
-                continue  # ticker not trading that day
+                continue
 
             high, low, close = float(row["High"]), float(row["Low"]), float(row["Close"])
             pos = positions[ticker]
@@ -216,7 +302,6 @@ def run_strategy_backtest(
                 exit_reason = "take_profit"
                 exit_price = pos["target"]
 
-            # Strategy-level exit (e.g. trend break / RSI restore)
             if exit_reason is None:
                 hist = _history_through(aligned[ticker], day)
                 if hist is not None and len(hist) >= 30:
@@ -232,8 +317,6 @@ def run_strategy_backtest(
                         exit_reason = es.reason
                         exit_price = es.exit_price
 
-            # Time stop: close after MAX_HOLD_DAYS trading days if still open
-            # (strategy exit rule D — documented but not enforced in check_exit).
             if exit_reason is None and time_stop_days:
                 held_days = day_idx - pos.get("entry_day_idx", day_idx)
                 if held_days >= int(time_stop_days):
@@ -245,6 +328,7 @@ def run_strategy_backtest(
                 cash += proceeds
                 pnl = (exit_price - pos["entry_price"]) * pos["qty"]
                 pnl_pct = pnl / (pos["entry_price"] * pos["qty"]) * 100.0 if pos["entry_price"] else 0.0
+                meta = pos.get("meta") or {}
                 trade_records.append({
                     "ticker": ticker,
                     "side": "long",
@@ -257,12 +341,18 @@ def run_strategy_backtest(
                     "pnl_pct": round(pnl_pct, 2),
                     "exit_reason": exit_reason,
                     "strategy": strategy_id,
+                    "entry_kind": pos.get("entry_kind"),
+                    "reason": pos.get("reason"),
+                    "fund_score": pos.get("fund_score"),
+                    "rs_role": meta.get("rs_role"),
+                    "rs_12w": meta.get("rs_12w"),
+                    "rs_126": meta.get("rs_126"),
+                    "rs_252": meta.get("rs_252"),
+                    "macd_hist": meta.get("macd_hist"),
                 })
                 del positions[ticker]
 
-        # 2. Entries — signal on this close, queue for a next-bar-open fill.
-        # Reserve slots for both open positions and already-queued signals so we
-        # never over-commit beyond max_positions.
+        # 2. Entries
         committed = len(positions) + len(pending_entries)
         if committed < max_positions and cash > 500:
             current_pos_list = [{"symbol": t, "quantity": p["qty"]} for t, p in positions.items()]
@@ -275,10 +365,6 @@ def run_strategy_backtest(
                 hist = _history_through(aligned[ticker], day)
                 if hist is None or len(hist) < 30:
                     continue
-                # Point-in-time fundamentals are unavailable from the free provider,
-                # so Stable/Hybrid (which gate on fundamental quality) are given a
-                # pass-through score; Aggressive has a lower bar by design.
-                fund_score = 70.0 if strategy_id in ("stable", "hybrid") else 50.0
                 signal = strategy.generate_signal(
                     ticker=ticker,
                     df=hist,
@@ -288,28 +374,37 @@ def run_strategy_backtest(
                 )
                 if signal is None:
                     continue
-                # Queue for a next-bar-open fill (actual price + slippage applied
-                # when the next trading bar for this ticker arrives).
                 pending_entries[ticker] = signal
                 current_pos_list.append({"symbol": ticker, "quantity": 0})
                 committed += 1
 
-        # 3. Mark-to-market equity.
-        equity = cash
+        # 3. Mark-to-market + cash drag
+        invested = 0.0
         for ticker, pos in positions.items():
             if ticker in aligned:
                 try:
                     row = aligned[ticker].loc[day]
                     if isinstance(row, pd.DataFrame):
                         row = row.iloc[-1]
-                    equity += pos["qty"] * float(row["Close"])
+                    invested += pos["qty"] * float(row["Close"])
                 except KeyError:
-                    equity += pos["qty"] * pos["entry_price"]
+                    invested += pos["qty"] * pos["entry_price"]
             else:
-                equity += pos["qty"] * pos["entry_price"]
-        equity_curve.append({"date": day.strftime("%Y-%m-%d"), "equity": round(equity, 2)})
+                invested += pos["qty"] * pos["entry_price"]
+        equity = cash + invested
+        cash_pct = (cash / equity * 100.0) if equity > 0 else 100.0
+        inv_pct = (invested / equity * 100.0) if equity > 0 else 0.0
+        cash_pcts.append(cash_pct)
+        invested_pcts.append(inv_pct)
+        equity_curve.append({
+            "date": day.strftime("%Y-%m-%d"),
+            "equity": round(equity, 2),
+            "cash": round(cash, 2),
+            "cash_pct": round(cash_pct, 2),
+            "invested_pct": round(inv_pct, 2),
+        })
 
-    # Force-close remaining positions at last available close.
+    # Force-close remaining
     last_day = all_dates[-1]
     for ticker in list(positions.keys()):
         if ticker not in aligned:
@@ -327,52 +422,80 @@ def run_strategy_backtest(
             "pnl_pct": round(pnl / (pos["entry_price"] * pos["qty"]) * 100.0, 2)
             if pos["entry_price"] else 0.0,
             "exit_reason": "end_of_backtest", "strategy": strategy_id,
+            "entry_kind": pos.get("entry_kind"),
         })
 
-    # ---- Metrics ----
     result.trades = trade_records
     result.equity_curve = equity_curve
     result.num_trades = len(trade_records)
+    if cash_pcts:
+        result.avg_cash_pct = float(np.mean(cash_pcts))
+        result.avg_invested_pct = float(np.mean(invested_pcts))
 
-    if not trade_records:
-        result.warnings.append("No trades generated. Check strategy parameters and data.")
-        return result
-
-    wins = [t for t in trade_records if t["pnl"] > 0]
-    losses = [t for t in trade_records if t["pnl"] < 0]
-    gross_win = sum(t["pnl"] for t in wins)
-    gross_loss = -sum(t["pnl"] for t in losses)
-    result.win_rate_pct = len(wins) / len(trade_records) * 100.0
-    result.profit_factor = gross_win / gross_loss if gross_loss > 0 else float("inf") if gross_win > 0 else 0.0
-
-    # Sharpe from equity curve (daily, annualized).
     closes = [e["equity"] for e in equity_curve]
-    rets = pd.Series(closes).pct_change().dropna()
-    if len(rets) > 2 and rets.std() > 0:
-        result.sharpe_ratio = float(rets.mean() / rets.std() * math.sqrt(252))
+    if closes:
+        final_equity = closes[-1]
+        result.total_return_pct = (final_equity - initial_capital) / initial_capital * 100.0
+        rets = pd.Series(closes).pct_change().dropna()
+        if len(rets) > 2 and rets.std() > 0:
+            result.sharpe_ratio = float(rets.mean() / rets.std() * math.sqrt(252))
+        peak = closes[0]
+        max_dd = 0.0
+        for v in closes:
+            if v > peak:
+                peak = v
+            if peak > 0:
+                dd = (peak - v) / peak
+                if dd > max_dd:
+                    max_dd = dd
+        result.max_drawdown_pct = max_dd * 100.0
 
-    # Max drawdown.
-    peak = closes[0]
-    max_dd = 0.0
-    for v in closes:
-        if v > peak:
-            peak = v
-        if peak > 0:
-            dd = (peak - v) / peak
-            if dd > max_dd:
-                max_dd = dd
-    result.max_drawdown_pct = max_dd * 100.0
+    # SPY buy-and-hold over the same window
+    if spy_close is not None and equity_curve:
+        try:
+            first = pd.Timestamp(equity_curve[0]["date"])
+            last = pd.Timestamp(equity_curve[-1]["date"])
+            spy_sub = spy_close.loc[(spy_close.index >= first) & (spy_close.index <= last)].dropna()
+            if len(spy_sub) >= 2:
+                result.spy_return_pct = float(spy_sub.iloc[-1] / spy_sub.iloc[0] - 1.0) * 100.0
+                result.alpha_gross_pct = result.total_return_pct - result.spy_return_pct
+        except Exception:
+            pass
 
-    final_equity = closes[-1] if closes else initial_capital
-    result.total_return_pct = (final_equity - initial_capital) / initial_capital * 100.0
-    # Approximate fees as % of traded notional.
-    total_notional = sum(t["entry_price"] * t["qty"] for t in trade_records)
-    result.total_fees_pct = total_notional * (transaction_cost_bps / 10000.0) / initial_capital * 100.0
+    if trade_records:
+        wins = [t for t in trade_records if t["pnl"] > 0]
+        losses = [t for t in trade_records if t["pnl"] < 0]
+        gross_win = sum(t["pnl"] for t in wins)
+        gross_loss = -sum(t["pnl"] for t in losses)
+        result.win_rate_pct = len(wins) / len(trade_records) * 100.0
+        result.profit_factor = gross_win / gross_loss if gross_loss > 0 else float("inf") if gross_win > 0 else 0.0
+        total_notional = sum(t["entry_price"] * t["qty"] for t in trade_records)
+        result.total_fees_pct = total_notional * (transaction_cost_bps / 10000.0) / initial_capital * 100.0
+        # Turnover ≈ traded notional / capital (entries only once each)
+        result.turnover_pct = total_notional / initial_capital * 100.0
+        # Net alpha: subtract assumed round-trip cost × turnover (same honesty as paper_performance)
+        if result.alpha_gross_pct is not None and result.turnover_pct is not None:
+            cost_drag = (ASSUMED_ROUND_TRIP_BPS / 10000.0) * (result.turnover_pct / 100.0) * 100.0
+            result.alpha_net_of_costs_pct = result.alpha_gross_pct - cost_drag
+    else:
+        result.warnings.append("No trades generated. Check strategy parameters and data.")
+        if result.spy_return_pct is not None:
+            result.alpha_gross_pct = result.total_return_pct - result.spy_return_pct
+            result.alpha_net_of_costs_pct = result.alpha_gross_pct
 
     result.warnings.append(
         "Data is current-universe only (survivorship bias). Fundamentals use a neutral score "
-        "because point-in-time fundamentals are not available from the free provider."
+        f"({fund_score}) because point-in-time fundamentals are not available from the free provider."
     )
+    if sizing_mode == "fixed_pct":
+        result.warnings.append(
+            f"Sizing=fixed_pct ({fixed_cash_pct*100:.0f}% cash/entry, max {max_positions} positions) "
+            "→ large cash drag vs SPY is expected."
+        )
+    else:
+        result.warnings.append(
+            f"Sizing=risk_pct ({risk_pct*100:.1f}% equity per 1R, cap {max_position_pct*100:.0f}%/name)."
+        )
     return result
 
 
@@ -388,33 +511,3 @@ def _history_through(frame: pd.DataFrame, day) -> Optional[pd.DataFrame]:
         return sub
     except Exception:
         return None
-
-
-def _precompute_indicators(
-    strategy,
-    strategy_id: str,
-    aligned: Dict[str, pd.DataFrame],
-) -> Dict[str, pd.DataFrame]:
-    """Attach strategy indicator columns once before the day loop."""
-    if strategy_id == "hybrid":
-        from backend.trading.strategies.aggressive import AggressiveStrategy
-        from backend.trading.strategies.stable import StableStrategy
-
-        stable = StableStrategy()
-        aggressive = AggressiveStrategy()
-        out: Dict[str, pd.DataFrame] = {}
-        for ticker, frame in aligned.items():
-            enriched = stable.populate_indicators(frame)
-            out[ticker] = aggressive.populate_indicators(enriched)
-        return out
-
-    if strategy_id == "research_list":
-        return aligned
-
-    out = {}
-    for ticker, frame in aligned.items():
-        try:
-            out[ticker] = strategy.populate_indicators(frame)
-        except Exception:
-            out[ticker] = frame
-    return out
