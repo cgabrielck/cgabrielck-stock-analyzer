@@ -120,6 +120,20 @@ class TestStrategyBacktest(unittest.TestCase):
         self.assertEqual(result.num_trades, 0)
         self.assertTrue(result.warnings)
 
+    @patch("backend.backtesting.strategy_backtest.fetch_price_data")
+    def test_shared_price_data_skips_fetch(self, mock_fetch):
+        """Fair comparison path: pass a shared snapshot and never re-fetch."""
+        prices = _make_price_data()
+        result = run_strategy_backtest(
+            strategy_id="hybrid",
+            start=(pd.Timestamp.now() - pd.DateOffset(days=400)).strftime("%Y-%m-%d"),
+            end=pd.Timestamp.now().strftime("%Y-%m-%d"),
+            tickers=["AAPL", "MSFT"],
+            price_data=prices,
+        )
+        mock_fetch.assert_not_called()
+        self.assertTrue(len(result.equity_curve) > 0)
+
     def test_invalid_strategy_falls_back_to_stable(self):
         from backend.trading.strategies.registry import get_strategy
         s = get_strategy("does_not_exist")

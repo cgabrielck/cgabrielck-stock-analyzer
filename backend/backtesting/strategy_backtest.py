@@ -73,12 +73,15 @@ def run_strategy_backtest(
     initial_capital: float = STARTING_CAPITAL,
     max_workers: int = BACKTEST_FETCH_WORKERS,
     strategy_params: Optional[Dict[str, Any]] = None,
+    price_data: Optional[Dict[str, pd.DataFrame]] = None,
 ) -> StrategyBacktestResult:
     """Run a daily-frequency backtest of a single strategy over *start*..*end*.
 
     Args:
         strategy_params: Optional dict of parameter overrides passed to the
             strategy constructor (e.g. {"rsi_entry": 30, "volume_surge": 2.0}).
+        price_data: Optional pre-fetched OHLCV map. When provided, all strategies
+            share the same price snapshot (fair head-to-head comparison).
     """
     strategy = get_strategy(strategy_id, **(strategy_params or {}))
     result = StrategyBacktestResult()
@@ -93,9 +96,14 @@ def run_strategy_backtest(
 
     # Warmup: fetch data starting WARMUP_DAYS before the requested start so that
     # SMA200 / SMA50 etc. have enough history on day one.
-    fetch_start = (pd.Timestamp(start) - pd.DateOffset(days=WARMUP_DAYS + 60)).strftime("%Y-%m-%d")
-    fetch_end = (pd.Timestamp(end_date) + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
-    price_data = fetch_price_data(tickers, fetch_start, fetch_end, max_workers=max_workers)
+    if price_data is None:
+        fetch_start = (pd.Timestamp(start) - pd.DateOffset(days=WARMUP_DAYS + 60)).strftime("%Y-%m-%d")
+        fetch_end = (pd.Timestamp(end_date) + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+        price_data = fetch_price_data(tickers, fetch_start, fetch_end, max_workers=max_workers)
+    else:
+        # Restrict to the requested universe so shared snapshots (e.g. with SPY)
+        # cannot leak extra symbols into the trade loop.
+        price_data = {t: price_data[t] for t in tickers if t in price_data}
 
     missing = [t for t in tickers if t not in price_data]
     if missing:
