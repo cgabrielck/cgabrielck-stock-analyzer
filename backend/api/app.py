@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
@@ -23,12 +23,15 @@ from backend.pathsetup import ensure_backend_on_path
 ensure_backend_on_path()
 
 from backend.api import research_jobs, worker_ctl
+from backend.api.desk_auth import is_operator, require_operator
 from backend.trading import telegram_inbox
 from backend.trading.alpaca_broker import AlpacaBroker
+from backend.trading.engine.cadence import normalize_cadence
 from backend.trading.models import Order, OrderSide, OrderType
 from backend.trading.safety import kill_switch
 from backend.trading.safety.mandate import load_mandate
 from backend.trading.storage import create_order_store
+from backend.trading.strategies.registry import KNOWN_STRATEGIES
 from backend.utils.constants import DATA_DIR, STOCK_UNIVERSE
 
 APP_NAME = "Cgab"
@@ -37,14 +40,34 @@ WATCHLIST_PATH = Path(DATA_DIR) / "watchlist.json"
 JOURNAL_PATH = Path(DATA_DIR) / "trade_journal.json"
 
 DEFAULT_AI_MODE = {
-    "strategy": "stable",
+    "strategy": "breakout",
     "llm_influence": 20,
     "entry_threshold": 70,
     "max_positions": 10,
     "risk_tolerance": "medium",
     "worker_enabled": False,
     "ignore_market_hours": os.getenv("IGNORE_MARKET_HOURS", "false").lower() in ("1", "true", "yes"),
+    "cadence": "intraday",
 }
+
+DEFAULT_WATCHLIST = ["AAPL", "MSFT", "NVDA", "AMZN", "META"]
+_WATCH_ALIASES = {"APPL": "AAPL"}
+
+
+def _normalize_watchlist(raw: Any) -> List[str]:
+    if not isinstance(raw, list):
+        return list(DEFAULT_WATCHLIST)
+    tokens = [str(s).upper().strip() for s in raw if str(s).strip()]
+    # Lone typo APPL was a broken Market page, not an intentional one-name list.
+    if tokens == ["APPL"]:
+        return list(DEFAULT_WATCHLIST)
+    out: List[str] = []
+    for token in tokens:
+        token = _WATCH_ALIASES.get(token, token)
+        if token and token not in out:
+            out.append(token)
+    return out or list(DEFAULT_WATCHLIST)
+
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
@@ -98,6 +121,22 @@ def _require_paper() -> None:
         raise HTTPException(status_code=403, detail="Live trading is blocked. Keep APCA_PAPER=true.")
 
 
+def _require_paper_operator(_auth: None = Depends(require_operator)) -> None:
+    """Guests cannot read or mutate the paper book. Loopback or token only."""
+    _require_paper()
+
+
+def _guest_tear_stub(ticker: str) -> Dict[str, Any]:
+    return {
+        "available": False,
+        "complete": False,
+        "scope": "ticker",
+        "ticker": ticker,
+        "notes": ["guest_ticker_only"],
+        "places_order": False,
+    }
+
+
 class OrderIn(BaseModel):
     symbol: str
     side: str = "buy"
@@ -107,13 +146,14 @@ class OrderIn(BaseModel):
 
 
 class AiModeIn(BaseModel):
-    strategy: str = "stable"
+    strategy: str = "breakout"
     llm_influence: float = 20
     entry_threshold: float = 70
     max_positions: int = 10
     risk_tolerance: str = "medium"
     worker_enabled: bool = False
     ignore_market_hours: bool = False
+    cadence: str = "intraday"
 
 
 class WatchIn(BaseModel):
@@ -127,8 +167,9 @@ class JournalIn(BaseModel):
 
 
 class WorkerStartIn(BaseModel):
-    strategy: str = "stable"
+    strategy: str = "breakout"
     interval: int = 60
+    restart: bool = False
 
 
 class ScanIn(BaseModel):
@@ -145,14 +186,17 @@ class DeepIn(BaseModel):
 
 
 @app.get("/api/meta")
-def meta() -> Dict[str, Any]:
+def meta(request: Request) -> Dict[str, Any]:
     scan = research_jobs.latest_scan()
     from backend.api import scan_scheduler
 
     sched = scan_scheduler.status()
+    operator = is_operator(request)
     return {
         "name": APP_NAME,
         "paper": os.getenv("APCA_PAPER", "true").lower() in ("1", "true", "yes"),
+        "paper_controls": operator,
+        "role": "operator" if operator else "guest",
         "ignore_market_hours": os.getenv("IGNORE_MARKET_HOURS", "").lower() in ("1", "true", "yes"),
         "scan_available": bool(scan.get("available")),
         "scan_stale": bool(scan.get("stale", True)),
@@ -176,7 +220,7 @@ def _llm_public() -> Dict[str, Any]:
 
 
 @app.get("/api/account")
-def account() -> Dict[str, Any]:
+def account(_auth: None = Depends(_require_paper_operator)) -> Dict[str, Any]:
     _require_paper()
     try:
         summary = _broker.get_account_summary()
@@ -186,7 +230,7 @@ def account() -> Dict[str, Any]:
 
 
 @app.get("/api/positions")
-def positions() -> Dict[str, Any]:
+def positions(_auth: None = Depends(_require_paper_operator)) -> Dict[str, Any]:
     data = account()
     rows = data.get("positions") or []
     equity = float(data.get("equity") or data.get("portfolio_value") or 0)
@@ -197,7 +241,7 @@ def positions() -> Dict[str, Any]:
 
 
 @app.get("/api/orders")
-def orders(status: str = "all", limit: int = 50) -> Dict[str, Any]:
+def orders(status: str = "all", limit: int = 50, _auth: None = Depends(_require_paper_operator)) -> Dict[str, Any]:
     _require_paper()
     out: List[Dict[str, Any]] = []
     try:
@@ -227,7 +271,7 @@ def orders(status: str = "all", limit: int = 50) -> Dict[str, Any]:
 
 
 @app.post("/api/orders")
-def submit_order(body: OrderIn) -> Dict[str, Any]:
+def submit_order(body: OrderIn, _auth: None = Depends(_require_paper_operator)) -> Dict[str, Any]:
     _require_paper()
     if kill_switch.is_halted() and body.side.lower() == "buy":
         raise HTTPException(status_code=409, detail="Kill switch is on — new buys blocked.")
@@ -256,7 +300,7 @@ def submit_order(body: OrderIn) -> Dict[str, Any]:
 
 
 @app.post("/api/orders/{order_id}/cancel")
-def cancel_order(order_id: str) -> Dict[str, Any]:
+def cancel_order(order_id: str, _auth: None = Depends(_require_paper_operator)) -> Dict[str, Any]:
     _require_paper()
     try:
         updated = _broker.cancel_order(order_id)
@@ -266,7 +310,7 @@ def cancel_order(order_id: str) -> Dict[str, Any]:
 
 
 @app.get("/api/ops")
-def ops() -> Dict[str, Any]:
+def ops(_auth: None = Depends(require_operator)) -> Dict[str, Any]:
     mandate = load_mandate()
     return {
         "kill_switch": kill_switch.is_halted(),
@@ -277,30 +321,41 @@ def ops() -> Dict[str, Any]:
 
 
 @app.post("/api/ops/kill")
-def ops_kill(reason: str = "Manual halt from Cgab") -> Dict[str, Any]:
+def ops_kill(reason: str = "Manual halt from Cgab", _auth: None = Depends(require_operator)) -> Dict[str, Any]:
     kill_switch.engage(reason)
     return ops()
 
 
 @app.post("/api/ops/resume")
-def ops_resume() -> Dict[str, Any]:
+def ops_resume(_auth: None = Depends(require_operator)) -> Dict[str, Any]:
     kill_switch.disengage()
     return ops()
 
 
 @app.get("/api/ai-mode")
-def get_ai_mode() -> Dict[str, Any]:
+def get_ai_mode(_auth: None = Depends(require_operator)) -> Dict[str, Any]:
     data = {**DEFAULT_AI_MODE, **_read_json(AI_MODE_PATH, {})}
+    data["cadence"] = normalize_cadence(data.get("cadence"))
     data["kill_switch"] = kill_switch.is_halted()
     return data
 
 
 @app.put("/api/ai-mode")
-def put_ai_mode(body: AiModeIn) -> Dict[str, Any]:
-    if body.strategy not in ("stable", "aggressive", "hybrid", "research_list"):
+def put_ai_mode(body: AiModeIn, _auth: None = Depends(require_operator)) -> Dict[str, Any]:
+    if body.strategy not in KNOWN_STRATEGIES:
         raise HTTPException(status_code=400, detail="Unknown strategy")
     payload = body.model_dump()
     payload["llm_influence"] = max(0, min(40, float(body.llm_influence)))
+    payload["max_positions"] = max(1, min(25, int(body.max_positions)))
+    payload["cadence"] = normalize_cadence(payload.get("cadence"))
+    # entry_threshold only gates research_list fund floor (desk knob)
+    if payload.get("strategy") == "research_list":
+        try:
+            from backend.trading.strategies.registry import get_strategy
+
+            get_strategy("research_list").MIN_FUND_SCORE = float(payload.get("entry_threshold") or 65)
+        except Exception:
+            pass
     _write_json(AI_MODE_PATH, payload)
     return get_ai_mode()
 
@@ -313,7 +368,7 @@ def _position_count() -> int:
 
 
 @app.get("/api/worker/status")
-def worker_status() -> Dict[str, Any]:
+def worker_status(_auth: None = Depends(_require_paper_operator)) -> Dict[str, Any]:
     _require_paper()
     status = worker_ctl.status(position_count=_position_count(), halted=kill_switch.is_halted())
     scan = research_jobs.latest_scan()
@@ -329,13 +384,13 @@ def worker_status() -> Dict[str, Any]:
         "next_scan_at": status.get("next_scan_at"),
         "top5_tickers": scan.get("top5_tickers") or [],
         "message_en": (
-            f"Scan as-of {as_of} is past freshness — research_list blocks new buys; "
-            f"Stable keeps last real scores. Auto-scan={auto}; next={next_scan}."
+            f"Scan as-of {as_of} is past SIGNAL max-age — no new buys; "
+            f"last real fund scores kept. Auto-scan={auto}; next={next_scan}."
             if scan.get("stale", True)
             else f"Fresh scan as-of {as_of} feeding paper worker. Auto-scan={auto}; next={next_scan}."
         ),
         "message_zh": (
-            f"掃描 as-of {as_of} 已過新鮮度視窗 — research_list 不開新倉；Stable 保留上次真實分數。"
+            f"掃描 as-of {as_of} 已過 SIGNAL 新鮮度視窗 — 不開新倉；上次真實分數保留。"
             f"自動掃描={auto}；下次={next_scan}。"
             if scan.get("stale", True)
             else f"掃描 as-of {as_of} 新鮮，正提供紙上自動交易分數。自動掃描={auto}；下次={next_scan}。"
@@ -345,26 +400,36 @@ def worker_status() -> Dict[str, Any]:
 
 
 @app.post("/api/worker/start")
-def worker_start(body: Optional[WorkerStartIn] = None) -> Dict[str, Any]:
+def worker_start(body: Optional[WorkerStartIn] = None, _auth: None = Depends(_require_paper_operator)) -> Dict[str, Any]:
     _require_paper()
     body = body or WorkerStartIn()
     cfg = {**DEFAULT_AI_MODE, **_read_json(AI_MODE_PATH, {})}
-    strategy = body.strategy or cfg.get("strategy") or "stable"
+    strategy = body.strategy or cfg.get("strategy") or "breakout"
     try:
-        result = worker_ctl.start(strategy=strategy, interval=body.interval)
+        if body.restart:
+            result = worker_ctl.restart(strategy=strategy, interval=body.interval)
+        else:
+            result = worker_ctl.start(strategy=strategy, interval=body.interval)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     cfg["worker_enabled"] = True
     cfg["strategy"] = strategy
+    if strategy == "research_list":
+        try:
+            from backend.trading.strategies.registry import get_strategy
+
+            get_strategy("research_list").MIN_FUND_SCORE = float(cfg.get("entry_threshold") or 65)
+        except Exception:
+            pass
     _write_json(AI_MODE_PATH, cfg)
     result["ai_mode"] = get_ai_mode()
     return result
 
 
 @app.post("/api/worker/stop")
-def worker_stop() -> Dict[str, Any]:
+def worker_stop(_auth: None = Depends(_require_paper_operator)) -> Dict[str, Any]:
     _require_paper()
     result = worker_ctl.stop()
     cfg = {**DEFAULT_AI_MODE, **_read_json(AI_MODE_PATH, {})}
@@ -452,14 +517,17 @@ def guide() -> Dict[str, Any]:
 
 @app.get("/api/watchlist")
 def get_watchlist() -> Dict[str, Any]:
-    symbols = _read_json(WATCHLIST_PATH, ["AAPL", "MSFT", "NVDA", "AMZN", "META"])
+    raw = _read_json(WATCHLIST_PATH, list(DEFAULT_WATCHLIST))
+    symbols = _normalize_watchlist(raw)
+    if symbols != raw:
+        _write_json(WATCHLIST_PATH, symbols)
     return {"symbols": symbols}
 
 
 @app.post("/api/watchlist")
 def add_watch(body: WatchIn) -> Dict[str, Any]:
-    symbols = _read_json(WATCHLIST_PATH, [])
-    sym = body.symbol.upper().strip()
+    symbols = _normalize_watchlist(_read_json(WATCHLIST_PATH, list(DEFAULT_WATCHLIST)))
+    sym = _WATCH_ALIASES.get(body.symbol.upper().strip(), body.symbol.upper().strip())
     if sym and sym not in symbols:
         symbols.append(sym)
         _write_json(WATCHLIST_PATH, symbols)
@@ -468,7 +536,8 @@ def add_watch(body: WatchIn) -> Dict[str, Any]:
 
 @app.delete("/api/watchlist/{symbol}")
 def del_watch(symbol: str) -> Dict[str, Any]:
-    symbols = [s for s in _read_json(WATCHLIST_PATH, []) if s.upper() != symbol.upper()]
+    want = _WATCH_ALIASES.get(symbol.upper().strip(), symbol.upper().strip())
+    symbols = [s for s in _normalize_watchlist(_read_json(WATCHLIST_PATH, [])) if s != want]
     _write_json(WATCHLIST_PATH, symbols)
     return {"symbols": symbols}
 
@@ -653,8 +722,22 @@ def add_journal(body: JournalIn) -> Dict[str, Any]:
     return {"entries": entries[-100:]}
 
 
+@app.get("/api/digest")
+def daily_digest(refresh: bool = False, _auth: None = Depends(require_operator)) -> Dict[str, Any]:
+    """Desk/Telegram daily blotter: filled vs pending, skips, paper vs SPY net of costs."""
+    from backend.api import paper_performance
+
+    paper = None
+    if refresh:
+        try:
+            paper = paper_performance.build_paper_report(persist=True)
+        except Exception:
+            paper = None
+    return paper_performance.build_daily_digest(paper=paper, persist_paper=False)
+
+
 @app.get("/api/performance")
-def performance(refresh: bool = False) -> Dict[str, Any]:
+def performance(refresh: bool = False, _auth: None = Depends(require_operator)) -> Dict[str, Any]:
     """Paper book vs SPY (preferred) plus optional stable backtest summary."""
     from backend.api import paper_performance
 
@@ -734,6 +817,129 @@ def performance(refresh: bool = False) -> Dict[str, Any]:
             "num_trades": summary.get("num_trades"),
         },
     }
+
+
+@app.get("/api/strategy-bakeoff")
+def strategy_bakeoff() -> Dict[str, Any]:
+    """Desk Strategies page: rows from scripts/run_strategy_bakeoff.py output."""
+    path = Path(DATA_DIR) / "strategy_bakeoff_summary.json"
+    raw = _read_json(path, [])
+    if isinstance(raw, dict):
+        rows = raw.get("rows") or []
+        disclaimer = raw.get("disclaimer")
+    elif isinstance(raw, list):
+        rows = raw
+        disclaimer = None
+    else:
+        rows, disclaimer = [], None
+    return {
+        "available": bool(rows),
+        "rows": rows,
+        "disclaimer": disclaimer,
+        "path": str(path.name),
+    }
+
+
+class LabAdvisoryIn(BaseModel):
+    ticker: str = "AAPL"
+    fund_score: float = 50.0
+    scan_rank: Optional[int] = None
+    context: str = ""
+    top_n: List[str] = Field(default_factory=list)
+    use_llm: bool = False
+    product: bool = True
+
+
+class LabTearIn(BaseModel):
+    ticker: Optional[str] = None
+    period: str = "1y"
+
+
+@app.get("/api/lab/status")
+def lab_status_api() -> Dict[str, Any]:
+    """Lab citation-try flags/imports. Never places orders."""
+    from backend.lab.advisory_debate import advisory_budget
+    from backend.lab.flags import lab_status
+
+    payload = lab_status()
+    payload["advisory_budget_used"] = advisory_budget()
+    return payload
+
+
+@app.get("/api/lab/ab-report")
+def lab_ab_report() -> Dict[str, Any]:
+    """Schema / sentiment / advisory / tear completeness — not SPY bakeoff."""
+    from backend.lab.ab_metrics import collect_ab_report
+
+    return collect_ab_report()
+
+
+@app.post("/api/lab/advisory")
+def lab_advisory(body: LabAdvisoryIn) -> Dict[str, Any]:
+    """Bull/Bear/Risk research draft. Does not call OrderManager."""
+    from backend.lab.advisory_debate import compose_research_memo, run_advisory_debate
+
+    debate = run_advisory_debate(
+        body.ticker,
+        fund_score=float(body.fund_score),
+        scan_rank=body.scan_rank,
+        context=body.context,
+        top_n_before=list(body.top_n or []),
+        product=bool(body.product),
+        use_llm=bool(body.use_llm),
+    )
+    try:
+        deep = research_jobs.latest_deep()
+        report = (deep.get("reports") or {}).get((body.ticker or "").upper())
+        if isinstance(report, dict) and not report.get("error"):
+            debate["memo"] = compose_research_memo(report, debate)
+    except Exception:
+        pass
+    debate["places_order"] = False
+    return debate
+
+
+@app.get("/api/lab/tear")
+def lab_tear_get(request: Request, ticker: Optional[str] = None) -> Dict[str, Any]:
+    """Last cached QuantStats-style tear (JSON stub if lab deps missing)."""
+    from backend.lab.quantstats_tear import load_latest_tear
+
+    want = (ticker or "").strip().upper() or None
+    if not want:
+        require_operator(request)
+        return load_latest_tear(ticker=None)
+    data = load_latest_tear(ticker=want)
+    if is_operator(request):
+        return data
+    scope = str(data.get("scope") or "").lower()
+    cached = str(data.get("ticker") or "").upper() or None
+    if scope == "paper" or (cached and cached != want):
+        return _guest_tear_stub(want)
+    return data
+
+
+@app.get("/api/lab/tear.html")
+def lab_tear_html(_auth: None = Depends(require_operator)):
+    """Serve QuantStats HTML when LAB_QUANTSTATS produced a file; else 404."""
+    from backend.lab.quantstats_tear import load_latest_tear
+
+    latest = load_latest_tear()
+    path = Path(str(latest.get("path") or ""))
+    if not latest.get("html_available") or path.suffix.lower() != ".html" or not path.exists():
+        raise HTTPException(status_code=404, detail="Tear HTML not generated (stub only).")
+    return FileResponse(path, media_type="text/html", headers={"Cache-Control": "no-store"})
+
+
+@app.post("/api/lab/tear")
+def lab_tear(request: Request, body: Optional[LabTearIn] = None) -> Dict[str, Any]:
+    """QuantStats/HTML or JSON stub for the paper book or one ticker."""
+    from backend.lab.quantstats_tear import build_desk_tear
+
+    body = body or LabTearIn()
+    ticker = (body.ticker or "").strip() or None
+    if not ticker:
+        require_operator(request)
+    return build_desk_tear(ticker=ticker, period=body.period or "1y")
 
 
 @app.get("/api/health")

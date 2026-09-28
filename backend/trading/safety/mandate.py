@@ -9,9 +9,10 @@ allowed to do).
 
 Inspired by Vibe-Trading's mandate-gated live actions.
 
-Config file: config/mandate.json (optional). If absent, a permissive default
-mandate is used (matching prior behaviour) so nothing breaks for existing
-deployments — but the file lets an operator lock the worker down.
+Config file: repo ``config/mandate.json`` (copy from ``config/mandate.example.json``).
+If absent, a permissive default is used so older deploys keep running — Wave 1
+lands the tightened file locally. Malformed JSON still fails *open* (kill switch
+and RiskEngine remain the safety nets).
 """
 from __future__ import annotations
 
@@ -21,16 +22,30 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, field_validator
 
 from backend.trading.models import Order, OrderSide
 from backend.utils.constants import DATA_DIR
 
 logger = logging.getLogger(__name__)
 
-# Config lives beside the repo config/, falling back to DATA_DIR for writable envs.
-_CONFIG_DIR = Path(DATA_DIR).parent / "config"
-MANDATE_FILE = _CONFIG_DIR / "mandate.json"
+# Canonical path is repo-root config/ (next to mandate.example.json).
+# Fallback: backend/config for writable VPS layouts that copy the file there.
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+REPO_MANDATE_FILE = _REPO_ROOT / "config" / "mandate.json"
+BACKEND_MANDATE_FILE = Path(DATA_DIR).parent / "config" / "mandate.json"
+MANDATE_FILE = REPO_MANDATE_FILE
+
+
+def resolve_mandate_path(path: Optional[Path] = None) -> Path:
+    """Prefer repo config/mandate.json, then backend/config/mandate.json."""
+    if path is not None:
+        return Path(path)
+    if REPO_MANDATE_FILE.exists():
+        return REPO_MANDATE_FILE
+    if BACKEND_MANDATE_FILE.exists():
+        return BACKEND_MANDATE_FILE
+    return REPO_MANDATE_FILE
 
 
 class MandateDecision(BaseModel):
@@ -45,6 +60,8 @@ class TradingMandate(BaseModel):
     Empty / None fields mean "no constraint" so a default mandate is fully
     permissive and preserves existing behaviour.
     """
+    model_config = ConfigDict(extra="ignore")
+
     # If set, only these symbols may be traded (BUY). Empty = allow all.
     allowed_symbols: List[str] = []
     # If set, these symbols are never tradable (overrides allowed_symbols).
@@ -55,6 +72,25 @@ class TradingMandate(BaseModel):
     max_daily_orders: Optional[int] = None
     # Which sides the worker may submit. Default: both.
     allowed_sides: List[str] = ["buy", "sell"]
+
+    @field_validator("allowed_symbols", "blocked_symbols", mode="before")
+    @classmethod
+    def _upper_tickers(cls, value: Optional[List[str]]) -> List[str]:
+        if not value:
+            return []
+        out: List[str] = []
+        for item in value:
+            token = str(item or "").upper().strip()
+            if token and token not in out:
+                out.append(token)
+        return out
+
+    @field_validator("allowed_sides", mode="before")
+    @classmethod
+    def _lower_sides(cls, value: Optional[List[str]]) -> List[str]:
+        if not value:
+            return ["buy", "sell"]
+        return [str(s).lower().strip() for s in value if str(s).strip()]
 
     @classmethod
     def permissive(cls) -> "TradingMandate":
@@ -70,7 +106,7 @@ def load_mandate(path: Optional[Path] = None) -> TradingMandate:
     (malformed logs a warning — we fail *open* to preserve existing behaviour,
     but the kill switch and RiskEngine remain as safety nets).
     """
-    target = path or MANDATE_FILE
+    target = resolve_mandate_path(path)
     if not target.exists():
         return TradingMandate.permissive()
     try:
@@ -131,13 +167,15 @@ class MandateGate:
         if side == "sell":
             return MandateDecision(approved=True)
 
+        symbol = str(order.symbol or "").upper().strip()
+
         # Constraint 2: blocked symbols (hard deny, overrides allow-list)
-        if order.symbol in m.blocked_symbols:
+        if symbol in m.blocked_symbols:
             return MandateDecision(approved=False,
                                    reason=f"{order.symbol} is on the mandate block-list.")
 
         # Constraint 3: allow-list (if non-empty, symbol must be present)
-        if m.allowed_symbols and order.symbol not in m.allowed_symbols:
+        if m.allowed_symbols and symbol not in m.allowed_symbols:
             return MandateDecision(approved=False,
                                    reason=f"{order.symbol} is not on the mandate allow-list.")
 

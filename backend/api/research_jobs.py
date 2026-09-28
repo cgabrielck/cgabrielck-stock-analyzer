@@ -18,7 +18,34 @@ ensure_backend_on_path()
 LAST_SCAN_PATH = Path(DATA_DIR) / "last_scan.json"
 LAST_DEEP_PATH = Path(DATA_DIR) / "last_deep.json"
 # One US trading session buffer (~Fri close → Mon open). Not wall-clock 24h.
+# SIGNAL_MAX_AGE_HOURS defaults to the same window so research_stale / heartbeat
+# / Telegram stay aligned. Worker fail-closed uses the tighter of the two.
 STALE_AFTER_HOURS = float(os.getenv("SCAN_STALE_AFTER_HOURS", "72") or 72)
+
+
+def _env_hours(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None or str(raw).strip() == "":
+        return float(default)
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return float(default)
+    return value if value > 0 else float(default)
+
+
+def scan_stale_after_hours() -> float:
+    return _env_hours("SCAN_STALE_AFTER_HOURS", 72.0)
+
+
+def signal_max_age_hours() -> float:
+    """Max age for Scan/signal as-of before the worker refuses new buys."""
+    return _env_hours("SIGNAL_MAX_AGE_HOURS", scan_stale_after_hours())
+
+
+def freshness_limit_hours() -> float:
+    """Fail-closed window: min(Scan freshness, SIGNAL max-age)."""
+    return min(scan_stale_after_hours(), signal_max_age_hours())
 
 _lock = threading.Lock()
 _jobs: Dict[str, Dict[str, Any]] = {}
@@ -122,7 +149,7 @@ def scan_is_stale(payload: Optional[Dict[str, Any]] = None) -> bool:
     if not data or not data.get("rankings"):
         return True
     age = _age_hours(data.get("ts"))
-    return age is None or age > STALE_AFTER_HOURS
+    return age is None or age > freshness_limit_hours()
 
 
 def list_jobs(kind: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -170,17 +197,10 @@ def resolve_job(kind: str, job_id: str) -> Dict[str, Any]:
 
 
 def _score_from_row(row: Optional[Dict[str, Any]]) -> Optional[float]:
-    if not row:
-        return None
-    for key in ("risk_adjusted_score", "growth_score", "model_score"):
-        value = row.get(key)
-        if value is None:
-            continue
-        try:
-            return float(value)
-        except (TypeError, ValueError):
-            continue
-    return None
+    """Same field as Scan ranker — risk_adjusted_score first (as-of, never rewrite to 50)."""
+    from agents.score_contract import fund_score_from_row
+
+    return fund_score_from_row(row)
 
 
 def get_fund_score(ticker: str) -> Dict[str, Any]:
@@ -201,6 +221,7 @@ def get_fund_score(ticker: str) -> Dict[str, Any]:
         return {
             "score": 50.0,
             "raw_score": None,
+            "score_field": "risk_adjusted_score",
             "source": "default",
             "stale": True,
             "scan_ts": scan.get("ts"),
@@ -208,26 +229,50 @@ def get_fund_score(ticker: str) -> Dict[str, Any]:
         }
 
     score_f = _score_from_row(row)
+    rec = None
+    for item in scan.get("recommendations") or []:
+        if str((item or {}).get("ticker") or "").upper() == ticker:
+            rec = item
+            break
+    rec = rec or {}
+    row = row if isinstance(row, dict) else {}
+
     if score_f is None:
         return {
             "score": 50.0,
             "raw_score": None,
+            "score_field": "risk_adjusted_score",
             "source": "missing",
             "stale": stale,
             "scan_ts": scan.get("ts"),
             "in_top5": False,
+            "llm_key_signal": rec.get("llm_key_signal"),
+            "sentiment_label": rec.get("sentiment_label"),
+            "sentiment_score": rec.get("sentiment_score"),
         }
+
+    from agents.score_contract import SHARED_FUND_SCORE_FIELD, quality_fields_from_row
+
+    quality = quality_fields_from_row(row)
+    rec_quality = quality_fields_from_row(rec)
+    for key, value in rec_quality.items():
+        if quality.get(key) is None and value is not None:
+            quality[key] = value
 
     return {
         "score": score_f,
         "raw_score": score_f,
+        "score_field": SHARED_FUND_SCORE_FIELD,
         "source": "last_scan_stale" if stale else "last_scan",
         "stale": stale,
         "scan_ts": scan.get("ts"),
         "in_top5": False if stale else ticker in top5,
-        "sentiment_score": row.get("sentiment_score"),
+        "sentiment_score": row.get("sentiment_score") if row.get("sentiment_score") is not None else rec.get("sentiment_score"),
+        "sentiment_label": row.get("sentiment_label") or rec.get("sentiment_label"),
+        "llm_key_signal": row.get("llm_key_signal") or rec.get("llm_key_signal"),
         "growth_score": row.get("growth_score"),
         "risk_adjusted_score": row.get("risk_adjusted_score"),
+        **quality,
     }
 
 
@@ -260,7 +305,14 @@ def latest_scan() -> Dict[str, Any]:
     recs = data.get("recommendations") or []
     ranks = data.get("rankings") or []
     if not data or not (recs or ranks):
-        return {"available": False, "stale": True, "recommendations": [], "rankings": []}
+        return {
+            "available": False,
+            "stale": True,
+            "recommendations": [],
+            "rankings": [],
+            "signal_max_age_hours": signal_max_age_hours(),
+            "scan_stale_after_hours": scan_stale_after_hours(),
+        }
     # Backfill / refresh provenance for caches written before thin Slice B
     from backend.api.provenance import row_provenance, scan_book_provenance
 
@@ -268,7 +320,7 @@ def latest_scan() -> Dict[str, Any]:
         if not isinstance(prov, dict):
             return True
         vendor = str(prov.get("vendor") or prov.get("vendor_primary") or "").strip().lower()
-        return not vendor or vendor in ("unknown", "none", "—", "-")
+        return not vendor or vendor in ("unknown", "none", "—", "-") or "vendor_bars" not in prov
 
     scan_ts = data.get("ts")
     enriched_recs = []
@@ -287,7 +339,12 @@ def latest_scan() -> Dict[str, Any]:
         if _prov_needs_refresh(item.get("provenance")):
             item["provenance"] = row_provenance(item, scan_ts=scan_ts)
         enriched_ranks.append(item)
-    if _prov_needs_refresh(data.get("provenance")) or not isinstance(data.get("provenance"), dict) or "vendor" not in (data.get("provenance") or {}):
+    if (
+        _prov_needs_refresh(data.get("provenance"))
+        or not isinstance(data.get("provenance"), dict)
+        or "vendor" not in (data.get("provenance") or {})
+        or "vendor_bars" not in (data.get("provenance") or {})
+    ):
         data = {
             **data,
             "provenance": scan_book_provenance(
@@ -298,9 +355,11 @@ def latest_scan() -> Dict[str, Any]:
         }
     return {
         "available": True,
+        **data,
         "stale": scan_is_stale(data),
         "age_hours": _age_hours(data.get("ts")),
-        **data,
+        "signal_max_age_hours": signal_max_age_hours(),
+        "scan_stale_after_hours": scan_stale_after_hours(),
         "recommendations": enriched_recs,
         "rankings": enriched_ranks,
     }
@@ -332,6 +391,13 @@ def latest_deep() -> Dict[str, Any]:
                 },
                 scan_ts=deep_ts,
             )
+        if not item.get("error") and not item.get("memo"):
+            try:
+                from backend.lab.advisory_debate import attach_desk_advisory
+
+                item = attach_desk_advisory(item, record_metrics=False)
+            except Exception:
+                pass
         enriched[ticker] = item
     return {
         "available": True,
@@ -432,6 +498,9 @@ def _slim_recommendation(rec: Dict[str, Any], *, scan_ts: Optional[str] = None) 
             "price_quote_time": rec.get("price_quote_time"),
             "price_market_state": rec.get("price_market_state"),
             "price_stale": rec.get("price_stale"),
+            "technical_source": rec.get("technical_source"),
+            "bars_vendor": rec.get("bars_vendor"),
+            "bars_fallback": rec.get("bars_fallback"),
             "growth_score": _num(rec.get("growth_score"), 1),
             "model_score": _num(rec.get("total_score"), 1),
             "risk_adjusted_score": _num(rec.get("risk_adjusted_score"), 1),
@@ -447,6 +516,13 @@ def _slim_recommendation(rec: Dict[str, Any], *, scan_ts: Optional[str] = None) 
             "profit_margin": _num(rec.get("profit_margin"), 1),
             "peg": _num(rec.get("peg"), 2),
             "roe": _num(rec.get("roe"), 1),
+            "debt_equity": _num(rec.get("debt_equity"), 2),
+            "quality_score": _num(rec.get("quality_score"), 1),
+            "quality_roe_score": _num(rec.get("quality_roe_score"), 1),
+            "quality_margin_score": _num(rec.get("quality_margin_score"), 1),
+            "quality_leverage_score": _num(rec.get("quality_leverage_score"), 1),
+            "growth_component_score": _num(rec.get("growth_component_score"), 1),
+            "value_component_score": _num(rec.get("value_component_score"), 1),
             "pe_ratio": _num(rec.get("pe_ratio"), 2),
             "market_cap": rec.get("market_cap"),
             "beta": _num(rec.get("beta"), 2),
@@ -474,6 +550,9 @@ def _slim_ranking(row: Dict[str, Any], *, scan_ts: Optional[str] = None) -> Dict
             "price_session": row.get("price_session"),
             "price_quote_time": row.get("price_quote_time"),
             "price_stale": row.get("price_stale"),
+            "technical_source": row.get("technical_source"),
+            "bars_vendor": row.get("bars_vendor"),
+            "bars_fallback": row.get("bars_fallback"),
             "growth_score": _num(row.get("growth_score"), 1),
             "model_score": _num(row.get("model_score"), 1),
             "risk_penalty": _num(row.get("risk_penalty"), 1),
@@ -488,30 +567,41 @@ def _slim_ranking(row: Dict[str, Any], *, scan_ts: Optional[str] = None) -> Dict
             "profit_margin": _num(row.get("profit_margin"), 1),
             "peg": _num(row.get("peg"), 2),
             "roe": _num(row.get("roe"), 1),
+            "debt_equity": _num(row.get("debt_equity"), 2),
+            "quality_score": _num(row.get("quality_score"), 1),
+            "quality_roe_score": _num(row.get("quality_roe_score"), 1),
+            "quality_margin_score": _num(row.get("quality_margin_score"), 1),
+            "quality_leverage_score": _num(row.get("quality_leverage_score"), 1),
+            "growth_component_score": _num(row.get("growth_component_score"), 1),
+            "value_component_score": _num(row.get("value_component_score"), 1),
             "provenance": row_provenance(row, scan_ts=scan_ts),
         }
     )
 
 
 def _build_scores_index(rankings: List[Dict[str, Any]], recommendations: List[Dict[str, Any]]) -> Dict[str, Any]:
+    from agents.score_contract import QUALITY_EXPORT_KEYS
+
+    score_keys = (
+        "growth_score",
+        "model_score",
+        "risk_adjusted_score",
+        "sentiment_score",
+        "timing_score",
+        *QUALITY_EXPORT_KEYS,
+    )
     scores: Dict[str, Any] = {}
     for row in rankings:
         t = str(row.get("ticker") or "").upper()
         if not t:
             continue
-        scores[t] = {
-            "growth_score": row.get("growth_score"),
-            "model_score": row.get("model_score"),
-            "risk_adjusted_score": row.get("risk_adjusted_score"),
-            "sentiment_score": row.get("sentiment_score"),
-            "timing_score": row.get("timing_score"),
-        }
+        scores[t] = {key: row.get(key) for key in score_keys}
     for rec in recommendations:
         t = str(rec.get("ticker") or "").upper()
         if not t:
             continue
         scores.setdefault(t, {})
-        for key in ("growth_score", "model_score", "risk_adjusted_score", "sentiment_score"):
+        for key in score_keys:
             if rec.get(key) is not None:
                 scores[t][key] = rec.get(key)
         if rec.get("total_score") is not None:
@@ -679,6 +769,9 @@ def _slim_deep_report(report: Dict[str, Any], *, deep_ts: Optional[str] = None) 
         "price_session": technical.get("price_session"),
         "price_quote_time": technical.get("price_quote_time"),
         "price_stale": technical.get("price_stale"),
+        "technical_source": technical.get("technical_source"),
+        "bars_vendor": technical.get("bars_vendor"),
+        "bars_fallback": technical.get("bars_fallback"),
     }
     prov_row = {
         "price_source": technical.get("price_source") or report.get("price_source"),
@@ -686,9 +779,12 @@ def _slim_deep_report(report: Dict[str, Any], *, deep_ts: Optional[str] = None) 
         "price_session": technical.get("price_session"),
         "price_market_state": technical.get("price_market_state"),
         "price_stale": technical.get("price_stale"),
+        "technical_source": technical.get("technical_source"),
+        "bars_vendor": technical.get("bars_vendor"),
+        "bars_fallback": technical.get("bars_fallback"),
         "fetched_at": report.get("fetched_at") or deep_ts,
     }
-    return sanitize(
+    slim = sanitize(
         {
             "ticker": report.get("ticker"),
             "error": report.get("error"),
@@ -715,6 +811,14 @@ def _slim_deep_report(report: Dict[str, Any], *, deep_ts: Optional[str] = None) 
             "provenance": row_provenance(prov_row, scan_ts=deep_ts),
         }
     )
+    if not slim.get("error"):
+        try:
+            from backend.lab.advisory_debate import attach_desk_advisory
+
+            slim = attach_desk_advisory(slim)
+        except Exception:
+            pass
+    return slim
 
 
 def _run_deep_job(job_id: str, tickers: List[str], lang: str, force_refresh: bool) -> None:
@@ -870,6 +974,7 @@ def research_bundle(symbol: str) -> Dict[str, Any]:
         yahoo = {"error": str(exc)}
 
     meta = next((s for s in STOCK_UNIVERSE if s["ticker"] == sym), {})
+    shared = get_fund_score(sym)
     return {
         "symbol": sym,
         "name": (pick or {}).get("name") or yahoo.get("name") or meta.get("name_en") or sym,
@@ -877,8 +982,10 @@ def research_bundle(symbol: str) -> Dict[str, Any]:
         "price": (report or {}).get("technical", {}).get("price")
         or (pick or {}).get("price")
         or yahoo.get("price"),
-        "fund_score": scores.get("growth_score") or scores.get("model_score"),
-        "risk_adjusted_score": scores.get("risk_adjusted_score"),
+        "fund_score": shared.get("score"),
+        "fund_score_field": shared.get("score_field") or "risk_adjusted_score",
+        "quality_score": shared.get("quality_score") if shared.get("quality_score") is not None else scores.get("quality_score"),
+        "risk_adjusted_score": shared.get("risk_adjusted_score") if shared.get("risk_adjusted_score") is not None else scores.get("risk_adjusted_score"),
         "sentiment_score": scores.get("sentiment_score"),
         "llm_score": (ranking or {}).get("llm_score"),
         "in_top5": sym in {str(t).upper() for t in (scan.get("top5_tickers") or [])},

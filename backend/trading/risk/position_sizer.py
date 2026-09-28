@@ -81,3 +81,16 @@ def shares_to_buy(
     )
     shares = int(dollars / current_price)
     return max(shares, min_shares) if dollars > 0 else 0
+
+
+def cap_shares_to_notional(shares: float, price: float, max_notional: float) -> int:
+    """Floor share count so price * qty never exceeds the order notional cap."""
+    try:
+        qty = int(shares)
+        px = float(price)
+        cap = float(max_notional)
+    except (TypeError, ValueError):
+        return 0
+    if qty <= 0 or px <= 0 or cap <= 0:
+        return 0
+    return max(0, min(qty, int(cap // px)))

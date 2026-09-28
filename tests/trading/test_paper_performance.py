@@ -107,6 +107,7 @@ def test_post_close_digest_once_per_day(monkeypatch):
         "backend.trading.alpaca_broker.AlpacaBroker",
         lambda: (_ for _ in ()).throw(RuntimeError("skip")),
     )
+    monkeypatch.setattr(pp, "_load_paper_orders", lambda: [])
 
     with sched._lock:
         sched._state["last_digest_at"] = None
@@ -117,3 +118,60 @@ def test_post_close_digest_once_per_day(monkeypatch):
     assert sent["n"] == 1
     assert sched.send_post_close_digest(force=True) is True
     assert sent["n"] == 2
+
+
+def test_build_daily_digest_filled_vs_pending_not_a_seal(monkeypatch):
+    from datetime import date
+    from zoneinfo import ZoneInfo
+
+    et = ZoneInfo("America/New_York")
+    day = date(2026, 9, 15)
+    monkeypatch.setattr(
+        "backend.trading.alpaca_broker.AlpacaBroker",
+        lambda: (_ for _ in ()).throw(RuntimeError("skip")),
+    )
+    orders = [
+        {
+            "symbol": "AAPL",
+            "side": "buy",
+            "status": "filled",
+            "quantity": 10,
+            "filled_avg_price": 100,
+            "filled_at": "2026-09-15T18:00:00+00:00",
+        },
+        {
+            "symbol": "GOOGL",
+            "side": "buy",
+            "status": "new",
+            "quantity": 28,
+            "limit_price": 349.39,
+            "submitted_at": "2026-09-15T12:00:00+00:00",
+        },
+    ]
+    digest = pp.build_daily_digest(
+        paper={"benchmark": {"alpha_net_of_costs_pct": 0.4, "spy_return_pct": 1.1, "beats_spy_net": True}},
+        as_of_day=day,
+        orders=orders,
+        worker_status={"strategy": "breakout", "running": True, "skip_counts": {"not_stage2": 5}},
+        scan_payload={
+            "available": True,
+            "stale": False,
+            "ts": "2026-09-15T20:00:00+00:00",
+            "top5_tickers": ["AAPL", "GOOGL"],
+        },
+    )
+    assert digest["not_a_seal"] is True
+    assert digest["pending"]["not_a_seal"] is True
+    assert digest["filled"]["count"] == 1
+    assert digest["filled"]["symbols"] == ["AAPL"]
+    assert digest["pending"]["count"] == 1
+    assert digest["pending"]["symbols"] == ["GOOGL"]
+    assert digest["book"]["pending"] == ["GOOGL"]
+    assert "Stage-2" in digest["skips"]["summary_zh"] or "not_stage2" in digest["skips"]["summary_en"]
+    text = pp.format_digest_html(digest)
+    assert "未成交限價單不算封印" in text
+    assert "GOOGL" in text
+    assert "vs SPY" in text
+    line = pp.digest_status_line(digest)
+    assert "排隊 1" in line
+    assert "未成交不算封印" in line

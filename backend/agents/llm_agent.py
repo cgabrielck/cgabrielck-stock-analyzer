@@ -180,6 +180,17 @@ def analyze_stock(
             max_tokens=500,
         )
         text = resp.choices[0].message.content.strip()
+        # Lab: optional Instructor/Pydantic schema validation (never places orders).
+        try:
+            from backend.lab.flags import instructor_enabled
+            from backend.lab.instructor_parse import parse_scan_llm_text
+
+            if instructor_enabled():
+                out = parse_scan_llm_text(text)
+                agent_state.log_source_result(f"llm:{ticker}", True)
+                return out
+        except Exception:
+            pass
         parsed = json.loads(text)
         agent_state.log_source_result(f"llm:{ticker}", True)
         return {

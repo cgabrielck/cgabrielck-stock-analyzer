@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="cgab-paper-controls" content="from-/api/meta" />
   <title>Cgab</title>
   <style>
     :root {
@@ -107,6 +108,10 @@
     .tour-card h2 { margin:8px 0 10px; }
     .hidden { display:none; }
     .icon-btn { width:36px; height:36px; border-radius:50%; border:1px solid var(--line); background:var(--card); color:var(--cyan); cursor:pointer; font-weight:800; }
+    .menu-btn { display:none; }
+    .nav-scrim { display:none; }
+    body.guest .nav-paper { display:none !important; }
+    body.guest #chipEq, body.guest #chipAuto { display:none !important; }
     .prog { margin-top:12px; }
     .prog-top { display:flex; justify-content:space-between; align-items:baseline; gap:12px; font-size:13px; }
     .prog-pct { font-weight:800; color:var(--cyan); font-size:20px; letter-spacing:.02em; }
@@ -144,7 +149,28 @@
     .heat.watch { color:var(--muted); }
     .heat.avoid { color:var(--rose); }
     .phase { font-size:11px; letter-spacing:.12em; text-transform:uppercase; color:var(--cyan); }
-    @media(max-width:1100px){ .kpis,.layout,.grid3,.grid2,.pick-grid,.ticket,.stat-grid{grid-template-columns:1fr;} .shell{grid-template-columns:1fr;} .sidebar{display:none;} }
+    .memo h4 { margin:12px 0 6px; font-size:11px; letter-spacing:.12em; text-transform:uppercase; color:var(--muted); }
+    .memo ul { margin:0; padding-left:18px; color:#cfe8e3; font-size:13px; line-height:1.45; }
+    .role { border:1px solid var(--line); border-radius:12px; padding:10px; margin-top:8px; background:#07141a; }
+    .role.bull { border-color:rgba(62,224,160,.35); }
+    .role.bear { border-color:rgba(255,107,129,.35); }
+    .role.risk { border-color:rgba(231,195,106,.35); }
+    .role .lbl { margin-bottom:4px; }
+    @media(max-width:1100px){
+      .kpis,.layout,.grid3,.grid2,.pick-grid,.ticket,.stat-grid{grid-template-columns:1fr;}
+      .shell{grid-template-columns:1fr;}
+      .menu-btn { display:inline-flex; align-items:center; justify-content:center; }
+      .sidebar {
+        display:none; position:fixed; z-index:35; inset:0 auto 0 0;
+        width:min(280px,86vw); height:100%; overflow:auto;
+      }
+      .sidebar.open { display:flex; }
+      .nav-scrim { position:fixed; inset:0; background:rgba(2,8,10,.55); z-index:34; }
+      .nav-scrim.open { display:block; }
+      .topbar { padding:10px 12px; }
+      .content { padding:14px 12px 28px; }
+      .search { min-width:0; max-width:none; flex:1; }
+    }
   </style>
 </head>
 <body>
@@ -156,14 +182,14 @@
         <div class="nav-head"><span class="nav-ico">N</span><div><div class="nav-k" data-i18n="nav.navigation">Navigation</div><div class="nav-sub" data-i18n="nav.navigation.sub">Workspace</div></div></div>
         <button class="nav-btn on" data-page="desk"><span class="dot"></span><span data-i18n="page.desk">Desk</span></button>
         <button class="nav-btn" data-page="scan"><span class="dot"></span><span data-i18n="page.scan">Scan</span></button>
-        <button class="nav-btn" data-page="orders"><span class="dot"></span><span data-i18n="page.orders">Orders</span></button>
+        <button class="nav-btn nav-paper" data-page="orders"><span class="dot"></span><span data-i18n="page.orders">Orders</span></button>
         <button class="nav-btn" data-page="research"><span class="dot"></span><span data-i18n="page.research">Research</span></button>
         <button class="nav-btn" data-page="market"><span class="dot"></span><span data-i18n="page.market">Market</span></button>
         <button class="nav-btn" data-page="chart"><span class="dot"></span><span data-i18n="page.chart">Chart</span></button>
       </section>
       <section class="nav-group g-apps">
         <div class="nav-head"><span class="nav-ico">A</span><div><div class="nav-k" data-i18n="nav.apps">Apps</div><div class="nav-sub" data-i18n="nav.apps.sub">Automation</div></div></div>
-        <button class="nav-btn" data-page="aimode"><span class="dot"></span><span data-i18n="page.aimode">AI Mode</span></button>
+        <button class="nav-btn nav-paper" data-page="aimode"><span class="dot"></span><span data-i18n="page.aimode">AI Mode</span></button>
         <button class="nav-btn" data-page="strategies"><span class="dot"></span><span data-i18n="page.strategies">Strategies</span></button>
         <button class="nav-btn" data-page="alerts"><span class="dot"></span><span data-i18n="page.alerts">Alerts</span></button>
         <button class="nav-btn" data-page="calendar"><span class="dot"></span><span data-i18n="page.calendar">Calendar</span></button>
@@ -183,8 +209,10 @@
   </aside>
   <section>
     <header class="topbar">
+      <button class="icon-btn menu-btn" id="menuBtn" type="button" aria-label="Menu">☰</button>
       <input id="search" class="search" data-i18n-placeholder="search.ph" placeholder="Search symbol…" />
       <span class="pill" id="chipPaper">PAPER</span>
+      <span class="pill off" id="chipGuest" style="display:none">GUEST</span>
       <span class="pill off" id="chipAuto">AUTO OFF</span>
       <span class="chip" id="chipEq">Equity —</span>
       <div class="lang" role="group" aria-label="Language">
@@ -197,6 +225,7 @@
     <div class="content" id="root"><p class="muted">Loading Cgab…</p></div>
   </section>
 </div>
+<div id="navScrim" class="nav-scrim"></div>
 <div id="tour" class="tour-mask hidden"></div>
 <script>
 const I18N = {
@@ -241,9 +270,9 @@ const I18N = {
     "scan.top5":"Today's top 5",
     "scan.rankings":"Full rankings",
     "scan.empty":"No scan yet. Press Scan all 74 — this takes 1–3 minutes.",
-    "scan.stale":"Scan as-of is past freshness. research_list blocks new buys; Stable keeps last real scores.",
+    "scan.stale":"Scan as-of is past SIGNAL max-age. No new buys; last real fund scores are kept.",
     "scan.fresh":"Fresh scan cache is feeding paper-worker fund scores.",
-    "desk.scan.stale":"Scan past session freshness — research_list will not buy; Stable keeps last real fund scores (as-of). Wait for auto-scan or rescan.",
+    "desk.scan.stale":"Scan/signal as-of past max-age — no new buys; last real fund scores kept. Wait for auto-scan or rescan.",
     "desk.scan.next":"Auto-scan next: {t}",
     "desk.vs_spy":"Paper vs SPY",
     "desk.alpha_net":"Alpha net cost",
@@ -288,21 +317,65 @@ const I18N = {
     "research.stop":"Stop loss",
     "research.targets":"Targets",
     "research.stance":"Stance",
+    "desk.digest":"Daily digest",
+    "desk.digest.hint":"Scan freshness, filled vs working, skip reasons, paper vs SPY. Working orders are not fills.",
+    "desk.digest.scan":"Scan",
+    "desk.digest.filled_today":"Filled today",
+    "desk.digest.pending":"Working (not filled)",
+    "desk.digest.skips":"Why no buy",
+    "desk.digest.not_seal":"Unfilled limits (new/accepted) are not a seal. Only filled shares count.",
+    "desk.tear":"Tear sheet",
+    "desk.tear.hint":"QuantStats-style stats for the paper book or one ticker. Stub if lab extras are off.",
+    "desk.tear.paper":"Paper book",
+    "desk.tear.ticker":"One ticker",
+    "desk.tear.run":"Generate tear",
+    "desk.tear.empty":"No tear yet. Generate the paper book or a ticker.",
+    "desk.tear.stub":"JSON stub (QuantStats package/flag off)",
+    "research.memo":"Research memo",
+    "research.thesis":"Thesis",
+    "research.risks":"Risks",
+    "research.levels":"Levels",
+    "research.sources":"Sources",
+    "research.committee":"Advisory committee",
+    "research.committee.hint":"Bull / Bear / Risk — research only. Never sends an order.",
+    "research.committee.run":"Run committee",
+    "research.tear":"Ticker tear",
+    "research.no_order":"Not an order. LLM cannot bypass RiskEngine.",
     "desk.holdings":"Holdings — broker inventory",
     "desk.holdings.hint":"Alpaca Paper real book (not a model portfolio)",
     "desk.empty":"No positions yet — paper auto only fills when a signal passes every gate.",
     "desk.ticket":"Trade ticket",
     "desk.open":"Open orders",
+    "desk.open.hint":"new / accepted = sent to the broker, not filled yet. The limit must trade before shares hit the book.",
+    "desk.pending":"Working buys: {list}",
     "desk.none":"None",
+    "aimode.pending":"Working buys",
     "desk.risk":"Risk / Ops",
     "desk.llm":"Tune the agent in AI Mode. LLM cannot bypass RiskEngine.",
     "desk.banner.on":"Paper auto is ON",
     "desk.banner.off":"Paper auto is OFF",
     "desk.how":"Start it in AI Mode. AUTO ON in the top bar means the worker heartbeat is fresh.",
+    "guest.desk.title":"Research desk",
+    "guest.desk.lead":"Same Scan, scores, charts, and deep research. Paper trading stays on the owner PC.",
+    "guest.chip":"GUEST",
     "aimode.lead":"Only place to tune the agent and start paper auto trading. LLM cannot bypass RiskEngine / kill / mandate.",
     "aimode.gates":"Gates",
     "aimode.paperonly":"Orders stay on Alpaca paper while PAPER is shown.",
     "aimode.worker":"Paper worker",
+    "aimode.mode.adaptive":"adaptive",
+    "aimode.mode.trend":"trend",
+    "aimode.mode.breakout":"breakout (VCP)",
+    "aimode.mode.research_list":"research_list (Scan top-N)",
+    "aimode.mode.defensive_gld":"defensive_gld (GLD in RED/PANIC)",
+    "aimode.research_hint":"research_list buys the latest Scan top 5 only. Names still need Stage-2, Kelly size, and RiskEngine. Telegram: tap 跟掃描. Saving sliders does not switch a running worker — use Apply & restart.",
+    "aimode.defensive_hint":"defensive_gld is optional. In bear (RED) or high-vol (PANIC) it rotates toward GLD. Still sized by Kelly and RiskEngine. Telegram 跟掃描 will not start this mode.",
+    "aimode.cadence":"Cadence",
+    "aimode.cadence.intraday":"intraday (current 24h demo)",
+    "aimode.cadence.weekly":"weekly (US Monday rebalance + PANIC exception)",
+    "aimode.cadence_hint":"Default stays the current 24h worker. Weekly does not rewrite IGNORE_MARKET_HOURS.",
+    "aimode.scan_picks":"Scan picks",
+    "aimode.need_restart":"Worker is still on {live}. Press Apply & restart to run {want}.",
+    "aimode.restart":"Apply & restart",
     "settings.lang":"Language",
     "alerts.body":"New rules attach to saved research plans. Telegram worker stays the delivery path.",
     "alerts.new":"New rule",
@@ -367,9 +440,9 @@ const I18N = {
     "scan.top5":"今日前 5 名",
     "scan.rankings":"完整排名",
     "scan.empty":"尚無掃描結果。按下「掃描全部 74 檔」— 約需 1–3 分鐘。",
-    "scan.stale":"掃描 as-of 已過新鮮度視窗。research_list 不開新倉；Stable 保留上次真實分數。",
+    "scan.stale":"掃描 as-of 已過 SIGNAL 新鮮度視窗。不開新倉；上次真實分數保留。",
     "scan.fresh":"新鮮掃描快取正提供紙上 worker 基本面分數。",
-    "desk.scan.stale":"掃描超過盤中新鮮度視窗 — research_list 不開新倉；Stable 保留上次真實分數（as-of）。請等自動掃描或手動掃描。",
+    "desk.scan.stale":"掃描／訊號 as-of 超過新鮮度視窗 — 不開新倉；上次真實分數保留。請等自動掃描或手動掃描。",
     "desk.scan.next":"下次自動掃描：{t}",
     "desk.vs_spy":"紙上 vs SPY",
     "desk.alpha_net":"扣成本超额",
@@ -414,21 +487,65 @@ const I18N = {
     "research.stop":"停損",
     "research.targets":"目標價",
     "research.stance":"立場",
+    "desk.digest":"今日日報",
+    "desk.digest.hint":"掃描新鮮度、已成交 vs 待成交、沒買原因、紙上 vs SPY。待成交不算封印。",
+    "desk.digest.scan":"掃描",
+    "desk.digest.filled_today":"今日已成交",
+    "desk.digest.pending":"待成交（未成交）",
+    "desk.digest.skips":"為何沒買",
+    "desk.digest.not_seal":"未成交限價單（new／accepted）不算封印。只有 filled 才入帳。",
+    "desk.tear":"報酬分析",
+    "desk.tear.hint":"紙上組合或單票的 QuantStats 風格指標。沒裝 lab 套件時顯示 JSON 摘要。",
+    "desk.tear.paper":"紙上組合",
+    "desk.tear.ticker":"單票",
+    "desk.tear.run":"產生報酬分析",
+    "desk.tear.empty":"尚無報酬分析。可產生紙上組合或輸入代碼。",
+    "desk.tear.stub":"JSON 摘要（QuantStats 套件／旗標關閉）",
+    "research.memo":"研究備忘錄",
+    "research.thesis":"論點",
+    "research.risks":"風險",
+    "research.levels":"價位",
+    "research.sources":"來源",
+    "research.committee":"顧問委員會",
+    "research.committee.hint":"多頭／空頭／風控 — 僅供研究，永不送單。",
+    "research.committee.run":"跑委員會",
+    "research.tear":"單票報酬",
+    "research.no_order":"不是下單。LLM 不能繞過風控。",
     "desk.holdings":"持倉 — 券商帳本",
     "desk.holdings.hint":"Alpaca 模擬盤真實持倉（不是模型組合）",
     "desk.empty":"尚無持倉 — 紙上自動交易只有訊號通過所有關卡才會成交。",
     "desk.ticket":"下單",
     "desk.open":"未成交訂單",
+    "desk.open.hint":"new／accepted = 已送券商，還沒成交。限價碰到才會入帳。",
+    "desk.pending":"待成交買單：{list}",
     "desk.none":"無",
+    "aimode.pending":"待成交買單",
     "desk.risk":"風險 / 營運",
     "desk.llm":"在 AI 模式調整代理人。LLM 不能繞過風控。",
     "desk.banner.on":"紙上自動交易：開啟",
     "desk.banner.off":"紙上自動交易：關閉",
     "desk.how":"到 AI 模式啟動。頂欄 AUTO ON 代表工作行程心跳正常。",
+    "guest.desk.title":"研究工作台",
+    "guest.desk.lead":"掃描、分數、圖表與深度研究與本機相同。紙上交易只留在擁有者電腦。",
+    "guest.chip":"訪客",
     "aimode.lead":"這裡才調參數並啟動紙上自動交易。LLM 不能繞過風控、緊急停止或授權。",
     "aimode.gates":"關卡",
     "aimode.paperonly":"只要顯示 PAPER，訂單就只會進 Alpaca 模擬盤。",
     "aimode.worker":"紙上工作行程",
+    "aimode.mode.adaptive":"adaptive 適應",
+    "aimode.mode.trend":"trend 趨勢",
+    "aimode.mode.breakout":"breakout VCP 突破",
+    "aimode.mode.research_list":"research_list 跟 Scan 名單",
+    "aimode.mode.defensive_gld":"defensive_gld 紅／恐慌轉 GLD",
+    "aimode.research_hint":"research_list 只買最新掃描前 5 名。標的仍要過 Stage-2、凱利倉位與風控。Telegram 可點「跟掃描」。只按儲存不會改正在跑的策略，請用「套用並重啟」。",
+    "aimode.defensive_hint":"defensive_gld 是可選策略。熊市（RED）或高波動（PANIC）才轉向 GLD。倉位仍走凱利與風控。Telegram「跟掃描」不會啟動此模式。",
+    "aimode.cadence":"節奏",
+    "aimode.cadence.intraday":"intraday（現況全日 demo）",
+    "aimode.cadence.weekly":"weekly（美東週一再平衡＋PANIC 例外）",
+    "aimode.cadence_hint":"預設維持現況全日 worker。週頻不會改寫 IGNORE_MARKET_HOURS。",
+    "aimode.scan_picks":"掃描前五名",
+    "aimode.need_restart":"工作行程仍是 {live}。按「套用並重啟」才會改成 {want}。",
+    "aimode.restart":"套用並重啟",
     "settings.lang":"語言",
     "alerts.body":"新規則會綁在已儲存的研究計畫。Telegram 仍是通知通道。",
     "alerts.new":"新增規則",
@@ -457,6 +574,7 @@ const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
 const root = $("#root");
 let page = "desk", symbol = "AAPL", account = null, worker = null, tourStep = 0, lang = localStorage.getItem("cgab.lang") || "en";
+let paperControls = false, metaState = null;
 const t = (k, vars) => {
   let s = (I18N[lang] && I18N[lang][k]) || I18N.en[k] || k;
   if (vars) Object.entries(vars).forEach(([a,b]) => { s = s.replaceAll("{"+a+"}", b); });
@@ -468,36 +586,95 @@ const explainMsg = () => {
   const e = worker?.explain || {};
   return lang === "zh-TW" ? (e.message_zh || e.message_en || "") : (e.message_en || e.message_zh || "");
 };
+function captureOperatorToken(){
+  const u = new URL(location.href);
+  const tok = u.searchParams.get("op") || u.searchParams.get("desk_operator_token");
+  if(tok){
+    localStorage.setItem("cgab.operator", tok);
+    document.cookie = "DESK_OPERATOR_TOKEN="+encodeURIComponent(tok)+"; path=/; SameSite=Lax";
+    u.searchParams.delete("op");
+    u.searchParams.delete("desk_operator_token");
+    history.replaceState({}, "", u.pathname + u.search + u.hash);
+  }
+}
+function operatorHeaders(extra){
+  const h = {"Content-Type":"application/json", ...(extra||{})};
+  const tok = localStorage.getItem("cgab.operator") || "";
+  if(tok) h["X-Desk-Operator-Token"] = tok;
+  return h;
+}
+function applyRoleChrome(){
+  document.body.classList.toggle("guest", !paperControls);
+  document.body.dataset.paperControls = paperControls ? "1" : "0";
+  const guest = $("#chipGuest");
+  if(guest){
+    guest.style.display = paperControls ? "none" : "";
+    guest.textContent = t("guest.chip");
+  }
+  if(!paperControls && (page==="orders" || page==="aimode")) page = "desk";
+}
+function closeMobileNav(){
+  const side = document.querySelector(".sidebar");
+  const scrim = $("#navScrim");
+  if(side) side.classList.remove("open");
+  if(scrim) scrim.classList.remove("open");
+}
 function applyChrome(){
   document.documentElement.lang = lang === "zh-TW" ? "zh-Hant" : "en";
   $$("[data-i18n]").forEach(el => el.textContent = t(el.dataset.i18n));
   $$("[data-i18n-placeholder]").forEach(el => el.placeholder = t(el.dataset.i18nPlaceholder));
   $("#langEn").classList.toggle("on", lang==="en");
   $("#langZh").classList.toggle("on", lang==="zh-TW");
-  const on = !!(worker && worker.running);
+  const on = !!(paperControls && worker && worker.running);
   const stale = !!(worker && worker.stale);
   const auto = $("#chipAuto");
   auto.textContent = on ? "AUTO ON" : "AUTO OFF";
   auto.className = "pill" + (on && !stale ? "" : stale ? " warn" : " off");
-  const paper = worker?.paper !== false;
+  const paper = (metaState?.paper !== false) && (worker?.paper !== false);
   $("#chipPaper").style.display = paper ? "" : "none";
   $("#paperPill").style.display = paper ? "" : "none";
+  applyRoleChrome();
 }
 async function api(path, opt={}) {
-  const res = await fetch(path, { headers: {"Content-Type":"application/json"}, ...opt });
+  const headers = operatorHeaders(opt.headers||{});
+  const res = await fetch(path, { credentials:"include", ...opt, headers });
   const data = await res.json().catch(()=>({}));
   if (!res.ok) throw new Error(typeof data.detail==="string"?data.detail:JSON.stringify(data.detail||res.statusText));
   return data;
 }
-async function loadAccount(){ try { account = await api("/api/account"); $("#chipEq").textContent = money(account.equity||account.portfolio_value); } catch(e){ account=null; } }
-async function loadWorker(){ try { worker = await api("/api/worker/status"); } catch(e){ worker={running:false,explain:{message_en:e.message,message_zh:e.message}}; } applyChrome(); }
-function navTo(p){ page=p; $$(".nav-btn[data-page]").forEach(b=>b.classList.toggle("on", b.dataset.page===p)); render(); }
+async function loadAccount(){
+  if(!paperControls){ account=null; $("#chipEq").textContent="Equity —"; return; }
+  try { account = await api("/api/account"); $("#chipEq").textContent = money(account.equity||account.portfolio_value); } catch(e){ account=null; }
+}
+async function loadWorker(){
+  if(!paperControls){ worker={paper: metaState?.paper !== false, running:false}; applyChrome(); return; }
+  try { worker = await api("/api/worker/status"); } catch(e){ worker={running:false,explain:{message_en:e.message,message_zh:e.message}}; } applyChrome();
+}
+function navTo(p){
+  if(!paperControls && (p==="orders" || p==="aimode")) p = "desk";
+  page=p;
+  $$(".nav-btn[data-page]").forEach(b=>b.classList.toggle("on", b.dataset.page===p));
+  closeMobileNav();
+  render();
+}
 $$(".nav-btn[data-page]").forEach(b=>b.onclick=()=>navTo(b.dataset.page));
 $("#refresh").onclick=async()=>{ await Promise.all([loadAccount(), loadWorker()]); render(); };
 $("#search").addEventListener("keydown", e=>{ if(e.key==="Enter"){ symbol=e.target.value.toUpperCase(); navTo("research"); }});
 $("#langEn").onclick=()=>{ lang="en"; localStorage.setItem("cgab.lang", lang); applyChrome(); render(); };
 $("#langZh").onclick=()=>{ lang="zh-TW"; localStorage.setItem("cgab.lang", lang); applyChrome(); render(); };
 $("#helpBtn").onclick=()=>{ tourStep=0; showTour(); };
+const menuBtn = $("#menuBtn");
+if(menuBtn){
+  menuBtn.onclick=()=>{
+    const side = document.querySelector(".sidebar");
+    const scrim = $("#navScrim");
+    const open = side && !side.classList.contains("open");
+    if(side) side.classList.toggle("open", !!open);
+    if(scrim) scrim.classList.toggle("open", !!open);
+  };
+}
+const navScrim = $("#navScrim");
+if(navScrim) navScrim.onclick=()=>closeMobileNav();
 
 function showTour(){
   const total=6;
@@ -544,23 +721,27 @@ function autoBanner(){
   const skipLine = skipKeys.length
     ? `<p class="muted" style="margin:8px 0 0">${t("aimode.why")}: ${skipKeys.map(k=>`${k}×${skips[k]}`).join(" · ")}</p>`
     : "";
+  const pending = (worker?.pending_buys || []).filter(Boolean);
+  const pendingLine = pending.length
+    ? `<p class="muted" style="margin:8px 0 0">${t("desk.pending",{list: pending.join(" · ")})}</p>`
+    : "";
   return `<div class="banner ${on?"":"off"} ${scanStale?"warn":""}">
     <div>
       <h2><span class="status-dot ${on?"on":""}"></span>${on?t("desk.banner.on"):t("desk.banner.off")}</h2>
       <p class="muted" style="margin:0">${explainMsg() || t("desk.how")}</p>
       <p class="muted" style="margin:8px 0 0">mode=${worker?.mode||"paper"} · hours=${worker?.market_hours?"RTH":"off-hours"} · heartbeat=${worker?.heartbeat_age_sec??"—"}s</p>
-      ${asOfLine}${staleLine}${nextLine}${skipLine}
+      ${asOfLine}${staleLine}${nextLine}${pendingLine}${skipLine}
     </div>
     <div class="row">
-      ${on?`<button class="btn ghost" id="banStop">${t("btn.stop")}</button>`:`<button class="btn" id="banStart">${t("btn.start")}</button>`}
-      <button class="btn purple" id="banAi">${t("page.aimode")}</button>
+      ${paperControls ? (on?`<button class="btn ghost" id="banStop">${t("btn.stop")}</button>`:`<button class="btn" id="banStart">${t("btn.start")}</button>`) : ""}
+      ${paperControls ? `<button class="btn purple" id="banAi">${t("page.aimode")}</button>` : ""}
       <button class="btn ghost" id="banScan">${t("page.scan")}</button>
     </div>
   </div>`;
 }
 function bindBanner(){
   const s=$("#banStart"), k=$("#banStop"), a=$("#banAi"), sc=$("#banScan");
-  if(s) s.onclick=async()=>{ try{ worker=await api("/api/worker/start",{method:"POST",body:JSON.stringify({strategy:"stable",interval:60})}); applyChrome(); render(); }catch(e){ alert(e.message);} };
+  if(s) s.onclick=async()=>{ try{ const cfg=await api("/api/ai-mode"); worker=await api("/api/worker/start",{method:"POST",body:JSON.stringify({strategy:cfg.strategy||"adaptive",interval:60})}); applyChrome(); render(); }catch(e){ alert(e.message);} };
   if(k) k.onclick=async()=>{ try{ worker=await api("/api/worker/stop",{method:"POST",body:"{}"}); applyChrome(); render(); }catch(e){ alert(e.message);} };
   if(a) a.onclick=()=>navTo("aimode");
   if(sc) sc.onclick=()=>navTo("scan");
@@ -587,12 +768,22 @@ async function render(){
 }
 
 async function desk(){
+  if(!paperControls) return guestDesk();
   if(!account) await loadAccount();
   if(!worker) await loadWorker();
-  let ops={}, perf={}, orders=[];
-  try { ops = await api("/api/ops"); } catch{}
-  try { perf = await api("/api/performance?refresh=1"); } catch{}
-  try { orders = (await api("/api/orders?status=open")).orders||[]; } catch{}
+  let ops={}, perf={}, orders=[], digest={}, tear={};
+  const settled = await Promise.allSettled([
+    api("/api/ops"),
+    api("/api/performance?refresh=1"),
+    api("/api/orders?status=open"),
+    api("/api/digest"),
+    api("/api/lab/tear"),
+  ]);
+  if (settled[0].status === "fulfilled") ops = settled[0].value || {};
+  if (settled[1].status === "fulfilled") perf = settled[1].value || {};
+  if (settled[2].status === "fulfilled") orders = (settled[2].value || {}).orders || [];
+  if (settled[3].status === "fulfilled") digest = settled[3].value || {};
+  if (settled[4].status === "fulfilled") tear = settled[4].value || {};
   if(page!=="desk") return;
   const pos = account?.positions||[];
   const eq = account?.equity||account?.portfolio_value||0;
@@ -631,6 +822,8 @@ async function desk(){
       ${alphaLine}
       <p class="muted" style="margin:8px 0 0">${esc(paper.disclaimer||"")}</p>
     </div>
+    ${digestCard(digest)}
+    ${tearCard(tear)}
     <div class="grid3">
       <div class="card"><div class="lbl">Win rate</div><div class="val">${perf.win_rate_pct??"—"}%</div></div>
       <div class="card"><div class="lbl">Profit factor</div><div class="val">${perf.profit_factor??"—"}</div></div>
@@ -656,7 +849,13 @@ async function desk(){
           <button class="btn" id="tsub" style="margin-top:10px;width:100%">${t("btn.submit")}</button>
           <p class="muted" id="tmsg"></p>
         </div>
-        <div class="card" style="margin-bottom:12px"><h3>${t("desk.open")}</h3>${orders.length?orders.slice(0,6).map(o=>`<div class="row" style="justify-content:space-between"><span>${o.side} ${o.qty} ${o.symbol}</span><button class="btn ghost cancel" data-id="${o.id}">Cancel</button></div>`).join(""):`<p class="muted">${t("desk.none")}</p>`}</div>
+        <div class="card" style="margin-bottom:12px"><h3>${t("desk.open")}</h3>
+          <p class="muted">${t("desk.open.hint")}</p>
+          ${orders.length?orders.slice(0,8).map(o=>{
+            const px = o.limit_price!=null && o.limit_price!=="" ? ` @ $${Number(o.limit_price).toFixed(2)}` : "";
+            const st = o.status ? ` · ${o.status}` : "";
+            return `<div class="row" style="justify-content:space-between"><span>${o.symbol} ${o.side} ${o.qty||o.quantity||""}${px}${st}</span><button class="btn ghost cancel" data-id="${o.id}">Cancel</button></div>`;
+          }).join(""):`<p class="muted">${t("desk.none")}</p>`}</div>
         <div class="card"><h3>${t("desk.risk")}</h3><p class="muted">Kill switch ${ops.kill_switch?"ON":"OFF"}</p>
           <div class="row"><button class="btn danger" id="halt">${t("btn.halt")}</button><button class="btn ghost" id="resume">${t("btn.resume")}</button></div>
           <p class="muted" style="margin-top:8px">${t("desk.llm")}</p>
@@ -678,14 +877,49 @@ async function desk(){
   $("#halt").onclick=async()=>{ await api("/api/ops/kill",{method:"POST"}); desk(); };
   $("#resume").onclick=async()=>{ await api("/api/ops/resume",{method:"POST"}); desk(); };
   root.querySelectorAll(".cancel").forEach(b=>b.onclick=async()=>{ await api(`/api/orders/${b.dataset.id}/cancel`,{method:"POST"}); desk(); });
+  bindTearActions();
+}
+
+async function guestDesk(){
+  let scan={}, tear={};
+  try { scan = await api("/api/scan/latest"); } catch{}
+  try { tear = await api("/api/lab/tear?ticker="+encodeURIComponent(symbol||"AAPL")); } catch{}
+  if(page!=="desk") return;
+  const ranks = (scan.rankings||scan.recommendations||[]).slice(0,8);
+  root.innerHTML = `
+    <div class="banner">
+      <div>
+        <h2>${t("guest.desk.title")}</h2>
+        <p class="muted" style="margin:0">${t("guest.desk.lead")}</p>
+        <p class="muted" style="margin:8px 0 0">as-of ${esc(String(scan.ts||scan.scan_ts||"—").replace("T"," ").slice(0,19))}</p>
+      </div>
+      <div class="row">
+        <button class="btn" id="banScan">${t("page.scan")}</button>
+        <button class="btn ghost" id="banResearch">${t("page.research")}</button>
+      </div>
+    </div>
+    <div class="card" style="margin-bottom:14px">
+      <h3>${t("page.scan")}</h3>
+      <table><thead><tr><th>#</th><th>Symbol</th><th>Score</th></tr></thead>
+      <tbody>${ranks.length?ranks.map((r,i)=>`<tr class="open" data-s="${esc(r.ticker||r.symbol||"")}" style="cursor:pointer"><td>${i+1}</td><td>${esc(r.ticker||r.symbol||"")}</td><td>${num(r.total_score??r.fund_score??r.score)}</td></tr>`).join(""):`<tr><td colspan="3" class="muted">${t("desk.none")}</td></tr>`}</tbody></table>
+    </div>
+    ${tearCard(tear)}
+  `;
+  const sc=$("#banScan"), rs=$("#banResearch");
+  if(sc) sc.onclick=()=>navTo("scan");
+  if(rs) rs.onclick=()=>navTo("research");
+  root.querySelectorAll(".open").forEach(b=>b.onclick=()=>{symbol=b.dataset.s; navTo("research");});
+  bindTearActions();
 }
 
 async function orders(){
+  if(!paperControls) return guestDesk();
   const d = await api("/api/orders?status=all");
   const rows = d.orders||[];
   root.innerHTML = `<div class="card"><h3>${t("page.orders")}</h3>
-    <table><thead><tr><th>Symbol</th><th>Side</th><th>Qty</th><th>Type</th><th>Status</th></tr></thead>
-    <tbody>${rows.map(o=>`<tr><td>${o.symbol}</td><td>${o.side}</td><td>${o.qty||o.quantity}</td><td>${o.type||o.order_type||""}</td><td>${o.status}</td></tr>`).join("")||`<tr><td class="muted">${t("desk.none")}</td></tr>`}</tbody></table></div>`;
+    <p class="muted">${t("desk.open.hint")}</p>
+    <table><thead><tr><th>Symbol</th><th>Side</th><th>Qty</th><th>Limit</th><th>Type</th><th>Status</th></tr></thead>
+    <tbody>${rows.map(o=>`<tr><td>${o.symbol}</td><td>${o.side}</td><td>${o.qty||o.quantity||""}</td><td>${o.limit_price!=null?("$"+Number(o.limit_price).toFixed(2)):"—"}</td><td>${o.type||o.order_type||""}</td><td>${o.status||""}</td></tr>`).join("")||`<tr><td class="muted">${t("desk.none")}</td></tr>`}</tbody></table></div>`;
 }
 
 let deepSelected = [];
@@ -835,6 +1069,129 @@ function provenanceChip(p){
   const fb = p.fallback ? " · yahoo fallback" : "";
   const llm = p.llm_overlay ? " · LLM" : "";
   return `<span class="chip" title="${esc(p.note||p.price_source||"")}">${esc(vendor)} · as-of ${esc(asOf)}${stale}${fb}${llm}</span>`;
+}
+function digestCard(d){
+  const scan = d.scan || {};
+  const book = d.book || {};
+  const skips = d.skips || {};
+  const pnl = d.pnl || d.benchmark || {};
+  const filledList = book.filled_today || (d.filled && d.filled.symbols) || [];
+  const pendingList = book.pending || (d.pending && d.pending.symbols) || [];
+  const filledN = book.filled_today_count ?? (d.filled && d.filled.count) ?? filledList.length;
+  const pendingN = book.pending_count ?? (d.pending && d.pending.count) ?? pendingList.length;
+  const top5 = (scan.top5||[]).join(" · ") || "—";
+  const skipTxt = lang==="zh-TW" ? (skips.summary_zh||"—") : (skips.summary_en||"—");
+  const fresh = lang==="zh-TW" ? (scan.fresh_label_zh||"—") : (scan.fresh_label_en||"—");
+  const filled = filledList.join(" · ") || t("desk.none");
+  const pending = pendingList.join(" · ") || t("desk.none");
+  const disc = lang==="zh-TW" ? (d.disclaimer_zh||"") : (d.disclaimer_en||"");
+  const dayChip = d.session_date_et || d.as_of_date || "—";
+  return `<div class="card" style="margin-bottom:14px">
+    <div class="row" style="justify-content:space-between">
+      <h3 style="margin:0">${t("desk.digest")}</h3>
+      <span class="chip">${esc(dayChip)}</span>
+    </div>
+    <p class="muted">${t("desk.digest.hint")}</p>
+    <div class="grid3" style="margin-top:8px">
+      <div class="stat"><div class="lbl">${t("desk.digest.scan")}</div><div class="val" style="font-size:16px">${esc(fresh)}</div><div class="muted">${esc(String(scan.as_of||"—").replace("T"," ").slice(0,19))}<br>${esc(top5)}</div></div>
+      <div class="stat"><div class="lbl">${t("desk.digest.filled_today")}</div><div class="val" style="font-size:16px">${filledN}</div><div class="muted">${esc(filled)}</div></div>
+      <div class="stat"><div class="lbl">${t("desk.digest.pending")}</div><div class="val" style="font-size:16px">${pendingN}</div><div class="muted">${esc(pending)}</div></div>
+    </div>
+    <p class="muted">${t("desk.digest.skips")}: ${esc(skipTxt)}</p>
+    <p class="muted">${t("desk.alpha_net")}: ${pnl.alpha_net_of_costs_pct==null?"—":num(pnl.alpha_net_of_costs_pct,2)+"%"}${pnl.beats_spy_net===false?" · "+t("desk.no_alpha"):""}</p>
+    <p class="muted" style="color:#e8b86d">${t("desk.digest.not_seal")}</p>
+    <p class="muted">${esc(disc)}</p>
+  </div>`;
+}
+function tearCard(tear){
+  const sum = tear.summary || {};
+  const scope = tear.scope === "ticker" ? t("desk.tear.ticker") : t("desk.tear.paper");
+  const empty = !tear.complete && !(sum.n_days);
+  const engineNote = tear.engine && String(tear.engine).indexOf("stub")>=0 ? t("desk.tear.stub") : (tear.engine||"");
+  const spark = tearSpark(tear.curve_tail||[]);
+  return `<div class="card" style="margin-bottom:14px">
+    <div class="row" style="justify-content:space-between">
+      <h3 style="margin:0">${t("desk.tear")}</h3>
+      <span class="chip">${esc(scope)}${tear.ticker?" · "+esc(tear.ticker):""}</span>
+    </div>
+    <p class="muted">${t("desk.tear.hint")}</p>
+    ${empty?`<p class="muted">${t("desk.tear.empty")}</p>`:`
+      <div class="grid3" style="margin-top:8px">
+        <div class="stat"><div class="lbl">Return</div><div class="val ${cls(sum.total_return_pct)}">${sum.total_return_pct==null?"—":num(sum.total_return_pct,2)+"%"}</div></div>
+        <div class="stat"><div class="lbl">Sharpe</div><div class="val">${sum.sharpe==null?"—":num(sum.sharpe,2)}</div></div>
+        <div class="stat"><div class="lbl">Max DD</div><div class="val">${sum.max_drawdown_pct==null?"—":num(sum.max_drawdown_pct,1)+"%"}</div></div>
+        <div class="stat"><div class="lbl">Vol</div><div class="val">${sum.vol_pct==null?"—":num(sum.vol_pct,1)+"%"}</div></div>
+        <div class="stat"><div class="lbl">SPY</div><div class="val ${cls(sum.spy_return_pct)}">${sum.spy_return_pct==null?"—":num(sum.spy_return_pct,2)+"%"}</div></div>
+        <div class="stat"><div class="lbl">α</div><div class="val ${cls(sum.alpha_pct)}">${sum.alpha_pct==null?"—":num(sum.alpha_pct,2)+"%"}</div></div>
+      </div>
+      ${spark}
+      <p class="muted" style="margin-top:8px">${esc(engineNote)} · n=${sum.n_days??"—"}</p>`}
+    <div class="row" style="margin-top:10px">
+      <input id="tearSym" class="search" style="max-width:140px" placeholder="AAPL" />
+      ${paperControls?`<button class="btn" id="tearPaper">${t("desk.tear.paper")}</button>`:""}
+      <button class="btn ghost" id="tearTicker">${t("desk.tear.run")}</button>
+    </div>
+    <p class="muted" id="tearMsg"></p>
+  </div>`;
+}
+function tearSpark(tail){
+  const vals = (tail||[]).map(r=>Number(r.equity)).filter(v=>!isNaN(v));
+  if(vals.length<3) return "";
+  const max=Math.max(...vals), min=Math.min(...vals), span=max-min||1;
+  return `<div class="bars" style="height:72px;margin-top:10px">${vals.slice(-40).map(v=>`<div class="bar" style="height:${((v-min)/span)*100}%"></div>`).join("")}</div>`;
+}
+async function bindTearActions(){
+  const msg = $("#tearMsg");
+  const run = async (ticker) => {
+    if(msg) msg.textContent = lang==="zh-TW" ? "產生中…" : "Generating…";
+    try {
+      await api("/api/lab/tear",{method:"POST",body:JSON.stringify(ticker?{ticker}:{})});
+      if(page==="desk") desk();
+    } catch(e){
+      if(msg) msg.textContent = e.message;
+    }
+  };
+  const paper = $("#tearPaper");
+  if(paper) paper.onclick=()=>run(null);
+  const one = $("#tearTicker");
+  if(one) one.onclick=()=>{
+    const v = ($("#tearSym")&&$("#tearSym").value||"").toUpperCase().trim();
+    if(!v){ if(msg) msg.textContent = lang==="zh-TW"?"請輸入代碼":"Enter a ticker"; return; }
+    run(v);
+  };
+}
+function memoBlock(memo){
+  if(!memo) return "";
+  const lis = (arr)=> (arr||[]).map(x=>`<li>${esc(x)}</li>`).join("") || "<li>—</li>";
+  const lv = memo.levels||{};
+  const tgt = (lv.targets||[]).map(x=>num(x,2)).join(" / ") || "—";
+  return `<div class="memo">
+    <h4>${t("research.memo")}</h4>
+    <p class="muted">${esc(lang==="zh-TW"?(memo.disclaimer_zh||t("research.no_order")):(memo.disclaimer_en||t("research.no_order")))}</p>
+    <h4>${t("research.thesis")}</h4><ul>${lis(memo.thesis)}</ul>
+    <h4>${t("research.risks")}</h4><ul>${lis(memo.risks)}</ul>
+    <h4>${t("research.levels")}</h4>
+    <p class="muted">${t("research.entry")} ${num(lv.entry_low,2)} – ${num(lv.entry_high,2)} · ${t("research.stop")} ${num(lv.stop_loss,2)} · T ${esc(tgt)}</p>
+    <h4>${t("research.sources")}</h4><ul>${lis(memo.sources)}</ul>
+  </div>`;
+}
+function committeeBlock(adv, ticker){
+  const roles = (adv&&adv.roles)||[];
+  const body = roles.map(r=>{
+    const role = String(r.role||"");
+    const pts = (r.key_points||[]).slice(0,3).map(p=>`<li>${esc(p)}</li>`).join("");
+    return `<div class="role ${esc(role)}"><div class="lbl">${esc(role.toUpperCase())} · ${num(r.confidence,2)}</div><div>${esc(r.thesis||"")}</div><ul>${pts}</ul></div>`;
+  }).join("");
+  return `<div style="margin-top:10px">
+    <h4 class="lbl">${t("research.committee")}</h4>
+    <p class="muted">${t("research.committee.hint")}</p>
+    ${body||`<p class="muted">${t("research.empty")}</p>`}
+    <div class="row" style="margin-top:8px">
+      <button class="btn purple runAdv" data-s="${esc(ticker)}">${t("research.committee.run")}</button>
+      <button class="btn ghost runTearT" data-s="${esc(ticker)}">${t("research.tear")}</button>
+    </div>
+    <p class="muted">${t("research.no_order")}</p>
+  </div>`;
 }
 
 function renderScanBody(latest, job){
@@ -1046,6 +1403,8 @@ function renderResearchBody(universe, deep, job){
           ${sec.summary?`<p class="muted" style="margin-top:8px">${t("research.sec")}: ${esc(String(sec.summary).slice(0,220))}</p>`:""}
           ${newsTape(r.news)}
           <p class="muted" style="margin-top:8px">quant ${num(r.quant_score)} · risk-adj ${num(r.risk_adjusted_score)}</p>
+          ${memoBlock(r.memo)}
+          ${committeeBlock(r.advisory, sym)}
           <button class="btn ghost open" data-s="${esc(sym)}" style="margin-top:8px">${t("research.chart")}</button>
         </div>`;
       }).join("")||`<div class="card"><p class="muted">${t("research.empty")}</p></div>`}
@@ -1071,6 +1430,33 @@ async function research(){
       refreshSel();
     };
     root.querySelectorAll(".open").forEach(b=>b.onclick=()=>{symbol=b.dataset.s; navTo("chart");});
+    root.querySelectorAll(".runAdv").forEach(b=>b.onclick=async()=>{
+      const sym = b.dataset.s;
+      const r = (deep.reports||{})[sym]||{};
+      try{
+        const res = await api("/api/lab/advisory",{method:"POST",body:JSON.stringify({
+          ticker: sym,
+          fund_score: r.risk_adjusted_score || r.quant_score || 50,
+          context: (r.trade_plan&&r.trade_plan.stance)||"",
+          product: true,
+          use_llm: false
+        })});
+        deep.reports = deep.reports||{};
+        deep.reports[sym] = {
+          ...r,
+          advisory: {roles: res.roles||[], engine: res.engine, llm_used: res.llm_used, places_order: false},
+          memo: res.memo || r.memo
+        };
+        paint();
+      }catch(e){ alert(e.message); }
+    });
+    root.querySelectorAll(".runTearT").forEach(b=>b.onclick=async()=>{
+      const sym = b.dataset.s;
+      try{
+        await api("/api/lab/tear",{method:"POST",body:JSON.stringify({ticker:sym})});
+        navTo("desk");
+      }catch(e){ alert(e.message); }
+    });
     const run = $("#runDeep");
     if(run) run.onclick=async()=>{
       if(!deepSelected.length){ alert("Select tickers"); return; }
@@ -1132,28 +1518,43 @@ async function chart(){
 }
 
 async function aimode(){
+  if(!paperControls) return guestDesk();
   const cfg = await api("/api/ai-mode");
   await loadWorker();
   const sigs = (worker?.last_signals||[]).slice(-6);
+  const modes = ["adaptive","trend","breakout","research_list","defensive_gld"];
+  const alias = {hybrid:"adaptive", aggressive:"breakout"};
+  const active = alias[cfg.strategy] || cfg.strategy || "breakout";
+  const live = alias[worker?.strategy] || worker?.strategy || "";
+  const cadence = cfg.cadence || worker?.cadence || "intraday";
+  const picks = (worker?.research?.top5_tickers || worker?.scan_top5 || []).slice(0,5);
+  const pickLine = picks.length ? picks.join(" · ") : "—";
+  const modeHint = active === "defensive_gld" ? t("aimode.defensive_hint") : t("aimode.research_hint");
   root.innerHTML = `${autoBanner()}<div class="layout"><div class="card"><h3>${t("page.aimode")}</h3>
     <p class="muted">${t("aimode.lead")}</p>
-    <div class="row" id="strats">${["stable","aggressive","hybrid","research_list"].map(s=>`<button class="tab ${cfg.strategy===s?"on":""}" data-s="${s}">${s}</button>`).join("")}</div>
+    <p class="muted" id="modeHint">${modeHint}</p>
+    <p class="muted">${t("aimode.cadence_hint")}</p>
+    <div class="row" id="strats">${modes.map(s=>`<button class="tab ${active===s?"on":""}" data-s="${s}">${t("aimode.mode."+s)}</button>`).join("")}</div>
+    <p class="muted">${t("aimode.scan_picks")}: ${pickLine}</p>
+    ${worker?.running && live && live!==active ? `<p class="muted" style="color:#e8b86d">${t("aimode.need_restart",{live, want:active})}</p>`:""}
     <label class="field">LLM influence % <input id="llm" type="range" min="0" max="40" value="${cfg.llm_influence}" /> <span id="llmv">${cfg.llm_influence}%</span></label>
-    <label class="field">Entry threshold <input id="th" type="number" value="${cfg.entry_threshold}" /></label>
+    <label class="field">Entry threshold (research_list fund) <input id="th" type="number" value="${cfg.entry_threshold}" /></label>
     <label class="field">Max positions <input id="mp" type="number" value="${cfg.max_positions}" /></label>
     <label class="field">Risk <select id="rt"><option>low</option><option>medium</option><option>high</option></select></label>
+    <label class="field">${t("aimode.cadence")} <select id="cd"><option value="intraday">${t("aimode.cadence.intraday")}</option><option value="weekly">${t("aimode.cadence.weekly")}</option></select></label>
     <div class="row" style="margin-top:12px">
       <button class="btn" id="save">${t("btn.save")}</button>
-      ${worker?.running?`<button class="btn ghost" id="wstop">${t("btn.stop")}</button>`:`<button class="btn purple" id="wstart">${t("btn.start")}</button>`}
+      ${worker?.running?`<button class="btn ghost" id="wstop">${t("btn.stop")}</button><button class="btn purple" id="wrestart">${t("aimode.restart")}</button>`:`<button class="btn purple" id="wstart">${t("btn.start")}</button>`}
     </div>
     <p class="muted" id="sm"></p>
     </div><div>
       <div class="card" style="margin-bottom:12px"><h3>${t("aimode.worker")}</h3>
-        <p>AUTO ${worker?.running?"ON":"OFF"} · PAPER ${worker?.paper!==false?"YES":"NO"}</p>
+        <p>AUTO ${worker?.running?"ON":"OFF"} · PAPER ${worker?.paper!==false?"YES":"NO"} · ${live||"—"}</p>
         <p class="muted">${explainMsg()}</p>
         <p class="muted">${t("aimode.cap")}: ${worker?.fetched??"—"} / cap ${worker?.universe_cap??"—"} / ${worker?.universe_size??"—"}</p>
-        <p class="muted">market hours: ${worker?.market_hours?"yes":"no"} · ignore hours: ${worker?.ignore_market_hours?"yes":"no"}</p>
+        <p class="muted">market hours: ${worker?.market_hours?"yes":"no"} · ignore hours: ${worker?.ignore_market_hours?"yes":"no"} · cadence: ${worker?.cadence||cadence||"—"}</p>
         <p class="muted">last run: ${worker?.last_run||"—"}</p>
+        <p class="muted">${t("aimode.pending")}: ${(worker?.pending_buys||[]).join(" · ") || "—"}</p>
         ${(() => { const sk=worker?.skip_counts||{}; const ks=Object.keys(sk).filter(k=>sk[k]>0).sort((a,b)=>sk[b]-sk[a]); return ks.length?`<p class="muted">${t("aimode.why")}: ${ks.map(k=>`${k}×${sk[k]}`).join(" · ")}</p>`:""; })()}
       </div>
       <div class="card"><h3>${t("aimode.gates")}</h3>
@@ -1165,24 +1566,60 @@ async function aimode(){
     </div></div>`;
   bindBanner();
   $("#rt").value = cfg.risk_tolerance||"medium";
-  let strategy=cfg.strategy;
-  root.querySelectorAll("#strats .tab").forEach(b=>b.onclick=()=>{strategy=b.dataset.s; root.querySelectorAll("#strats .tab").forEach(x=>x.classList.toggle("on",x===b));});
+  $("#cd").value = cadence==="weekly"?"weekly":"intraday";
+  let strategy=active;
+  root.querySelectorAll("#strats .tab").forEach(b=>b.onclick=()=>{
+    strategy=b.dataset.s;
+    root.querySelectorAll("#strats .tab").forEach(x=>x.classList.toggle("on",x===b));
+    const hint=$("#modeHint");
+    if(hint) hint.textContent = strategy==="defensive_gld" ? t("aimode.defensive_hint") : t("aimode.research_hint");
+  });
   $("#llm").oninput=()=>$("#llmv").textContent=$("#llm").value+"%";
+  const persistMode = () => api("/api/ai-mode",{method:"PUT",body:JSON.stringify({strategy,llm_influence:Number($("#llm").value),entry_threshold:Number($("#th").value),max_positions:Number($("#mp").value),risk_tolerance:$("#rt").value,worker_enabled:!!worker?.running,ignore_market_hours:!!worker?.ignore_market_hours,cadence:$("#cd").value})});
   $("#save").onclick=async()=>{
-    await api("/api/ai-mode",{method:"PUT",body:JSON.stringify({strategy,llm_influence:Number($("#llm").value),entry_threshold:Number($("#th").value),max_positions:Number($("#mp").value),risk_tolerance:$("#rt").value,worker_enabled:!!worker?.running,ignore_market_hours:!!worker?.ignore_market_hours})});
-    $("#sm").textContent = lang==="zh-TW" ? "已儲存（尚未啟動機器人）。" : "Saved (does not start the worker).";
+    await persistMode();
+    $("#sm").textContent = lang==="zh-TW"
+      ? (worker?.running ? "已儲存。正在跑的策略要按「套用並重啟」才會換。節奏下輪生效，不必重啟。" : "已儲存（尚未啟動機器人）。")
+      : (worker?.running ? "Saved. A running worker needs Apply & restart to switch modes. Cadence applies next cycle." : "Saved (does not start the worker).");
   };
-  const st=$("#wstart"), sp=$("#wstop");
-  if(st) st.onclick=async()=>{ try{ worker=await api("/api/worker/start",{method:"POST",body:JSON.stringify({strategy,interval:60})}); applyChrome(); aimode(); }catch(e){ $("#sm").textContent=e.message; } };
+  const st=$("#wstart"), sp=$("#wstop"), rst=$("#wrestart");
+  if(st) st.onclick=async()=>{ try{ await persistMode(); worker=await api("/api/worker/start",{method:"POST",body:JSON.stringify({strategy,interval:60})}); applyChrome(); aimode(); }catch(e){ $("#sm").textContent=e.message; } };
   if(sp) sp.onclick=async()=>{ try{ worker=await api("/api/worker/stop",{method:"POST",body:"{}"}); applyChrome(); aimode(); }catch(e){ $("#sm").textContent=e.message; } };
+  if(rst) rst.onclick=async()=>{ try{ await persistMode(); worker=await api("/api/worker/start",{method:"POST",body:JSON.stringify({strategy,interval:60,restart:true})}); applyChrome(); aimode(); }catch(e){ $("#sm").textContent=e.message; } };
 }
 
 async function strategies(){
-  const p = await api("/api/performance");
-  root.innerHTML = `<div class="card"><h3>${t("page.strategies")}</h3><p class="muted">Stable strategy backtest snapshot</p>
-    <div class="grid3"><div class="card"><div class="lbl">Return</div><div class="val">${p.total_return_pct??"—"}%</div></div>
-    <div class="card"><div class="lbl">Sharpe</div><div class="val">${p.sharpe_ratio??"—"}</div></div>
-    <div class="card"><div class="lbl">Trades</div><div class="val">${p.num_trades??"—"}</div></div></div></div>`;
+  let rows=[], disclaimer="";
+  try {
+    const b = await api("/api/strategy-bakeoff");
+    rows = b.rows || [];
+    disclaimer = b.disclaimer || "";
+  } catch {
+    if(paperControls){
+      try {
+        const p = await api("/api/performance");
+        rows = [{
+          strategy: "paper snapshot",
+          sizing: "—",
+          return_pct: p.total_return_pct,
+          spy_pct: p.spy_return_pct,
+          alpha_net: p.alpha_net_of_costs_pct,
+          trades: p.num_trades,
+          sharpe: p.sharpe_ratio,
+        }];
+      } catch {}
+    }
+  }
+  root.innerHTML = `<div class="card"><h3>${t("page.strategies")}</h3>
+    <p class="muted">Mode bakeoff vs SPY (risk/fixed sizing).</p>
+    ${disclaimer?`<p class="muted" style="color:#e8b86d">${esc(disclaimer)}</p>`:""}
+    <table><thead><tr><th>Mode</th><th>Sizing</th><th>Return</th><th>SPY</th><th>Alpha net</th><th>Cash%</th><th>Trades</th><th>Sharpe</th><th>MaxDD</th></tr></thead>
+    <tbody>${rows.map(r=>`<tr>
+      <td>${esc(r.strategy||"—")}</td><td>${esc(r.sizing||"—")}</td>
+      <td>${r.return_pct??"—"}%</td><td>${r.spy_pct??"—"}%</td><td>${r.alpha_net??"—"}%</td>
+      <td>${r.avg_cash_pct??"—"}</td><td>${r.trades??"—"}</td><td>${r.sharpe??"—"}</td><td>${r.max_dd??"—"}%</td>
+    </tr>`).join("")||`<tr><td colspan="9" class="muted">Run scripts/run_strategy_bakeoff.py</td></tr>`}</tbody></table>
+  </div>`;
 }
 
 async function calendar(){
@@ -1223,29 +1660,49 @@ async function options(){
 
 async function settings(){
   const m = await api("/api/meta");
-  const o = await api("/api/ops");
-  await loadWorker();
+  metaState = m;
+  paperControls = !!m.paper_controls;
+  applyChrome();
+  if(paperControls){
+    try { await loadWorker(); } catch{}
+  }
+  let killLine = "";
+  if(paperControls){
+    try {
+      const o = await api("/api/ops");
+      killLine = `<p class="muted">Kill switch ${o.kill_switch?"ON":"OFF"}</p>`;
+    } catch(e){ killLine = `<p class="muted">${esc(e.message)}</p>`; }
+  }
   root.innerHTML = `<div class="card"><h3>${t("page.settings")}</h3>
     <p>App: <strong>Cgab</strong></p>
     <p>${t("settings.lang")}: ${lang==="zh-TW"?"繁體中文":"English"}</p>
     <p>Paper: ${m.paper}</p>
+    <p>Role: ${m.role|| (paperControls?"operator":"guest")}</p>
     <p>Ignore market hours: ${m.ignore_market_hours}</p>
     <p>LLM: ${m.llm?.configured?"ON":"OFF"} · chat=${m.llm?.chat_model||"—"} · reasoner=${m.llm?.reasoning_model||"—"}</p>
     <p class="muted">Scan / Deep use the chat model for batch scores and the reasoner for deep strategy write-ups. The paper worker does not call the LLM every minute.</p>
-    <p>AUTO: ${worker?.running?"ON":"OFF"} (${explainMsg()})</p>
-    <p class="muted">Kill switch ${o.kill_switch?"ON":"OFF"}</p>
+    ${paperControls?`<p>AUTO: ${worker?.running?"ON":"OFF"} (${explainMsg()})</p>${killLine}`:`<p class="muted">${t("guest.desk.lead")}</p>`}
     <p class="muted">docs/CGAB_USER_GUIDE.md</p>
     <button class="btn" id="replay">${t("btn.tour")}</button>
   </div>`;
   $("#replay").onclick=()=>{ tourStep=0; showTour(); };
 }
 
+captureOperatorToken();
 applyChrome();
-Promise.all([loadAccount(), loadWorker()]).then(()=>{
+(async ()=>{
+  try {
+    metaState = await api("/api/meta");
+    paperControls = !!metaState.paper_controls;
+  } catch { paperControls = false; }
+  applyChrome();
+  if(paperControls) await Promise.all([loadAccount(), loadWorker()]);
+  else worker = {paper: metaState?.paper !== false, running:false};
+  applyChrome();
   render();
   if(!localStorage.getItem("cgab.tour.done")) { tourStep=0; showTour(); }
-});
-setInterval(()=>{ loadWorker(); }, 12000);
+})();
+setInterval(()=>{ if(paperControls) loadWorker(); }, 12000);
 </script>
 </body>
 </html>

@@ -70,6 +70,20 @@ class TestWorkerCLI(unittest.TestCase):
                 self.assertEqual(kwargs["execution_mode"], "shadow")
             else:
                 self.assertEqual(build.call_args[0][2], "shadow")
+            self.assertEqual(build.call_args[0][0], "breakout")
+
+    @patch.dict(os.environ, {"APCA_PAPER": "true", "WORKER_SENTIMENT_VETO": "0"}, clear=False)
+    def test_sentiment_veto_default_off(self):
+        w = worker_module.TradingWorker.__new__(worker_module.TradingWorker)
+        self.assertFalse(w._sentiment_veto({"sentiment_label": "negative", "sentiment_score": 10}))
+
+    @patch.dict(os.environ, {"APCA_PAPER": "true", "WORKER_SENTIMENT_VETO": "1"}, clear=False)
+    def test_sentiment_veto_on_when_flagged(self):
+        w = worker_module.TradingWorker.__new__(worker_module.TradingWorker)
+        self.assertTrue(w._sentiment_veto({"sentiment_label": "negative"}))
+        self.assertTrue(w._sentiment_veto({"sentiment_score": 20}))
+        self.assertFalse(w._sentiment_veto({"sentiment_label": "positive", "sentiment_score": 70}))
+        self.assertEqual(w._cached_llm_signal({"llm_key_signal": "Bearish"}), "bearish")
 
     @patch.dict(os.environ, {"APCA_PAPER": "true"}, clear=False)
     def test_once_mode_runs_single_cycle(self):
@@ -96,6 +110,8 @@ class TestWorkerCLI(unittest.TestCase):
             self.assertIn("ts", data)
             self.assertIn("running", data)
             self.assertIn("market_hours", data)
+            self.assertIn("polygon_configured", data)
+            self.assertEqual(data.get("calendar"), "us_equity")
         finally:
             os.remove(hb_path)
 
@@ -103,6 +119,18 @@ class TestWorkerCLI(unittest.TestCase):
     def test_invalid_strategy_rejected(self):
         with self.assertRaises(SystemExit):
             worker_module.main(["--once", "--strategy", "bogus"])
+
+    @patch.dict(os.environ, {"APCA_PAPER": "true"}, clear=False)
+    def test_cli_accepts_defensive_gld_without_changing_default(self):
+        fake = _fake_worker()
+        with patch.object(worker_module, "_build_worker", return_value=fake) as build:
+            code = worker_module.main(["--once", "--strategy", "defensive_gld"])
+            self.assertEqual(code, 0)
+            self.assertEqual(build.call_args[0][0], "defensive_gld")
+        with patch.object(worker_module, "_build_worker", return_value=_fake_worker()) as build_default:
+            code = worker_module.main(["--once"])
+            self.assertEqual(code, 0)
+            self.assertEqual(build_default.call_args[0][0], "breakout")
 
 
 if __name__ == "__main__":

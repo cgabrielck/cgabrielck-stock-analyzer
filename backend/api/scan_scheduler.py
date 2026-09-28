@@ -244,9 +244,7 @@ def send_post_close_digest(*, force: bool = False) -> bool:
         if last_et.date() == et.date():
             return False
 
-    from backend.api import research_jobs, worker_ctl
     from backend.trading.ops_notifier import send_plain
-    from backend.trading.strategies.skip_codes import format_skip_lines
 
     try:
         settings = _telegram_settings()
@@ -257,51 +255,18 @@ def send_post_close_digest(*, force: bool = False) -> bool:
         logger.debug("post-close digest skipped — Telegram not configured")
         return False
 
-    scan = research_jobs.latest_scan()
-    st = worker_ctl.status()
-    picks = ", ".join((scan.get("top5_tickers") or [])[:5]) or "—"
-    as_of = str(scan.get("ts") or "—").replace("T", " ")[:19]
-    stale = "過期" if scan.get("stale") or not scan.get("available") else "新鮮"
-    skips = format_skip_lines(st.get("skip_counts") or {}, lang="zh") or "—"
+    from backend.api import paper_performance
 
-    day_pnl = None
-    equity = None
+    paper = None
     try:
-        from backend.trading.alpaca_broker import AlpacaBroker
-
-        summary = AlpacaBroker().get_account_summary()
-        day_pnl = summary.day_pnl
-        equity = summary.equity or summary.portfolio_value
-    except Exception as exc:
-        logger.debug("digest equity skipped: %s", exc)
-
-    alpha_net = None
-    try:
-        from backend.api import paper_performance
-
         paper = paper_performance.build_paper_report(persist=True)
-        alpha_net = (paper.get("benchmark") or {}).get("alpha_net_of_costs_pct")
     except Exception as exc:
         logger.debug("digest paper report skipped: %s", exc)
-
-    lines = [
-        "📋 <b>收盤摘要 Post-close</b>",
-        "",
-        f"<b>掃描:</b> {stale} · as-of {as_of}",
-        f"<b>Top5:</b> {picks}",
-        f"<b>為何沒買:</b> {skips}",
-        f"<b>策略:</b> {st.get('strategy') or '—'}",
-    ]
-    if day_pnl is not None:
-        lines.append(f"<b>Day P&amp;L:</b> ${float(day_pnl):,.2f}")
-    if equity is not None:
-        lines.append(f"<b>Equity:</b> ${float(equity):,.2f}")
-    if alpha_net is not None:
-        lines.append(f"<b>vs SPY (net cost):</b> {float(alpha_net):+.2f}%")
-    lines.append("")
-    lines.append("紙上模擬 · 非正式投資建議")
-
-    ok = send_plain(settings, "\n".join(lines))
+    digest = paper_performance.build_daily_digest(paper=paper, persist_paper=False)
+    text = paper_performance.format_digest_html(
+        digest, heading="📋 <b>收盤摘要 Post-close</b>"
+    )
+    ok = send_plain(settings, text)
     if ok:
         _set_state(last_digest_at=et.astimezone(timezone.utc))
     return ok

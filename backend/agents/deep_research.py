@@ -10,7 +10,7 @@ from agents.data_fetcher import (
     fetch_trading_session_ranges,
     get_seed_fallback,
 )
-from agents.fundamental_analyzer import calculate_growth_score
+from agents.fundamental_analyzer import calculate_growth_score, quality_attribution
 from agents.llm_agent import suggest_trading_strategy
 from agents.risk_analyzer import calculate_risk_adjusted_score
 from agents.sec_analyzer import get_latest_filing
@@ -85,6 +85,7 @@ def analyze_ticker(
         "score_details": details,
         "metrics_used": metrics_used,
     })
+    stock.update(quality_attribution(stock))
     technical_score = technical.get("technical_score")
     if technical_score is not None:
         stock["technical_score"] = technical_score

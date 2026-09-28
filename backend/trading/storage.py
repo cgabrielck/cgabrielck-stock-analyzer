@@ -134,8 +134,8 @@ class SQLiteOrderStore:
                 """
                 INSERT INTO orders (id, idempotency_key, payload, updated_at)
                 VALUES (?, ?, ?, ?)
-                ON CONFLICT(id) DO UPDATE SET
-                    idempotency_key=excluded.idempotency_key,
+                ON CONFLICT(idempotency_key) DO UPDATE SET
+                    id=excluded.id,
                     payload=excluded.payload,
                     updated_at=excluded.updated_at
                 """,

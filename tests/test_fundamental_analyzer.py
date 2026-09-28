@@ -142,3 +142,67 @@ def test_calculate_all_scores_assigns_other_to_missing_sector() -> None:
     scored = calculate_all_scores(all_data)
     assert len(scored) == 2
     assert next(stock for stock in scored if stock["ticker"] == "A")["sector"] == "Other"
+
+
+def test_quality_split_columns_on_full_metrics() -> None:
+    data = {
+        "ticker": "TEST",
+        "revenue_growth": 20.0,
+        "eps_growth": 20.0,
+        "profit_margin": 20.0,
+        "peg": 0.5,
+        "roe": 30.0,
+        "debt_equity": 0.3,
+        "sector": "Technology",
+    }
+    from agents.fundamental_analyzer import quality_attribution, score_fundamentals
+
+    result = score_fundamentals(data)
+    assert result["growth_score"] == 100.0
+    assert result["quality_score"] == 100.0
+    assert result["quality_roe_score"] == 100.0
+    assert result["quality_margin_score"] == 100.0
+    assert result["quality_leverage_score"] == 100.0
+    assert result["growth_component_score"] == 100.0
+    assert result["value_component_score"] == 100.0
+    shares = result["score_attribution"]
+    assert abs(
+        (shares["composite_share_quality"] or 0)
+        + (shares["composite_share_growth"] or 0)
+        + (shares["composite_share_value"] or 0)
+        - 1.0
+    ) < 1e-6
+    attr = quality_attribution(data)
+    assert attr["quality_roe_score"] == 100.0
+
+
+def test_quality_only_metrics_match_composite() -> None:
+    data = {
+        "ticker": "TEST",
+        "revenue_growth": None,
+        "eps_growth": None,
+        "profit_margin": 20.0,
+        "peg": None,
+        "roe": 30.0,
+        "debt_equity": 0.3,
+    }
+    from agents.fundamental_analyzer import score_fundamentals
+
+    result = score_fundamentals(data)
+    assert result["growth_score"] == 100.0
+    assert result["quality_score"] == 100.0
+    assert result["growth_component_score"] is None
+    assert result["value_component_score"] is None
+
+
+def test_calculate_all_scores_attaches_quality_columns() -> None:
+    all_data = {
+        "A": {"ticker": "A", "roe": 30.0, "profit_margin": 10.0, "debt_equity": 0.3, "sector": "Tech"},
+    }
+    scored = calculate_all_scores(all_data)
+    row = scored[0]
+    assert row["quality_roe_score"] == 100.0
+    assert row["quality_margin_score"] == 50.0
+    assert row["quality_leverage_score"] == 100.0
+    assert row["quality_score"] is not None
+    assert "score_attribution" in row

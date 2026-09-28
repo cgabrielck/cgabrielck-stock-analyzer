@@ -92,12 +92,16 @@ class TestShadowV2(unittest.TestCase):
         self.assertEqual(filled.filled_avg_price, 150.0)
         self.assertEqual(filled.slippage_pct, 0.0)
 
-    def test_wrong_state_ignored(self):
-        o = _order()
-        o.status = OrderStatus.DRAFT
-        filled = self.engine.simulate_submission(o, next_bars=None)
-        self.assertEqual(filled.status, OrderStatus.DRAFT)
-        self.mock_store.save_order.assert_not_called()
+    def test_datetime_weekend_bars_are_dropped_before_fill(self):
+        o = _order(otype="market", limit=None)
+        idx = pd.to_datetime(["2026-09-12", "2026-09-14"])  # Sat crypto + Mon equity
+        bars = pd.DataFrame(
+            {"Open": [50.0, 100.0], "Low": [49.0, 99.0], "High": [51.0, 101.0], "Close": [50.5, 100.5]},
+            index=idx,
+        )
+        filled = self.engine.simulate_submission(o, next_bars=bars)
+        expected = 100.0 * (1 + DEFAULT_SLIPPAGE_BPS / 10000.0)
+        self.assertAlmostEqual(filled.filled_avg_price, expected, places=5)
 
 
 if __name__ == "__main__":

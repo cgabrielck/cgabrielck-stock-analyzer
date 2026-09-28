@@ -113,3 +113,33 @@ def test_ref_price_falls_back_to_limit_price():
     order = make_order(quantity=100, limit_price=50.0)
     decision = gate.evaluate(order, ref_price=None)
     assert not decision.approved
+
+
+def test_load_tightened_example_mandate():
+    from pathlib import Path
+
+    from backend.trading.safety.mandate import load_mandate
+    from backend.utils.constants import STOCK_UNIVERSE
+
+    example = Path(__file__).resolve().parents[3] / "config" / "mandate.example.json"
+    mandate = load_mandate(example)
+    assert mandate.max_notional_per_order == 10000.0
+    assert mandate.max_daily_orders == 5
+    assert "GME" in mandate.blocked_symbols
+    universe = {row["ticker"].upper() for row in STOCK_UNIVERSE}
+    assert universe.issubset(set(mandate.allowed_symbols))
+    assert "TSM" in mandate.allowed_symbols
+    gate = MandateGate(mandate=mandate)
+    assert gate.evaluate(make_order(symbol="TSM"), ref_price=100.0).approved
+    denied = gate.evaluate(make_order(symbol="GME"), ref_price=20.0)
+    assert not denied.approved
+
+
+def test_example_comments_do_not_break_load():
+    from pathlib import Path
+
+    from backend.trading.safety.mandate import load_mandate
+
+    example = Path(__file__).resolve().parents[3] / "config" / "mandate.example.json"
+    mandate = load_mandate(example)
+    assert mandate.allowed_sides == ["buy", "sell"]

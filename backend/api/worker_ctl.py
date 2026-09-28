@@ -18,6 +18,10 @@ HEARTBEAT_PATH = Path(DATA_DIR) / "worker_heartbeat.json"
 PID_PATH = Path(DATA_DIR) / "worker.pid"
 LOG_PATH = Path(DATA_DIR) / "worker.log"
 STALE_AFTER_SEC = 90
+STOP_WAIT_SEC = 12.0
+STOP_POLL_SEC = 0.35
+START_WAIT_SEC = 30.0
+START_POLL_SEC = 0.4
 
 
 def _is_paper() -> bool:
@@ -53,6 +57,93 @@ def pid_alive(pid: int) -> bool:
     except OSError:
         return False
     return True
+
+
+def _normalize_strategy(sid: Any) -> str:
+    aliases = {
+        "aggressive": "breakout",
+        "hybrid": "adaptive",
+        "reversion": "stable",
+    }
+    key = str(sid or "").strip().lower()
+    return aliases.get(key, key)
+
+
+def _kill_pid(pid: int) -> None:
+    if not pid_alive(pid):
+        return
+    if os.name == "nt":
+        subprocess.run(
+            ["taskkill", "/PID", str(pid), "/T", "/F"],
+            capture_output=True,
+            check=False,
+        )
+        return
+    try:
+        os.kill(pid, 15)
+    except OSError:
+        pass
+
+
+def _pids_from_python_cmdlines() -> List[int]:
+    """Find leftover workers by command line (venv stub + interpreter child)."""
+    marker = "backend.trading.engine.worker"
+    found: List[int] = []
+    if os.name == "nt":
+        # Query python processes only — do not embed `marker` in the child command
+        # line or this helper would match itself.
+        script = (
+            "Get-CimInstance Win32_Process | "
+            "Where-Object { $_.Name -match '^python' } | "
+            "Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress"
+        )
+        try:
+            raw = subprocess.check_output(
+                ["powershell", "-NoProfile", "-Command", script],
+                timeout=8,
+                stderr=subprocess.DEVNULL,
+            )
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
+            return []
+        text = raw.decode("utf-8", errors="ignore").strip()
+        if not text:
+            return []
+        try:
+            payload = json.loads(text)
+        except json.JSONDecodeError:
+            return []
+        rows = payload if isinstance(payload, list) else [payload]
+        for row in rows:
+            cmd = str((row or {}).get("CommandLine") or "")
+            if marker not in cmd:
+                continue
+            try:
+                found.append(int(row.get("ProcessId")))
+            except (TypeError, ValueError):
+                continue
+        return found
+    try:
+        raw = subprocess.check_output(["pgrep", "-f", marker], timeout=5, stderr=subprocess.DEVNULL)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError, FileNotFoundError):
+        return []
+    for line in raw.decode().split():
+        try:
+            found.append(int(line))
+        except ValueError:
+            continue
+    return found
+
+
+def _all_worker_pids() -> List[int]:
+    pids: List[int] = []
+    for candidate in (_read_pid_file(), _read_heartbeat().get("pid"), *_pids_from_python_cmdlines()):
+        try:
+            n = int(candidate)
+        except (TypeError, ValueError):
+            continue
+        if n > 0 and n not in pids and pid_alive(n):
+            pids.append(n)
+    return pids
 
 
 def _read_pid_file() -> Optional[int]:
@@ -112,11 +203,17 @@ def explain(status: Dict[str, Any], position_count: int = 0) -> Dict[str, Any]:
         )
     elif position_count == 0:
         skips = status.get("skip_counts") if isinstance(status.get("skip_counts"), dict) else {}
-        if status.get("scan_stale") or skips.get("research_stale"):
+        if skips.get("cadence_wait"):
+            code = "cadence_wait"
+            reasons.append(
+                "Paper auto is ON, but weekly cadence is waiting for a US Monday rebalance "
+                "(PANIC / high_volatility still trades). Default remains the 24h demo until you pick weekly."
+            )
+        elif status.get("scan_stale") or skips.get("research_stale"):
             code = "research_stale"
             reasons.append(
-                "Paper auto is ON, but the Scan book is past the session freshness window. "
-                "research_list will not open new buys; Stable still uses the last real fund scores (as-of)."
+                "Paper auto is ON, but Scan/signal as-of is past SIGNAL max-age. "
+                "No new buys (all strategies); last real fund scores are kept (as-of)."
             )
         else:
             code = "scanning_empty"
@@ -139,7 +236,8 @@ def explain(status: Dict[str, Any], position_count: int = 0) -> Dict[str, Any]:
         "stale": "偵測到舊的工作行程，但心跳已過期，行程可能已當掉。請先停止再重新啟動。",
         "halted": "緊急停止（Kill switch）已開啟，不會開新倉。可在 Desk 解除。",
         "off_hours": "紙上自動交易已在跑，但美股盤外會暫停掃描（約美東 09:30–16:00）。若 .env 設 IGNORE_MARKET_HOURS=true 則全日掃描。",
-        "research_stale": "紙上自動交易已開，但掃描名單超過盤中新鮮度視窗。research_list 不開新倉；Stable 仍用上次真實分數（as-of）。請等待自動掃描或手動掃描。",
+        "cadence_wait": "紙上自動交易已開，但週頻節奏要等到美東週一再平衡（PANIC／高波動仍可交易）。預設仍是全日 demo，除非你在 AI 模式改成 weekly。",
+        "research_stale": "紙上自動交易已開，但掃描／訊號 as-of 超過 SIGNAL 新鮮度視窗。所有策略不開新倉；上次真實分數保留。請等待自動掃描或手動掃描。",
         "scanning_empty": "紙上自動交易已開啟並正在掃描。持倉空白代表還沒有成交——看 Why-no-trade 代碼。",
         "active": "紙上自動交易進行中。下方持倉來自 Alpaca 模擬成交。",
         "unknown": "無法判斷自動交易狀態。",
@@ -150,7 +248,8 @@ def explain(status: Dict[str, Any], position_count: int = 0) -> Dict[str, Any]:
         "stale": "A worker was started but its heartbeat is stale. Stop and start again.",
         "halted": "Kill switch is on — no new buys. Resume from Desk if that was accidental.",
         "off_hours": "Paper worker is alive but waiting for US regular hours (09:30–16:00 ET) unless IGNORE_MARKET_HOURS=true.",
-        "research_stale": "Paper auto is on, but Scan is past the session freshness window. research_list blocks new buys; Stable keeps last real fund scores (as-of).",
+        "cadence_wait": "Paper auto is on, but weekly cadence waits for a US Monday rebalance (PANIC still trades).",
+        "research_stale": "Paper auto is on, but Scan/signal as-of is past SIGNAL max-age. No new buys; last real fund scores are kept (as-of).",
         "scanning_empty": "Paper auto is on and scanning. Empty book is normal until a signal fills — see why-no-trade codes.",
         "active": "Paper auto is on. Holdings are Alpaca paper fills.",
         "unknown": "Could not determine auto-trading status.",
@@ -204,11 +303,18 @@ def status(position_count: int = 0, halted: bool = False) -> Dict[str, Any]:
         "halted": bool(hb.get("halted", halted)),
         "last_signals": hb.get("last_signals") or [],
         "skip_counts": hb.get("skip_counts") if isinstance(hb.get("skip_counts"), dict) else {},
+        "pending_buys": [str(s) for s in (hb.get("pending_buys") or []) if s],
+        "skip_by_ticker": (
+            {str(k).upper(): str(v) for k, v in hb.get("skip_by_ticker").items() if k}
+            if isinstance(hb.get("skip_by_ticker"), dict)
+            else {}
+        ),
         "universe_cap": hb.get("universe_cap"),
         "universe_size": hb.get("universe_size"),
         "fetched": hb.get("fetched"),
         "interval_seconds": hb.get("interval_seconds"),
         "log_file": str(LOG_PATH),
+        "cadence": hb.get("cadence") or "intraday",
     }
     scan_stale = bool(hb.get("scan_stale"))
     scan_as_of = None
@@ -240,19 +346,33 @@ def status(position_count: int = 0, halted: bool = False) -> Dict[str, Any]:
     payload["scan_stale"] = scan_stale
     if scan_as_of and "scan_as_of" not in payload:
         payload["scan_as_of"] = scan_as_of
+    if hb.get("signal_max_age_hours") is not None:
+        payload["signal_max_age_hours"] = hb.get("signal_max_age_hours")
+    else:
+        try:
+            from backend.api.research_jobs import signal_max_age_hours as _signal_max_age
+
+            payload["signal_max_age_hours"] = _signal_max_age()
+        except Exception:
+            payload["signal_max_age_hours"] = None
     payload["explain"] = explain({**payload, "halted": payload["halted"] or halted}, position_count)
     return payload
 
 
-def start(strategy: str = "stable", interval: int = 60) -> Dict[str, Any]:
+def start(strategy: str = "breakout", interval: int = 60) -> Dict[str, Any]:
     if not _is_paper():
         raise RuntimeError("Live trading is blocked. Keep APCA_PAPER=true.")
     if strategy not in KNOWN_STRATEGIES:
         raise ValueError("Unknown strategy")
     interval = max(15, min(600, int(interval)))
     current = status()
-    if current.get("running"):
+    live_pids = _all_worker_pids()
+    same = _normalize_strategy(current.get("strategy")) == _normalize_strategy(strategy)
+    # Windows venv launches a stub + interpreter child (2 PIDs). More than that is stray.
+    if current.get("running") and same and len(live_pids) <= 2:
         return {**current, "already_running": True}
+    if live_pids:
+        stop()
 
     PID_PATH.parent.mkdir(parents=True, exist_ok=True)
     env = os.environ.copy()
@@ -296,67 +416,76 @@ def start(strategy: str = "stable", interval: int = 60) -> Dict[str, Any]:
 
     proc = subprocess.Popen(cmd, **kwargs)
     PID_PATH.write_text(str(proc.pid), encoding="utf-8")
-    deadline = time.time() + 8
+    deadline = time.time() + float(START_WAIT_SEC)
     last = status()
+    hb_pid: Optional[int] = None
     while time.time() < deadline:
         hb = _read_heartbeat()
-        hb_pid = None
         try:
             hb_pid = int(hb["pid"]) if hb.get("pid") is not None else None
         except (TypeError, ValueError):
             hb_pid = None
         if hb_pid and pid_alive(hb_pid):
             PID_PATH.write_text(str(hb_pid), encoding="utf-8")
-        last = status()
-        if last.get("running") and last.get("strategy"):
+            last = status()
             break
+        last = status()
         if proc.poll() is not None and not (hb_pid and pid_alive(hb_pid)):
             break
-        time.sleep(0.4)
-    if not last.get("running"):
+        time.sleep(float(START_POLL_SEC))
+    if not (hb_pid and pid_alive(hb_pid)):
+        _kill_pid(proc.pid)
+        for extra in _all_worker_pids():
+            _kill_pid(extra)
         tail = ""
         try:
             tail = LOG_PATH.read_text(encoding="utf-8")[-1200:]
         except OSError:
             pass
         raise RuntimeError(f"Worker failed to start (code {proc.poll()}). {tail}")
-    return {**last, "already_running": False, "started_pid": last.get("pid") or proc.pid}
+    return {**last, "already_running": False, "started_pid": hb_pid or proc.pid}
+
+
+def restart(strategy: str = "breakout", interval: int = 60) -> Dict[str, Any]:
+    """Stop every leftover worker then start with ``strategy``."""
+    stop()
+    return start(strategy=strategy, interval=interval)
+
+
+def _mark_heartbeat_stopped() -> None:
+    hb = _read_heartbeat()
+    payload = {**hb, "running": False, "pid": None, "ts": datetime.now(timezone.utc).isoformat()}
+    HEARTBEAT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    HEARTBEAT_PATH.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
 
 
 def stop() -> Dict[str, Any]:
-    hb = _read_heartbeat()
-    pids = []
-    for candidate in (_read_pid_file(), hb.get("pid")):
-        try:
-            n = int(candidate)
-        except (TypeError, ValueError):
-            continue
-        if n > 0 and n not in pids:
-            pids.append(n)
-    for pid in pids:
-        if not pid_alive(pid):
-            continue
-        if os.name == "nt":
-            subprocess.run(
-                ["taskkill", "/PID", str(pid), "/T", "/F"],
-                capture_output=True,
-                check=False,
-            )
-        else:
-            try:
-                os.kill(pid, 15)
-            except OSError:
-                pass
-    time.sleep(0.4)
+    """Kill pidfile + heartbeat + cmdline workers until none remain.
+
+    Raises if any worker PID is still alive after STOP_WAIT_SEC so Telegram/Desk
+    cannot report a successful stop while a venv stub or interpreter survives.
+    """
+    deadline = time.time() + float(STOP_WAIT_SEC)
+    leftover: List[int] = []
+    while True:
+        leftover = _all_worker_pids()
+        if not leftover:
+            break
+        for pid in leftover:
+            _kill_pid(pid)
+        leftover = _all_worker_pids()
+        if not leftover:
+            break
+        if time.time() >= deadline:
+            raise RuntimeError(f"Worker did not stop; leftover pids {leftover}")
+        time.sleep(float(STOP_POLL_SEC))
     try:
         if PID_PATH.exists():
             PID_PATH.unlink()
     except OSError:
         pass
-    # Mark heartbeat stopped so UI does not treat a leftover file as live.
     try:
-        payload = {**hb, "running": False, "ts": datetime.now(timezone.utc).isoformat()}
-        HEARTBEAT_PATH.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
+        _mark_heartbeat_stopped()
     except OSError:
         pass
     return status()

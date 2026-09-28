@@ -46,6 +46,24 @@ class TestSQLiteOrderStore(unittest.TestCase):
         recent = self.store.get_recent_orders(limit=5)
         self.assertEqual(len(recent), 1)
 
+    def test_save_upserts_when_broker_assigns_new_id(self):
+        draft = Order(
+            id="draft-1",
+            symbol="GOOGL",
+            side=OrderSide.BUY,
+            order_type=OrderType.LIMIT,
+            quantity=28,
+            limit_price=349.39,
+            idempotency_key="GOOGL-same-minute",
+        )
+        self.store.save_order(draft)
+        broker = draft.model_copy(update={"id": "alpaca-uuid-1"})
+        self.store.save_order(broker)
+        by_key = self.store.get_order_by_idempotency_key("GOOGL-same-minute")
+        self.assertEqual(by_key.id, "alpaca-uuid-1")
+        self.assertIsNone(self.store.get_order("draft-1"))
+        self.assertEqual(len(self.store.get_recent_orders(limit=5)), 1)
+
     def test_factory_defaults_to_sqlite(self):
         path = self.tmp.name + ".factory"
         store = create_order_store(backend="sqlite", filepath=path)

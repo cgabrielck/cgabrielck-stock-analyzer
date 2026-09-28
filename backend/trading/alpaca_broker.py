@@ -33,6 +33,16 @@ _STATUS_MAP = {
 }
 
 
+def round_us_equity_price(price: Optional[float]) -> Optional[float]:
+    """Alpaca rejects sub-penny increments on names priced at $1+."""
+    if price is None:
+        return None
+    p = float(price)
+    if p >= 1.0:
+        return round(p, 2)
+    return round(p, 4)
+
+
 class AlpacaBroker(BrokerAdapter):
     """
     Broker adapter for Alpaca paper and live trading, backed by the
@@ -163,8 +173,8 @@ class AlpacaBroker(BrokerAdapter):
         stop = order.stop_loss_price if order.stop_loss_price is not None else order.stop_price
         return {
             "order_class": OrderClass.BRACKET,
-            "take_profit": TakeProfitRequest(limit_price=float(order.take_profit_price)),
-            "stop_loss": StopLossRequest(stop_price=float(stop)),
+            "take_profit": TakeProfitRequest(limit_price=round_us_equity_price(order.take_profit_price)),
+            "stop_loss": StopLossRequest(stop_price=round_us_equity_price(stop)),
             # Alpaca equity brackets typically require DAY TIF on the parent.
             "time_in_force": TimeInForce.DAY,
         }
@@ -183,12 +193,14 @@ class AlpacaBroker(BrokerAdapter):
         if order.order_type == OrderType.MARKET:
             return MarketOrderRequest(**common)
         if order.order_type == OrderType.LIMIT:
-            return LimitOrderRequest(limit_price=order.limit_price, **common)
+            return LimitOrderRequest(limit_price=round_us_equity_price(order.limit_price), **common)
         if order.order_type == OrderType.STOP:
-            return StopOrderRequest(stop_price=order.stop_price, **common)
+            return StopOrderRequest(stop_price=round_us_equity_price(order.stop_price), **common)
         if order.order_type == OrderType.STOP_LIMIT:
             return StopLimitOrderRequest(
-                limit_price=order.limit_price, stop_price=order.stop_price, **common
+                limit_price=round_us_equity_price(order.limit_price),
+                stop_price=round_us_equity_price(order.stop_price),
+                **common,
             )
         raise ValueError(f"Unsupported order type: {order.order_type}")
 
