@@ -15,6 +15,8 @@ See [`docs/ARCHITECTURE_DECISION.md`](docs/ARCHITECTURE_DECISION.md), [`docs/CGA
 
 **World-class upgrade (grade vs OSS, two SKUs, P0–P4):** [`docs/CGAB_WORLD_CLASS_UPGRADE.md`](docs/CGAB_WORLD_CLASS_UPGRADE.md).
 
+**System map (architecture, API, portals, settings):** [`docs/SYSTEM_MAP.md`](docs/SYSTEM_MAP.md) — generated from code; includes the 2026-09-28 pytest result and files kept on purpose.
+
 ## Quick Wins (1-2 hours total)
 
 | # | Task | File | Status |
