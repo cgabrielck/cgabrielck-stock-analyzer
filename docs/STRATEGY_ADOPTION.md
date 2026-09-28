@@ -117,3 +117,4 @@ No live trading without paper/shadow seal per PAPER_VALIDATION_RUNBOOK.md.
 | 日期 | 變更 |
 |------|------|
 | 2026-09-12 | 初版：三輪覆核寫入；應引／唔應引定稿並推送 `main` |
+| 2026-09-12 | 關聯 [`CITATION_CANDIDATES.md`](CITATION_CANDIDATES.md)：可引用 OSS 推介名單（只推介、唔 build） |
