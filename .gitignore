@@ -9,6 +9,7 @@ env/
 .env
 backend/data/telegram_updates_offset.json
 backend/data/strategy_backtest_*.json
+backend/data/fair_strategy_backtest*.json
 .streamlit/secrets.toml
 node_modules/
 web/dist/
