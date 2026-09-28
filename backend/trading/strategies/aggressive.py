@@ -106,6 +106,9 @@ class AggressiveStrategy(StrategyBase):
         return None, (row, close, sma50, vol, vol20, rsi, vcp, breakout_level)
 
     def populate_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
+        needed = ("sma50", "vol20", "rsi", "atr", "macd", "macd_sig", "macd_hist")
+        if all(c in df.columns for c in needed):
+            return df
         df = df.copy()
         df["sma50"]     = df["Close"].rolling(50).mean()
         df["vol20"]     = df["Volume"].rolling(20).mean()

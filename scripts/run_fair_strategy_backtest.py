@@ -176,11 +176,14 @@ def main() -> None:
     fetch_start = (pd.Timestamp(START) - pd.DateOffset(days=WARMUP_DAYS + 60)).strftime("%Y-%m-%d")
     fetch_end = (pd.Timestamp(END) + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
 
-    print(f"Fair backtest window: {START} .. {END}")
-    print(f"Universe size: {len(tickers)} | capital={INITIAL_CAPITAL} | "
-          f"cost={TRANSACTION_COST_BPS}bps + slip={DEFAULT_SLIPPAGE_BPS}bps | "
-          f"max_positions={MAX_POSITIONS}")
-    print("Fetching shared price snapshot (once)...")
+    print(f"Fair backtest window: {START} .. {END}", flush=True)
+    print(
+        f"Universe size: {len(tickers)} | capital={INITIAL_CAPITAL} | "
+        f"cost={TRANSACTION_COST_BPS}bps + slip={DEFAULT_SLIPPAGE_BPS}bps | "
+        f"max_positions={MAX_POSITIONS}",
+        flush=True,
+    )
+    print("Fetching shared price snapshot (once)...", flush=True)
 
     shared = fetch_price_data(
         tickers + ["SPY"],

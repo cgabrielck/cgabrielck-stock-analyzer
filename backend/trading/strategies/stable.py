@@ -55,6 +55,10 @@ class StableStrategy(StrategyBase):
                 setattr(self, attr, float(value) if isinstance(value, (int, float)) else value)
 
     def populate_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
+        # Skip recompute when the backtest engine already attached causal columns.
+        needed = ("rsi", "bb_upper", "bb_mid", "bb_lower", "sma200", "atr")
+        if all(c in df.columns for c in needed):
+            return df
         df = df.copy()
         df["rsi"]      = self._rsi(df["Close"])
         bb_up, bb_mid, bb_low = self._bollinger(df["Close"], self.BB_PERIOD, self.BB_STD)

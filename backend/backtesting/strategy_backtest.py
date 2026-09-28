@@ -127,6 +127,11 @@ def run_strategy_backtest(
         result.warnings.append("No usable price data at all.")
         return result
 
+    # Precompute causal indicators once per ticker. Trailing rolling windows at
+    # row i only use data[:i+1], so slicing the enriched frame through day t
+    # matches recomputing on each prefix — at far lower cost.
+    aligned = _precompute_indicators(strategy, strategy_id, aligned)
+
     # Common trading calendar = union of all available dates.
     all_dates = sorted(set().union(*[set(d.index) for d in aligned.values()]))
     all_dates = [d for d in all_dates if pd.Timestamp(start) <= d <= pd.Timestamp(end_date)]
@@ -383,3 +388,33 @@ def _history_through(frame: pd.DataFrame, day) -> Optional[pd.DataFrame]:
         return sub
     except Exception:
         return None
+
+
+def _precompute_indicators(
+    strategy,
+    strategy_id: str,
+    aligned: Dict[str, pd.DataFrame],
+) -> Dict[str, pd.DataFrame]:
+    """Attach strategy indicator columns once before the day loop."""
+    if strategy_id == "hybrid":
+        from backend.trading.strategies.aggressive import AggressiveStrategy
+        from backend.trading.strategies.stable import StableStrategy
+
+        stable = StableStrategy()
+        aggressive = AggressiveStrategy()
+        out: Dict[str, pd.DataFrame] = {}
+        for ticker, frame in aligned.items():
+            enriched = stable.populate_indicators(frame)
+            out[ticker] = aggressive.populate_indicators(enriched)
+        return out
+
+    if strategy_id == "research_list":
+        return aligned
+
+    out = {}
+    for ticker, frame in aligned.items():
+        try:
+            out[ticker] = strategy.populate_indicators(frame)
+        except Exception:
+            out[ticker] = frame
+    return out
