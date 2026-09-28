@@ -8,11 +8,16 @@
 | Check | Result |
 |-------|--------|
 | `python3 -m compileall -q backend tests scripts` | Exit 0 |
-| `python3 -m pytest -q` | **455 passed**, 2 warnings (`websockets.legacy`, `pkg_resources`) in 15.54s |
+| `python3 -m pytest -q` | **455 passed**. The two previous `DeprecationWarning`s are addressed below. |
 | Relative markdown links in repo-root `*.md` and `docs/**/*.md` | 59 checked, 0 missing |
 | Live Alpaca / Polygon / Telegram | Not called. Missing keys are configuration, not a test failure. |
 
-Warnings do not fail the suite. Paper fills, shadow seal evidence, and beating SPY were not re-run in this check.
+Paper fills, shadow seal evidence, and beating SPY were not re-run in this check.
+
+Those two warnings were not bugs in this repo:
+
+- `websockets.legacy` — `alpaca-py` 0.44.0 (current latest) does `from websockets.legacy import client` inside `alpaca.trading`. Importing `TradingClient` always loads that package. `websockets` 16 prints a deprecation on that import. Pytest ignores this one message in [`pytest.ini`](../pytest.ini). A newer Alpaca release has to stop using the legacy client before the warning can disappear.
+- `pkg_resources` — `py_mini_racer` 0.6.0 (current latest), pulled in by `akshare`, still imports `pkg_resources`. Setuptools warns that this API is deprecated. China East Money calls now import `akshare` on first use ([`backend/agents/china_data_fetcher.py`](../backend/agents/china_data_fetcher.py)), so a normal US pytest run no longer loads it.
 
 ## Architecture
 
