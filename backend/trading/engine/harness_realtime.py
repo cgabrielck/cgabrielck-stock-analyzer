@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional
 
+from backend.trading.engine.signal_processor import JournalWriteError
 from backend.trading.intents.models import Intent, IntentSide, IntentStatus
 from backend.trading.intents.store import JSONIntentStore
 from backend.trading.models import Order, OrderSide, OrderType
@@ -214,6 +215,8 @@ def consume_action_for_order(order: Any) -> str:
     err = str(_order_field(order, "error_message") or _order_field(order, "error") or "")
     if "risk gate rejected" in err.lower() or status_val in {"risk_rejected"}:
         return "consumed_risk_rejected"
+    if "journal_write_failed" in err.lower():
+        return "consumed_journal_failed"
     return "consumed"
 
 
@@ -448,6 +451,29 @@ def _consume_one_intent(
             )
         except TypeError:
             order = process_signal(signal)
+    except JournalWriteError as exc:
+        logger.error(
+            "H1 journal write failed after submit intent_id=%s symbol=%s: %s",
+            intent.intent_id,
+            intent.symbol,
+            exc,
+            exc_info=True,
+        )
+        order = getattr(exc, "order", None)
+        order_id = None
+        if order is not None:
+            order_id = str(
+                _order_field(order, "id") or _order_field(order, "order_id") or ""
+            ) or None
+        return ConsumeResult(
+            intent_id=intent.intent_id,
+            action="consumed_journal_failed",
+            symbol=intent.symbol,
+            qty=qty,
+            order_id=order_id,
+            reason="journal_write_failed",
+            extra={"idempotency_key": signal["idempotency_key"]},
+        )
     except Exception as exc:
         logger.error(
             "H1 process_signal failed after claim intent_id=%s symbol=%s: %s",

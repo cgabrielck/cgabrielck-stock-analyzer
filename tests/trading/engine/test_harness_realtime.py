@@ -176,6 +176,54 @@ def test_risk_reject_stays_consumed_but_action_is_not_happy(tmp_path):
     assert results[0].order_id == "ord-rej"
 
 
+def test_h1_journal_raise_after_allow_submit_is_not_happy_consumed(tmp_path):
+    """H1 → process_signal allow+submit + journal RuntimeError is not silent success."""
+    from unittest.mock import MagicMock, patch
+
+    from backend.trading.engine.signal_processor import SignalProcessor
+    from backend.trading.models import AccountSummary, OrderStatus
+    from backend.trading.risk.gates import RiskDecision
+
+    store = _store(tmp_path, _buy(intent_id="jfail"))
+    risk = MagicMock()
+    risk.evaluate_order.return_value = RiskDecision(approved=True)
+    submitted = MagicMock()
+    submitted.status = OrderStatus.SUBMITTED
+    submitted.id = "ord-jfail"
+    submitted.symbol = "AAPL"
+    submitted.error_message = None
+    om = MagicMock()
+    om.submit_new_order.return_value = submitted
+    broker = MagicMock()
+    broker.get_account_summary.return_value = AccountSummary(
+        cash=40_000.0,
+        buying_power=40_000.0,
+        portfolio_value=40_000.0,
+        positions=[],
+    )
+    processor = SignalProcessor(broker, risk, om)
+
+    with patch(
+        "backend.utils.provenance.journal_store.record_from_order",
+        side_effect=RuntimeError("disk full"),
+    ):
+        results = consume_active_intents(
+            store,
+            process_signal=processor.process_signal,
+            get_price=lambda _s: 150.0,
+            account_summary=SimpleNamespace(portfolio_value=40_000, positions=[]),
+            now=NOW,
+            limits=RiskLimits(),
+        )
+
+    assert results[0].action == "consumed_journal_failed"
+    assert results[0].action != "consumed"
+    assert results[0].reason == "journal_write_failed"
+    assert results[0].order_id == "ord-jfail"
+    om.submit_new_order.assert_called_once()
+    assert store.get("jfail").status is IntentStatus.CONSUMED
+
+
 def test_one_intent_exception_does_not_block_others(tmp_path, caplog):
     import logging
 

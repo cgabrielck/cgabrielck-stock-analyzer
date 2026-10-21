@@ -2,7 +2,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 from backend.trading.models import OrderSide, OrderStatus
 from backend.trading.risk.gates import RiskDecision
-from backend.trading.engine.signal_processor import SignalProcessor
+from backend.trading.engine.signal_processor import JournalWriteError, SignalProcessor
 
 class TestSignalProcessor(unittest.TestCase):
     def setUp(self):
@@ -123,6 +123,33 @@ class TestSignalProcessor(unittest.TestCase):
         self.assertIs(args[0], submitted)
         self.assertEqual(kwargs.get("intent_id"), "int-ok")
         self.assertEqual(kwargs.get("strategy_id"), "stable")
+
+    def test_process_signal_journal_raise_after_submit_is_not_happy_submitted(self):
+        """Desk honesty: journal raise after allow+submit is not silent SUBMITTED."""
+        self.mock_risk_engine.evaluate_order.return_value = RiskDecision(approved=True)
+        submitted = MagicMock()
+        submitted.status = OrderStatus.SUBMITTED
+        submitted.symbol = "MSFT"
+        submitted.id = "ord-jfail"
+        self.mock_order_manager.submit_new_order.return_value = submitted
+        self.journal_mock.side_effect = RuntimeError("disk full")
+
+        with self.assertRaises(JournalWriteError) as ctx:
+            result = self.processor.process_signal({
+                "symbol": "MSFT",
+                "side": "buy",
+                "quantity": 10,
+                "limit_price": 300.0,
+                "idempotency_key": "sig_jfail",
+                "intent_id": "int-jfail",
+                "strategy_id": "stable",
+            })
+            self.fail(f"process_signal returned {result.status} after journal raise")
+
+        self.assertIn("journal_write_failed", str(ctx.exception))
+        self.assertIn("disk full", str(ctx.exception))
+        self.assertIs(ctx.exception.order, submitted)
+        self.mock_order_manager.submit_new_order.assert_called_once()
 
     def test_signal_processor_does_not_import_backend_api(self):
         from pathlib import Path

@@ -18,6 +18,22 @@ from backend.trading.risk.gates import RiskEngine
 
 logger = logging.getLogger(__name__)
 
+JOURNAL_WRITE_FAILED = "journal_write_failed"
+
+
+class JournalWriteError(RuntimeError):
+    """Journal did not persist. Callers must not treat this as honest success.
+
+    Aligns with Desk place-order: after broker accept, a journal raise is
+    observable failure (HTTP 502), not a happy SUBMITTED. The broker may
+    already have the order — this is not a fill and not verified/live.
+    """
+
+    def __init__(self, detail: str, *, order: Optional[Order] = None):
+        super().__init__(f"{JOURNAL_WRITE_FAILED}: {detail}")
+        self.order = order
+        self.detail = detail
+
 
 class SignalProcessor:
     """
@@ -130,15 +146,25 @@ class SignalProcessor:
 
     @staticmethod
     def _record_journal(order: Order, signal: Dict[str, Any], *, audit_id: Optional[str] = None) -> None:
-        """Persist TradeLogEntry with intent_id on both reject and allow/submit."""
-        try:
-            from backend.utils.provenance.journal_store import record_from_order
+        """Persist TradeLogEntry with intent_id. Never swallow — fail the call.
 
-            record_from_order(
+        Desk contract: journal raise / empty write is not honest success.
+        Intent H1 maps JournalWriteError to consumed_journal_failed (not consumed).
+        """
+        from backend.utils.provenance.journal_store import record_from_order
+
+        try:
+            entry = record_from_order(
                 order,
                 audit_id=audit_id,
                 strategy_id=signal.get("strategy_id"),
                 intent_id=signal.get("intent_id"),
             )
-        except Exception:
+        except Exception as exc:
             logger.exception("Failed to persist journal for %s", getattr(order, "symbol", "?"))
+            raise JournalWriteError(str(exc), order=order) from exc
+        if not entry:
+            raise JournalWriteError(
+                "record_from_order returned no entry",
+                order=order,
+            )
