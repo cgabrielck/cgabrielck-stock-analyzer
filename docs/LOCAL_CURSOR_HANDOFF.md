@@ -68,14 +68,16 @@ Full text: [`docs/ARCHITECTURE_DECISION.md`](ARCHITECTURE_DECISION.md)
 ### Docs (read in this order)
 1. **This file** — handoff  
 2. [`PROCUREMENT_GUIDE.md`](PROCUREMENT_GUIDE.md) — what to buy  
-3. [`ARCHITECTURE_DECISION.md`](ARCHITECTURE_DECISION.md) — **ADR-003** (ADR-002 VOID)  
-4. [`MODULAR_ARCHITECTURE.md`](MODULAR_ARCHITECTURE.md) — Intent v0, dual-clock, L1/L2  
-5. [`AUTO_TRADING_ROADMAP.md`](AUTO_TRADING_ROADMAP.md) — frozen stages  
-6. [`STAGE2_SEAL_REPORT.md`](STAGE2_SEAL_REPORT.md) — seal template  
-7. [`PAPER_VALIDATION_RUNBOOK.md`](PAPER_VALIDATION_RUNBOOK.md) — Stage-3 human gate  
-8. [`PAID_DATA_PIT_PLAN.md`](PAID_DATA_PIT_PLAN.md) — Polygon / PIT notes  
-9. [`../deploy/README.md`](../deploy/README.md) — VPS deploy  
-10. [`../AGENTS.md`](../AGENTS.md) — product enhancement plan + ADR pointer  
+3. [`ADR-003-live-ai-trading-desk.md`](ADR-003-live-ai-trading-desk.md) — **Accepted** + Addendum A  
+4. [`ARCHITECTURE_DECISION.md`](ARCHITECTURE_DECISION.md) — index (ADR-002 VOID)  
+5. [`MODULAR_ARCHITECTURE.md`](MODULAR_ARCHITECTURE.md) — M1–M13, dual-clock, Intent v0  
+6. [`AUDIT_REMEDIATION_PLAN_2026-10-21.md`](AUDIT_REMEDIATION_PLAN_2026-10-21.md) — Confirmed  
+7. [`AUTO_TRADING_ROADMAP.md`](AUTO_TRADING_ROADMAP.md) — frozen stages  
+8. [`STAGE2_SEAL_REPORT.md`](STAGE2_SEAL_REPORT.md) — seal template  
+9. [`PAPER_VALIDATION_RUNBOOK.md`](PAPER_VALIDATION_RUNBOOK.md) — Stage-3 human gate (frozen)  
+10. [`PAID_DATA_PIT_PLAN.md`](PAID_DATA_PIT_PLAN.md) — Polygon / PIT notes  
+11. [`../deploy/README.md`](../deploy/README.md) — VPS deploy  
+12. [`../AGENTS.md`](../AGENTS.md) — product enhancement plan + ADR pointer  
 
 ---
 

@@ -11,7 +11,7 @@
 
 ## Product surfaces / 產品介面
 
-**Product name: Cgab.** Binding architecture: [ADR-003 + Addendum A](docs/ARCHITECTURE_DECISION.md) (Accepted). [Modular architecture](docs/MODULAR_ARCHITECTURE.md) · [visual map](docs/boomboom-modular-architecture.html). **ADR-002 is VOID.**
+**Product name: Cgab.** Binding architecture: [ADR-003 + Addendum A](docs/ADR-003-live-ai-trading-desk.md) (Accepted; [index](docs/ARCHITECTURE_DECISION.md)). [Modular architecture](docs/MODULAR_ARCHITECTURE.md) · [audit plan](docs/AUDIT_REMEDIATION_PLAN_2026-10-21.md) (Confirmed) · [visual map](docs/boomboom-modular-architecture.html). **ADR-002 is VOID.**
 
 | Surface | What it is | How to run |
 |---------|------------|------------|

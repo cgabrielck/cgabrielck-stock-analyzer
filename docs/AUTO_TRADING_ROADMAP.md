@@ -5,9 +5,9 @@
 > **This document is frozen.** It is historical staging notes only. It is **not** architecture, product, or sequencing authority.
 >
 > Conflicts are resolved by, in order:
-> 1. **ADR-003 + Addendum A (Accepted)** — [`ARCHITECTURE_DECISION.md`](ARCHITECTURE_DECISION.md)
+> 1. **ADR-003 + Addendum A (Accepted)** — [`ADR-003-live-ai-trading-desk.md`](ADR-003-live-ai-trading-desk.md) (index: [`ARCHITECTURE_DECISION.md`](ARCHITECTURE_DECISION.md))
 > 2. [`MODULAR_ARCHITECTURE.md`](MODULAR_ARCHITECTURE.md)
-> 3. `AUDIT_REMEDIATION_PLAN_2026-10-21.md` (Confirmed by Gabriel 2026-10-21; **file not in this checkout**)
+> 3. [`AUDIT_REMEDIATION_PLAN_2026-10-21.md`](AUDIT_REMEDIATION_PLAN_2026-10-21.md) (**Confirmed by Gabriel 2026-10-21**)
 >
 > **ADR-002 is VOID.** Do not cite this file, ADR-001, or ADR-002 as binding.
 > Visual map: [`boomboom-modular-architecture.html`](boomboom-modular-architecture.html)
@@ -57,7 +57,7 @@ Signal worker      ├─> SignalProcessor (✅) ─> RiskEngine (✅) ─> Orde
 Reconciliation worker (✅ ReconciliationService) <── orders, fills, positions
 ```
 
-ADR-003 L1 IntentStore / HarnessProposal sit *above* this L2 order path. See [`MODULAR_ARCHITECTURE.md`](MODULAR_ARCHITECTURE.md). Do not wire `backend/lab/advisory_debate.py` into `OrderManager`.
+ADR-003: IntentStore (H3→H1) and Proposal→Approve→Merge (governance) sit *above* this L2 order path; they are two isolated routes. See [`MODULAR_ARCHITECTURE.md`](MODULAR_ARCHITECTURE.md) §4.4–§4.5. Do not wire `backend/lab/advisory_debate.py` into `OrderManager`.
 
 ## Current Project Baseline
 

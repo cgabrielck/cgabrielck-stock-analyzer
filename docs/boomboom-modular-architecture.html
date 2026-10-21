@@ -1,171 +1,547 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-Hant">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Cgab — Modular architecture (ADR-003)</title>
-  <style>
-    :root {
-      --bg:#071016; --card:#0e1c22; --card2:#12242c; --line:#1a3d44;
-      --cyan:#2de2c5; --purple:#7c6cff; --mint:#3ee0a0; --rose:#ff6b81;
-      --gold:#e7c36a; --text:#e8fffb; --muted:#8aa8ae;
-    }
-    * { box-sizing: border-box; }
-    html, body { margin: 0; background: radial-gradient(1200px 600px at 80% -10%, #14343a 0%, transparent 50%), var(--bg); color: var(--text); font-family: "Segoe UI", Inter, system-ui, sans-serif; }
-    header { padding: 22px 28px 12px; border-bottom: 1px solid var(--line); }
-    header h1 { margin: 0 0 6px; font-size: 22px; letter-spacing: .04em; }
-    header p { margin: 0; color: var(--muted); font-size: 14px; max-width: 920px; line-height: 1.5; }
-    .accent { color: var(--cyan); }
-    .warn { color: var(--gold); }
-    .bad { color: var(--rose); }
-    main { padding: 24px 28px 48px; display: grid; gap: 22px; max-width: 1180px; }
-    section { background: linear-gradient(180deg, rgba(18,36,44,.92), rgba(8,18,22,.8)); border: 1px solid rgba(45,226,197,.14); border-radius: 16px; padding: 18px 20px 20px; }
-    h2 { margin: 0 0 12px; font-size: 15px; letter-spacing: .14em; text-transform: uppercase; color: var(--cyan); }
-    h3 { margin: 14px 0 8px; font-size: 14px; color: #c5e8e2; }
-    p, li { color: #c5e8e2; font-size: 14px; line-height: 1.55; }
-    a { color: var(--cyan); }
-    .flow { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 8px 0 4px; }
-    .node {
-      border-radius: 12px; padding: 10px 14px; min-width: 132px; text-align: center;
-      border: 1px solid var(--line); background: #0b1820; font-weight: 700; font-size: 13px;
-    }
-    .node small { display: block; font-weight: 600; color: var(--muted); font-size: 11px; margin-top: 4px; }
-    .h1 { border-color: rgba(45,226,197,.45); color: var(--cyan); }
-    .h2 { border-color: rgba(124,108,255,.5); color: #cfc8ff; }
-    .h3 { border-color: rgba(62,224,160,.5); color: var(--mint); }
-    .l2 { border-color: rgba(231,195,106,.45); color: var(--gold); }
-    .arrow { color: var(--muted); font-size: 18px; }
-    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-    @media (max-width: 800px) { .grid { grid-template-columns: 1fr; } }
-    table { width: 100%; border-collapse: collapse; font-size: 13px; }
-    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #15343c; vertical-align: top; }
-    th { color: var(--muted); font-weight: 700; letter-spacing: .06em; text-transform: uppercase; font-size: 11px; }
-    .pill { display: inline-block; border-radius: 999px; padding: 2px 8px; font-size: 11px; font-weight: 800; letter-spacing: .06em; border: 1px solid currentColor; }
-    .ok { color: var(--mint); }
-    .no { color: var(--rose); }
-    code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: #e8fffb; background: #07141a; padding: 1px 5px; border-radius: 6px; }
-    .x { color: var(--rose); font-weight: 800; }
-    footer { color: var(--muted); font-size: 12px; padding: 0 8px; }
-  </style>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>BoomBoom Modular Architecture (M1–M13)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js" integrity="sha384-ZZ1pncU3bQe8y31yfZdMFdSpttDoPmOZg2wguVK9almUodir1PghgT0eY7Mrty8H" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" integrity="sha384-JcnsjUPPylna1s1fvi1u12X5qjY5OL56iySh75FdtrwhO/SWXgMjoVqcKyIIWOLk" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<style>
+  :root {
+    --bg: #020617;
+    --panel: #0f172a;
+    --border: #1e293b;
+    --text: #e2e8f0;
+    --muted: #94a3b8;
+    --cyan: #22d3ee;
+    --emerald: #34d399;
+    --violet: #a78bfa;
+    --amber: #fbbf24;
+    --rose: #fb7185;
+    --slate: #94a3b8;
+    --orange: #fb923c;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+  }
+  .page {
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 28px 24px 40px;
+  }
+  header.top {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 20px;
+  }
+  h1 {
+    margin: 0 0 6px;
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: #f8fafc;
+  }
+  .subtitle {
+    margin: 0;
+    font-size: 12px;
+    color: var(--muted);
+    line-height: 1.5;
+  }
+  .toolbar {
+    display: flex;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+  .toolbar button {
+    background: #0f172a;
+    border: 1px solid #334155;
+    color: #e2e8f0;
+    font-family: inherit;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 8px 12px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: border-color .15s, background .15s;
+  }
+  .toolbar button:hover {
+    border-color: var(--cyan);
+    background: #164e63;
+  }
+  .toolbar button:active { transform: translateY(1px); }
+  #toast {
+    position: fixed; top: 16px; right: 16px;
+    background: #064e3b; color: #a7f3d0;
+    border: 1px solid #34d399;
+    padding: 10px 14px; border-radius: 8px;
+    font-size: 12px; display: none; z-index: 50;
+  }
+  #capture {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 20px 16px 16px;
+  }
+  .diagram-wrap {
+    overflow-x: auto;
+    border-radius: 12px;
+    background: #020617;
+  }
+  svg.arch {
+    display: block;
+    width: 100%;
+    height: auto;
+    min-width: 1100px;
+  }
+  .cards {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 14px;
+    margin-top: 18px;
+  }
+  @media (max-width: 900px) {
+    .cards { grid-template-columns: 1fr; }
+  }
+  .card {
+    background: #0f172a;
+    border: 1px solid #1e293b;
+    border-radius: 12px;
+    padding: 14px 16px;
+  }
+  .card h3 {
+    margin: 0 0 8px;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+  }
+  .card p {
+    margin: 0;
+    font-size: 11px;
+    color: var(--muted);
+    line-height: 1.55;
+  }
+  .card code {
+    font-family: inherit;
+    font-size: 10px;
+    color: #e2e8f0;
+    background: #020617;
+    padding: 1px 4px;
+    border-radius: 4px;
+  }
+  .card.protected h3 { color: var(--rose); }
+  .card.soft h3 { color: var(--violet); }
+  .card.desk h3 { color: var(--cyan); }
+  footer.note {
+    margin-top: 14px;
+    font-size: 10px;
+    color: #64748b;
+    text-align: center;
+    line-height: 1.5;
+  }
+</style>
 </head>
 <body>
-  <header>
-    <h1>Cgab <span class="accent">modular architecture</span></h1>
-    <p>
-      Binding: <strong>ADR-003 + Addendum A (Accepted)</strong> ·
-      <a href="ARCHITECTURE_DECISION.md">ARCHITECTURE_DECISION.md</a> ·
-      <a href="MODULAR_ARCHITECTURE.md">MODULAR_ARCHITECTURE.md</a>.
-      ADR-002 is <span class="warn">VOID</span>.
-      Product = Desk (FastAPI + <code>web/static</code>). Streamlit = lab / legacy.
-      This page is documentation only — it does not change RiskEngine / mandate / kill.
-    </p>
+<div id="toast"></div>
+<div class="page">
+  <header class="top">
+    <div>
+      <h1>BoomBoom Modular Architecture (M1–M13)</h1>
+      <p class="subtitle">ADR-003 + Addendum A Accepted · M1–M13 DAG · dual-clock H1–H3 · IntentStore · Proposal→Approve→Merge · 2026-10-21</p>
+    </div>
+    <div class="toolbar">
+      <button type="button" id="btn-copy" title="Copy PNG to clipboard">Copy</button>
+      <button type="button" id="btn-png" title="Download PNG">PNG</button>
+      <button type="button" id="btn-pdf" title="Download PDF">PDF</button>
+    </div>
   </header>
-  <main>
-    <section>
-      <h2>Proposal → Approve → Merge</h2>
-      <div class="flow">
-        <div class="node h1">H1 Propose<small>Research clock · Intent v0</small></div>
-        <div class="arrow">→</div>
-        <div class="node h2">H2 Approve<small>Human on Desk only</small></div>
-        <div class="arrow">→</div>
-        <div class="node h3">H3 Merge<small>IntentStore status=merged</small></div>
-        <div class="arrow">→</div>
-        <div class="node l2">L2 OrderManager<small>Kelly / Risk / mandate / kill</small></div>
+
+  <div id="capture">
+    <div class="diagram-wrap">
+      <!-- viewBox sized for ~40px gaps; arrows drawn BEFORE boxes -->
+      <svg class="arch" viewBox="0 0 1200 780" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="BoomBoom M1-M13 modular architecture">
+        <defs>
+          <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+            <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#0f172a" stroke-width="1"/>
+          </pattern>
+          <marker id="arrow-slate" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#64748b"/>
+          </marker>
+          <marker id="arrow-cyan" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#22d3ee"/>
+          </marker>
+          <marker id="arrow-emerald" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#34d399"/>
+          </marker>
+          <marker id="arrow-violet" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#a78bfa"/>
+          </marker>
+          <marker id="arrow-rose" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#fb7185"/>
+          </marker>
+          <marker id="arrow-amber" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#fbbf24"/>
+          </marker>
+          <marker id="arrow-orange" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#fb923c"/>
+          </marker>
+          <filter id="glow-rose" x="-20%" y="-20%" width="140%" height="140%">
+            <feDropShadow dx="0" dy="0" stdDeviation="3" flood-color="#fb7185" flood-opacity="0.45"/>
+          </filter>
+        </defs>
+
+        <!-- Background -->
+        <rect width="1200" height="780" fill="#020617"/>
+        <rect width="1200" height="780" fill="url(#grid)"/>
+
+        <!-- Region labels (outside box clusters) -->
+        <text x="40" y="36" fill="#64748b" font-size="11" font-family="JetBrains Mono, monospace" font-weight="600">INGRESS &amp; RESEARCH</text>
+        <text x="520" y="36" fill="#64748b" font-size="11" font-family="JetBrains Mono, monospace" font-weight="600">SIGNAL · STRATEGY · AI (soft)</text>
+        <text x="40" y="320" fill="#64748b" font-size="11" font-family="JetBrains Mono, monospace" font-weight="600">PROTECTED EXECUTION PATH</text>
+        <text x="820" y="320" fill="#64748b" font-size="11" font-family="JetBrains Mono, monospace" font-weight="600">DESK · OPS · GATES</text>
+
+        <!-- ========== ARROWS FIRST (under boxes) ========== -->
+        <!-- M2 → M3 -->
+        <path d="M 220 120 L 280 120" stroke="#34d399" stroke-width="2" fill="none" marker-end="url(#arrow-emerald)"/>
+        <!-- M3 → M6 -->
+        <path d="M 420 120 L 500 120" stroke="#34d399" stroke-width="2" fill="none" marker-end="url(#arrow-emerald)"/>
+        <!-- M6 → M5 -->
+        <path d="M 640 120 L 700 120" stroke="#34d399" stroke-width="2" fill="none" marker-end="url(#arrow-emerald)"/>
+        <!-- M5 → M7 -->
+        <path d="M 840 120 L 900 120" stroke="#a78bfa" stroke-width="2" fill="none" marker-end="url(#arrow-violet)"/>
+        <!-- M2 → M4 (down) -->
+        <path d="M 140 168 L 140 210" stroke="#22d3ee" stroke-width="2" fill="none" marker-end="url(#arrow-cyan)"/>
+        <!-- M3 annotate M4 (optional read) -->
+        <path d="M 350 168 C 350 190 220 200 220 210" stroke="#22d3ee" stroke-width="1.5" fill="none" stroke-dasharray="4 3" marker-end="url(#arrow-cyan)" opacity="0.7"/>
+        <!-- M6 → M5 already; M6 also feeds processor conceptually toward M8 via advisory path -->
+        <!-- M1 → M8 (auth/security dashed rose) -->
+        <path d="M 100 400 L 100 450 L 280 450" stroke="#fb7185" stroke-width="2" fill="none" stroke-dasharray="6 4" marker-end="url(#arrow-rose)"/>
+        <!-- Advisory soft path M7 → near M8 (dashed violet, advisory only — NOT into M8 dependency) -->
+        <path d="M 980 168 L 980 360 L 520 360 L 520 400" stroke="#a78bfa" stroke-width="1.75" fill="none" stroke-dasharray="5 4" marker-end="url(#arrow-violet)" opacity="0.85"/>
+        <text x="700" y="352" fill="#a78bfa" font-size="9" font-family="JetBrains Mono, monospace">advisory only (veto / conviction) — NOT a hard gate</text>
+        <!-- Playbook / signal into risk via processor: M5/M6 → M8 -->
+        <path d="M 560 168 L 560 280 L 400 280 L 400 400" stroke="#34d399" stroke-width="2" fill="none" marker-end="url(#arrow-emerald)"/>
+        <text x="410" y="272" fill="#64748b" font-size="9" font-family="JetBrains Mono, monospace">VALID setup → processor</text>
+        <!-- M8 → M9 -->
+        <path d="M 520 480 L 620 480" stroke="#fb7185" stroke-width="2.5" fill="none" marker-end="url(#arrow-rose)"/>
+        <!-- M9 → M10 -->
+        <path d="M 760 480 L 860 480" stroke="#34d399" stroke-width="2" fill="none" marker-end="url(#arrow-emerald)"/>
+        <!-- M11 consumes public APIs (from several modules) -->
+        <path d="M 220 258 L 220 300 L 900 300 L 900 400" stroke="#22d3ee" stroke-width="1.5" fill="none" stroke-dasharray="4 3" marker-end="url(#arrow-cyan)" opacity="0.75"/>
+        <text x="620" y="292" fill="#22d3ee" font-size="9" font-family="JetBrains Mono, monospace">M11 reads public APIs (no direct M8 internals)</text>
+        <!-- M12 ops to M9/M8 -->
+        <path d="M 1040 520 L 1040 500 L 760 500" stroke="#fbbf24" stroke-width="1.75" fill="none" marker-end="url(#arrow-amber)"/>
+        <path d="M 1040 560 L 1040 600 L 400 600 L 400 528" stroke="#fbbf24" stroke-width="1.5" fill="none" stroke-dasharray="4 3" marker-end="url(#arrow-amber)" opacity="0.8"/>
+        <!-- External vendors into M2 -->
+        <path d="M 40 120 L 60 120" stroke="#94a3b8" stroke-width="2" fill="none" marker-end="url(#arrow-slate)"/>
+
+        <!-- M13 overlay gate band (visual, not runtime trade path) -->
+        <rect x="24" y="700" width="1152" height="56" rx="10" fill="#1c1917" stroke="#fb7185" stroke-width="1.5" stroke-dasharray="6 4" opacity="0.95"/>
+        <text x="40" y="724" fill="#fb7185" font-size="12" font-family="JetBrains Mono, monospace" font-weight="700">M13 Code Review &amp; quality gates</text>
+        <text x="40" y="742" fill="#94a3b8" font-size="10" font-family="JetBrains Mono, monospace">CI overlay · blocks fake source / hardcode / risk bypass · gates ALL modules · not on live order path</text>
+        <!-- Gate ticks up toward regions -->
+        <path d="M 140 700 L 140 640" stroke="#fb7185" stroke-width="1.25" fill="none" stroke-dasharray="3 3" opacity="0.5"/>
+        <path d="M 400 700 L 400 528" stroke="#fb7185" stroke-width="1.25" fill="none" stroke-dasharray="3 3" opacity="0.45"/>
+        <path d="M 700 700 L 700 528" stroke="#fb7185" stroke-width="1.25" fill="none" stroke-dasharray="3 3" opacity="0.45"/>
+        <path d="M 980 700 L 980 620" stroke="#fb7185" stroke-width="1.25" fill="none" stroke-dasharray="3 3" opacity="0.5"/>
+
+        <!-- ========== BOXES (after arrows) ========== -->
+        <!-- External vendors (slate) -->
+        <rect x="8" y="88" width="48" height="64" rx="8" fill="#020617"/>
+        <rect x="8" y="88" width="48" height="64" rx="8" fill="#94a3b833" stroke="#94a3b8" stroke-width="1.5"/>
+        <text x="32" y="112" text-anchor="middle" fill="#94a3b8" font-size="9" font-family="JetBrains Mono, monospace" font-weight="700">EXT</text>
+        <text x="32" y="128" text-anchor="middle" fill="#cbd5e1" font-size="8" font-family="JetBrains Mono, monospace">Yahoo</text>
+        <text x="32" y="140" text-anchor="middle" fill="#cbd5e1" font-size="8" font-family="JetBrains Mono, monospace">Polygon…</text>
+
+        <!-- M2 Backend emerald -->
+        <rect x="60" y="80" width="160" height="88" rx="10" fill="#020617"/>
+        <rect x="60" y="80" width="160" height="88" rx="10" fill="#34d39922" stroke="#34d399" stroke-width="1.75"/>
+        <text x="72" y="102" fill="#34d399" font-size="11" font-family="JetBrains Mono, monospace" font-weight="700">M2 Market data</text>
+        <text x="72" y="120" fill="#e2e8f0" font-size="10" font-family="JetBrains Mono, monospace">ingress</text>
+        <text x="72" y="138" fill="#94a3b8" font-size="9" font-family="JetBrains Mono, monospace">OHLCV · options ·</text>
+        <text x="72" y="152" fill="#94a3b8" font-size="9" font-family="JetBrains Mono, monospace">vendor tags · gold TBD</text>
+
+        <!-- M3 Backend emerald -->
+        <rect x="280" y="80" width="140" height="88" rx="10" fill="#020617"/>
+        <rect x="280" y="80" width="140" height="88" rx="10" fill="#34d39922" stroke="#34d399" stroke-width="1.75"/>
+        <text x="292" y="102" fill="#34d399" font-size="11" font-family="JetBrains Mono, monospace" font-weight="700">M3 Research</text>
+        <text x="292" y="120" fill="#e2e8f0" font-size="10" font-family="JetBrains Mono, monospace">&amp; scoring</text>
+        <text x="292" y="138" fill="#94a3b8" font-size="9" font-family="JetBrains Mono, monospace">scan / deep DNA</text>
+        <text x="292" y="152" fill="#94a3b8" font-size="9" font-family="JetBrains Mono, monospace">fund · tech · risk</text>
+
+        <!-- M6 Strategy -->
+        <rect x="500" y="80" width="140" height="88" rx="10" fill="#020617"/>
+        <rect x="500" y="80" width="140" height="88" rx="10" fill="#34d39922" stroke="#34d399" stroke-width="1.75"/>
+        <text x="512" y="102" fill="#34d399" font-size="11" font-family="JetBrains Mono, monospace" font-weight="700">M6 Strategy</text>
+        <text x="512" y="120" fill="#e2e8f0" font-size="10" font-family="JetBrains Mono, monospace">playbooks</text>
+        <text x="512" y="138" fill="#94a3b8" font-size="9" font-family="JetBrains Mono, monospace">VALID / skip</text>
+        <text x="512" y="152" fill="#94a3b8" font-size="9" font-family="JetBrains Mono, monospace">named strategies</text>
+
+        <!-- M5 Signal -->
+        <rect x="700" y="80" width="140" height="88" rx="10" fill="#020617"/>
+        <rect x="700" y="80" width="140" height="88" rx="10" fill="#34d39922" stroke="#34d399" stroke-width="1.75"/>
+        <text x="712" y="102" fill="#34d399" font-size="11" font-family="JetBrains Mono, monospace" font-weight="700">M5 Reference</text>
+        <text x="712" y="120" fill="#e2e8f0" font-size="10" font-family="JetBrains Mono, monospace">signal service</text>
+        <text x="712" y="138" fill="#94a3b8" font-size="9" font-family="JetBrains Mono, monospace">SignalCard + sources</text>
+        <text x="712" y="152" fill="#94a3b8" font-size="9" font-family="JetBrains Mono, monospace">no orders</text>
+
+        <!-- M7 AI violet -->
+        <rect x="900" y="80" width="160" height="88" rx="10" fill="#020617"/>
+        <rect x="900" y="80" width="160" height="88" rx="10" fill="#a78bfa22" stroke="#a78bfa" stroke-width="1.75"/>
+        <text x="912" y="102" fill="#a78bfa" font-size="11" font-family="JetBrains Mono, monospace" font-weight="700">M7 AI advisory</text>
+        <text x="912" y="120" fill="#e2e8f0" font-size="10" font-family="JetBrains Mono, monospace">soft judgment</text>
+        <text x="912" y="138" fill="#94a3b8" font-size="9" font-family="JetBrains Mono, monospace">closed veto +</text>
+        <text x="912" y="152" fill="#94a3b8" font-size="9" font-family="JetBrains Mono, monospace">conviction · no size</text>
+
+        <!-- M4 Chart Frontend cyan -->
+        <rect x="60" y="210" width="160" height="72" rx="10" fill="#020617"/>
+        <rect x="60" y="210" width="160" height="72" rx="10" fill="#22d3ee22" stroke="#22d3ee" stroke-width="1.75"/>
+        <text x="72" y="232" fill="#22d3ee" font-size="11" font-family="JetBrains Mono, monospace" font-weight="700">M4 Chart &amp;</text>
+        <text x="72" y="248" fill="#e2e8f0" font-size="10" font-family="JetBrains Mono, monospace">indicator (TV-like)</text>
+        <text x="72" y="266" fill="#94a3b8" font-size="9" font-family="JetBrains Mono, monospace">OHLCV · overlays · UI</text>
+
+        <!-- M1 Identity -->
+        <rect x="40" y="360" width="120" height="72" rx="10" fill="#020617"/>
+        <rect x="40" y="360" width="120" height="72" rx="10" fill="#94a3b822" stroke="#94a3b8" stroke-width="1.75"/>
+        <text x="52" y="382" fill="#94a3b8" font-size="11" font-family="JetBrains Mono, monospace" font-weight="700">M1 Identity</text>
+        <text x="52" y="398" fill="#e2e8f0" font-size="10" font-family="JetBrains Mono, monospace">&amp; accounts</text>
+        <text x="52" y="416" fill="#64748b" font-size="9" font-family="JetBrains Mono, monospace">session · limits</text>
+
+        <!-- M8 PROTECTED Security rose -->
+        <rect x="280" y="400" width="240" height="128" rx="12" fill="#020617"/>
+        <rect x="280" y="400" width="240" height="128" rx="12" fill="#fb718522" stroke="#fb7185" stroke-width="2.25" filter="url(#glow-rose)"/>
+        <text x="296" y="424" fill="#fb7185" font-size="12" font-family="JetBrains Mono, monospace" font-weight="700">M8 Risk &amp; safety · PROTECTED</text>
+        <text x="296" y="444" fill="#e2e8f0" font-size="10" font-family="JetBrains Mono, monospace">gates · sizer · mandate · kill · audit</text>
+        <text x="296" y="464" fill="#fda4af" font-size="10" font-family="JetBrains Mono, monospace" font-weight="600">HARD RULE: does NOT depend on M7</text>
+        <text x="296" y="482" fill="#fda4af" font-size="10" font-family="JetBrains Mono, monospace" font-weight="600">AI cannot bypass · no LLM orders</text>
+        <text x="296" y="506" fill="#94a3b8" font-size="9" font-family="JetBrains Mono, monospace">size = equity × risk% ÷ stop (code)</text>
+
+        <!-- M9 Execution -->
+        <rect x="620" y="430" width="140" height="100" rx="10" fill="#020617"/>
+        <rect x="620" y="430" width="140" height="100" rx="10" fill="#34d39922" stroke="#34d399" stroke-width="1.75"/>
+        <text x="632" y="454" fill="#34d399" font-size="11" font-family="JetBrains Mono, monospace" font-weight="700">M9 Execution</text>
+        <text x="632" y="472" fill="#e2e8f0" font-size="10" font-family="JetBrains Mono, monospace">&amp; brokers</text>
+        <text x="632" y="492" fill="#94a3b8" font-size="9" font-family="JetBrains Mono, monospace">paper / shadow /</text>
+        <text x="632" y="506" fill="#94a3b8" font-size="9" font-family="JetBrains Mono, monospace">live (gated)</text>
+
+        <!-- M10 Journal Frontend/Backend mix — journal is user-visible → cyan border with emerald fill hint -->
+        <rect x="860" y="430" width="150" height="100" rx="10" fill="#020617"/>
+        <rect x="860" y="430" width="150" height="100" rx="10" fill="#22d3ee18" stroke="#22d3ee" stroke-width="1.75"/>
+        <text x="872" y="454" fill="#22d3ee" font-size="11" font-family="JetBrains Mono, monospace" font-weight="700">M10 Trade</text>
+        <text x="872" y="472" fill="#e2e8f0" font-size="10" font-family="JetBrains Mono, monospace">journal &amp;</text>
+        <text x="872" y="490" fill="#94a3b8" font-size="9" font-family="JetBrains Mono, monospace">provenance</text>
+        <text x="872" y="508" fill="#94a3b8" font-size="9" font-family="JetBrains Mono, monospace">user-visible trace</text>
+
+        <!-- M11 Desk App -->
+        <rect x="860" y="340" width="150" height="72" rx="10" fill="#020617"/>
+        <rect x="860" y="340" width="150" height="72" rx="10" fill="#22d3ee22" stroke="#22d3ee" stroke-width="1.75"/>
+        <text x="872" y="362" fill="#22d3ee" font-size="11" font-family="JetBrains Mono, monospace" font-weight="700">M11 Desk App</text>
+        <text x="872" y="378" fill="#e2e8f0" font-size="10" font-family="JetBrains Mono, monospace">/ API (FastAPI)</text>
+        <text x="872" y="396" fill="#94a3b8" font-size="9" font-family="JetBrains Mono, monospace">remote mini-Futu UX</text>
+
+        <!-- M12 Ops Cloud amber -->
+        <rect x="1040" y="520" width="130" height="88" rx="10" fill="#020617"/>
+        <rect x="1040" y="520" width="130" height="88" rx="10" fill="#fbbf2422" stroke="#fbbf24" stroke-width="1.75"/>
+        <text x="1052" y="544" fill="#fbbf24" font-size="11" font-family="JetBrains Mono, monospace" font-weight="700">M12 Ops</text>
+        <text x="1052" y="560" fill="#e2e8f0" font-size="10" font-family="JetBrains Mono, monospace">VPS · worker</text>
+        <text x="1052" y="576" fill="#94a3b8" font-size="9" font-family="JetBrains Mono, monospace">heartbeat · TG ops</text>
+        <text x="1052" y="592" fill="#fcd34d" font-size="9" font-family="JetBrains Mono, monospace">TG ≠ orders</text>
+
+        <!-- Legend (outside region clusters, bottom-left above M13) -->
+        <g transform="translate(40, 620)">
+          <text x="0" y="0" fill="#64748b" font-size="10" font-family="JetBrains Mono, monospace" font-weight="600">LEGEND</text>
+          <rect x="0" y="10" width="12" height="12" rx="2" fill="#22d3ee33" stroke="#22d3ee"/>
+          <text x="18" y="20" fill="#94a3b8" font-size="9" font-family="JetBrains Mono, monospace">Frontend</text>
+          <rect x="90" y="10" width="12" height="12" rx="2" fill="#34d39933" stroke="#34d399"/>
+          <text x="108" y="20" fill="#94a3b8" font-size="9" font-family="JetBrains Mono, monospace">Backend</text>
+          <rect x="170" y="10" width="12" height="12" rx="2" fill="#a78bfa33" stroke="#a78bfa"/>
+          <text x="188" y="20" fill="#94a3b8" font-size="9" font-family="JetBrains Mono, monospace">AI / soft</text>
+          <rect x="250" y="10" width="12" height="12" rx="2" fill="#fbbf2433" stroke="#fbbf24"/>
+          <text x="268" y="20" fill="#94a3b8" font-size="9" font-family="JetBrains Mono, monospace">Cloud / Ops</text>
+          <rect x="360" y="10" width="12" height="12" rx="2" fill="#fb718533" stroke="#fb7185"/>
+          <text x="378" y="20" fill="#94a3b8" font-size="9" font-family="JetBrains Mono, monospace">Security</text>
+          <rect x="450" y="10" width="12" height="12" rx="2" fill="#94a3b833" stroke="#94a3b8"/>
+          <text x="468" y="20" fill="#94a3b8" font-size="9" font-family="JetBrains Mono, monospace">External / Identity</text>
+          <line x1="600" y1="16" x2="630" y2="16" stroke="#fb7185" stroke-width="2" stroke-dasharray="5 3"/>
+          <text x="638" y="20" fill="#94a3b8" font-size="9" font-family="JetBrains Mono, monospace">auth / security flow</text>
+          <line x1="790" y1="16" x2="820" y2="16" stroke="#a78bfa" stroke-width="2" stroke-dasharray="5 3"/>
+          <text x="828" y="20" fill="#94a3b8" font-size="9" font-family="JetBrains Mono, monospace">advisory (soft)</text>
+        </g>
+
+        <!-- Hard rule callout -->
+        <rect x="280" y="540" width="520" height="36" rx="8" fill="#020617"/>
+        <rect x="280" y="540" width="520" height="36" rx="8" fill="#fb718515" stroke="#fb7185" stroke-width="1" stroke-dasharray="4 3"/>
+        <text x="296" y="562" fill="#fecdd3" font-size="11" font-family="JetBrains Mono, monospace" font-weight="600">Order path: setup → (optional M7 veto/conviction) → M8 → M9 → M10 · LLM/TG never place_order</text>
+      </svg>
+    </div>
+
+    <div class="cards">
+      <div class="card protected">
+        <h3>1 · Protected core — M8</h3>
+        <p>gates · position sizer · mandate · kill switch · audit. Fail-closed. Does not depend on M7. No model-supplied size. Semantic changes = highest review.</p>
       </div>
-      <p>
-        LLM, Telegram, and <code>backend/lab/advisory_debate.py</code> cannot Approve or Merge.
-        Merge makes an intent <em>eligible</em> for L2; it is not a broker fill.
-      </p>
-    </section>
-
-    <section>
-      <h2>Dual-clock · H1–H3</h2>
-      <div class="grid">
-        <div>
-          <h3>Research / Scan clock</h3>
-          <p>Desk lifespan: <code>backend/api/scan_scheduler.py</code>. Freshness: <code>SIGNAL_MAX_AGE_HOURS</code> / <code>SCAN_STALE_AFTER_HOURS</code> in <code>backend/api/research_jobs.py</code>.</p>
-          <p>Owns H1 Propose and the <code>as_of</code> on Intent v0. Stale research fail-closes <strong>new buys</strong>.</p>
-        </div>
-        <div>
-          <h3>Execution / Worker clock</h3>
-          <p>Worker: <code>backend/trading/engine/worker.py</code> + cadence <code>backend/trading/engine/cadence.py</code>.</p>
-          <p>Owns H3 Merge consumption and L2 submit. Exits / SELL may still run when the research clock is stale.</p>
-        </div>
+      <div class="card soft">
+        <h3>2 · Soft judgment — M7</h3>
+        <p>Closed veto reason codes + conviction tier only. Never triggers entries from headlines alone. Never calls place_order. Must beat rules-only E on shadow before live.</p>
       </div>
-      <p>Do not collapse the two clocks. A worker tick is not proof that Scan is fresh.</p>
-    </section>
+      <div class="card desk">
+        <h3>3 · User-visible desk — M4 / M10 / M11</h3>
+        <p>TradingView-like charts &amp; indicators, every trade log traceable to the user, remote FastAPI desk UX (mini-Futu). Reference SignalCards via M5 (schema still planning). Streamlit = lab/legacy, not the product surface.</p>
+      </div>
+    </div>
 
-    <section>
-      <h2>IntentStore (L1) vs OrderStore (L2)</h2>
-      <table>
-        <thead>
-          <tr><th></th><th>IntentStore · L1</th><th>OrderStore · L2</th></tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td>Contract</td>
-            <td>ADR-003 / MODULAR §5–§7. <span class="pill warn">docs only on main</span></td>
-            <td><code>backend/trading/storage.py</code> · <code>OrderManager</code></td>
-          </tr>
-          <tr>
-            <td>Records</td>
-            <td><code>HarnessProposal</code> + Intent v0</td>
-            <td><code>Order</code>, fills, broker ids</td>
-          </tr>
-          <tr>
-            <td>Allowed fields</td>
-            <td>expiry, side, stop, conviction_tier, as_of, source, status</td>
-            <td>quantity, order_type, idempotency_key, fills, slippage</td>
-          </tr>
-          <tr>
-            <td>May call OrderManager?</td>
-            <td><span class="pill no">NO</span></td>
-            <td><span class="pill ok">YES</span> after H3, through RiskEngine</td>
-          </tr>
-        </tbody>
-      </table>
-    </section>
+    <div class="cards">
+      <div class="card">
+        <h3>Dual-clock · H1–H3</h3>
+        <p><strong>H1</strong> (~1s): kill / exits / consume IntentStore — no LLM.<br/>
+        <strong>H2</strong> (5–15s): order status / light reconcile — no LLM.<br/>
+        <strong>H3</strong> (minute/bar): M6+M7 write IntentStore (LLM allowed).<br/>
+        Proposal governance is a <em>separate</em> path — not mixed into live intents.</p>
+      </div>
+      <div class="card">
+        <h3>IntentStore (L1) vs OrderStore (L2)</h3>
+        <p>H3 writes Intent v0 (side / stop / conviction_tier / expiry). H1 consumes unexpired intents through M8 sizer. Existing <code>OrderStore</code> is the L2 order ledger — not IntentStore. Intent v0 forbids qty / notional / broker ids / fills.</p>
+      </div>
+      <div class="card">
+        <h3>Proposal → Approve → Merge</h3>
+        <p>Learn + digest → <code>HarnessProposal</code> vN → present on Desk → explicit user Approve → M13 checklist → M12 Merge / Rollback. L2 (mandate / kill / risk% / live) never auto-merges. Unapproved Proposal is not an Intent.</p>
+      </div>
+    </div>
 
-    <section>
-      <h2>L1 Intent v0 · forbid L2 fields</h2>
-      <p>Required on Intent v0: <code>schema_version=intent.v0</code>, <code>intent_id</code>, <code>symbol</code>, <code>side</code>, <code>stop</code>, <code>conviction_tier</code>, <code>expiry</code>, <code>as_of</code>, <code>source</code>, <code>status</code>.</p>
-      <p><span class="x">Forbidden on Intent v0:</span> quantity / notional, limit_price, order_type, order_class, broker_order_id, idempotency_key, filled_*, slippage_pct, commission, take_profit as a broker leg, OrderStatus values (<code>draft</code>, <code>risk_approved</code>, <code>submitted</code>, …).</p>
-    </section>
+    <div class="cards">
+      <div class="card soft">
+        <h3>L1 vs L2</h3>
+        <p><strong>L1</strong> may auto: intents, conviction, watchlist, closed-list veto toggles (still sized by M8 before any order).<br/>
+        <strong>L2</strong> constitution only via Approve+Merge: mandate, kill, risk caps, strategy defaults, live flag, mandatory stop rules.</p>
+      </div>
+      <div class="card protected">
+        <h3>lab/advisory_debate ≠ product M7</h3>
+        <p><code>backend/lab/advisory_debate.py</code> is a lab Bull/Bear/Risk memo. It is not product M7 and must not wire to <code>OrderManager</code> / M9. Product M7 = closed veto + conviction + digest-for-Proposal only.</p>
+      </div>
+      <div class="card desk">
+        <h3>Authority</h3>
+        <p>ADR-003 + Addendum A &gt; MODULAR_ARCHITECTURE &gt; AUDIT_REMEDIATION_PLAN_2026-10-21 (Confirmed). ADR-002 is VOID. Frozen roadmaps are not binding.</p>
+      </div>
+    </div>
 
-    <section>
-      <h2>Product vs lab</h2>
-      <table>
-        <thead>
-          <tr><th>Surface</th><th>Path</th><th>Role</th></tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td>Desk · product</td>
-            <td><code>backend/api/app.py</code> + <code>web/static</code></td>
-            <td>Commercial UI. H2 Approve lives here.</td>
-          </tr>
-          <tr>
-            <td>Streamlit · lab / legacy</td>
-            <td><code>backend/app.py</code></td>
-            <td>Not the product surface.</td>
-          </tr>
-          <tr>
-            <td>Lab advisory</td>
-            <td><code>backend/lab/advisory_debate.py</code></td>
-            <td><span class="bad">≠ product M7</span>. Must <strong>not</strong> wire to OrderManager.</td>
-          </tr>
-        </tbody>
-      </table>
-      <p>
-        Hard boundary: lab advisory is a research memo (<code>POST /api/lab/advisory</code>, tests in <code>tests/lab/test_desk_slice_b.py</code>).
-        It is not product M7 and it is not an H1 proposal source that can skip H2.
-      </p>
-    </section>
-
-    <footer>
-      Frozen roadmaps are not authority. Conflicts resolve to ADR-003 + MODULAR_ARCHITECTURE.md.
-      Audit plan <code>AUDIT_REMEDIATION_PLAN_2026-10-21.md</code> was confirmed by Gabriel 2026-10-21 but was not in this git checkout.
+    <footer class="note">
+      Source: docs/MODULAR_ARCHITECTURE.md · docs/ADR-003-live-ai-trading-desk.md · docs/AUDIT_REMEDIATION_PLAN_2026-10-21.md · DAG only · M13 gates all · BoomBoom / cgabrielck-stock-analyzer · 2026-10-21 Asia/Hong_Kong
     </footer>
-  </main>
+  </div>
+</div>
+
+<script>
+(function () {
+  // Prefer working CDN scripts. If SRI above fails (hash mismatch), reload without integrity.
+  function loadScript(src) {
+    return new Promise(function (resolve, reject) {
+      var s = document.createElement("script");
+      s.src = src;
+      s.crossOrigin = "anonymous";
+      s.onload = resolve;
+      s.onerror = reject;
+      document.head.appendChild(s);
+    });
+  }
+
+  async function ensureLibs() {
+    if (!window.html2canvas) {
+      await loadScript("https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js");
+    }
+    if (!window.jspdf) {
+      await loadScript("https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js");
+    }
+  }
+
+  function toast(msg) {
+    var el = document.getElementById("toast");
+    el.textContent = msg;
+    el.style.display = "block";
+    setTimeout(function () { el.style.display = "none"; }, 2200);
+  }
+
+  async function capture() {
+    await ensureLibs();
+    var node = document.getElementById("capture");
+    return html2canvas(node, {
+      backgroundColor: "#020617",
+      scale: 2,
+      useCORS: true,
+      logging: false
+    });
+  }
+
+  document.getElementById("btn-png").addEventListener("click", async function () {
+    try {
+      var canvas = await capture();
+      var a = document.createElement("a");
+      a.download = "boomboom-modular-architecture.png";
+      a.href = canvas.toDataURL("image/png");
+      a.click();
+      toast("PNG downloaded");
+    } catch (e) {
+      toast("PNG failed: " + (e && e.message ? e.message : e));
+    }
+  });
+
+  document.getElementById("btn-copy").addEventListener("click", async function () {
+    try {
+      var canvas = await capture();
+      canvas.toBlob(async function (blob) {
+        try {
+          await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+          toast("Copied PNG to clipboard");
+        } catch (err) {
+          // Fallback: open data URL copy of PNG download
+          var a = document.createElement("a");
+          a.download = "boomboom-modular-architecture.png";
+          a.href = canvas.toDataURL("image/png");
+          a.click();
+          toast("Clipboard blocked — downloaded PNG instead");
+        }
+      });
+    } catch (e) {
+      toast("Copy failed: " + (e && e.message ? e.message : e));
+    }
+  });
+
+  document.getElementById("btn-pdf").addEventListener("click", async function () {
+    try {
+      var canvas = await capture();
+      await ensureLibs();
+      var jsPDF = (window.jspdf && window.jspdf.jsPDF) ? window.jspdf.jsPDF : null;
+      if (!jsPDF) throw new Error("jsPDF not loaded");
+      var img = canvas.toDataURL("image/png");
+      var pdf = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
+      var pageW = pdf.internal.pageSize.getWidth();
+      var pageH = pdf.internal.pageSize.getHeight();
+      var margin = 24;
+      var maxW = pageW - margin * 2;
+      var maxH = pageH - margin * 2;
+      var ratio = Math.min(maxW / canvas.width, maxH / canvas.height);
+      var w = canvas.width * ratio;
+      var h = canvas.height * ratio;
+      var x = (pageW - w) / 2;
+      var y = (pageH - h) / 2;
+      pdf.setFillColor(2, 6, 23);
+      pdf.rect(0, 0, pageW, pageH, "F");
+      pdf.addImage(img, "PNG", x, y, w, h);
+      pdf.save("boomboom-modular-architecture.pdf");
+      toast("PDF downloaded");
+    } catch (e) {
+      toast("PDF failed: " + (e && e.message ? e.message : e));
+    }
+  });
+})();
+</script>
 </body>
 </html>

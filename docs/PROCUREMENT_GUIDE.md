@@ -1,6 +1,6 @@
 # ALPHA//DESK 付費服務與 VPS 採購指南
 
-> Architecture: **ADR-003 Accepted** ([`ARCHITECTURE_DECISION.md`](ARCHITECTURE_DECISION.md)). **ADR-002 is VOID.** Product = FastAPI Desk; Streamlit = lab/legacy. This guide is procurement only.
+> Architecture: **ADR-003 Accepted** ([`ADR-003-live-ai-trading-desk.md`](ADR-003-live-ai-trading-desk.md); index [`ARCHITECTURE_DECISION.md`](ARCHITECTURE_DECISION.md)). **ADR-002 is VOID.** Product = FastAPI Desk; Streamlit = lab/legacy. This guide is procurement only.
 
 Last updated: 2026-09-10 (authority pointer 2026-10-21)
 

@@ -1,6 +1,6 @@
 # Cgab — World-class upgrade plan
 
-> **Architecture authority (2026-10-21):** [`ARCHITECTURE_DECISION.md`](ARCHITECTURE_DECISION.md) **ADR-003 + Addendum A (Accepted)**. **ADR-002 is VOID.** This file remains the OSS catalog / grade history; it is **not** binding for product surface, Intent/L1–L2, or sequencing. See [`MODULAR_ARCHITECTURE.md`](MODULAR_ARCHITECTURE.md).
+> **Architecture authority (2026-10-21):** [`ADR-003-live-ai-trading-desk.md`](ADR-003-live-ai-trading-desk.md) **Accepted + Addendum A**. Index: [`ARCHITECTURE_DECISION.md`](ARCHITECTURE_DECISION.md). Audit: [`AUDIT_REMEDIATION_PLAN_2026-10-21.md`](AUDIT_REMEDIATION_PLAN_2026-10-21.md) (Confirmed). **ADR-002 is VOID.** This file remains the OSS catalog / grade history; it is **not** binding. See [`MODULAR_ARCHITECTURE.md`](MODULAR_ARCHITECTURE.md).
 
 **Last updated:** 2026-09-17 (wait-state: Waves 1–5 landed; Wave 6 next)  
 **Status:** Frozen operating-strategy notes. **No trading-code changes until you approve a coding slice.**  

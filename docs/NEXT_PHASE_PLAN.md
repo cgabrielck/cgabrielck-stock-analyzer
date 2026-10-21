@@ -5,9 +5,9 @@
 > **本文件已凍結。** 僅作歷史提案，**不是**架構、產品或排程權威。
 >
 > 衝突依下列順序解決：
-> 1. **ADR-003 + Addendum A（Accepted）** — [`ARCHITECTURE_DECISION.md`](ARCHITECTURE_DECISION.md)
+> 1. **ADR-003 + Addendum A（Accepted）** — [`ADR-003-live-ai-trading-desk.md`](ADR-003-live-ai-trading-desk.md)（索引：[`ARCHITECTURE_DECISION.md`](ARCHITECTURE_DECISION.md)）
 > 2. [`MODULAR_ARCHITECTURE.md`](MODULAR_ARCHITECTURE.md)
-> 3. `AUDIT_REMEDIATION_PLAN_2026-10-21.md`（Gabriel 2026-10-21 確認；**本 checkout 無此檔**）
+> 3. [`AUDIT_REMEDIATION_PLAN_2026-10-21.md`](AUDIT_REMEDIATION_PLAN_2026-10-21.md)（**Gabriel 2026-10-21 Confirmed**）
 >
 > **ADR-002 為 VOID。** 不可再引用本檔、ADR-001 或 ADR-002 作為約束。
 > 視覺圖：[`boomboom-modular-architecture.html`](boomboom-modular-architecture.html)

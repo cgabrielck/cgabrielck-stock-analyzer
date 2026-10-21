@@ -6,7 +6,7 @@
 
 **ADR-002 is VOID. ADR-001 is history.** Older roadmaps (`AUTO_TRADING_ROADMAP`, `NEXT_PHASE_PLAN`, `QUALITY_ROADMAP`, `PAPER_VALIDATION_RUNBOOK`, `PROGRESS_LOG`) are frozen.
 
-See [`docs/ARCHITECTURE_DECISION.md`](docs/ARCHITECTURE_DECISION.md) (ADR-003 + Addendum A), [`docs/MODULAR_ARCHITECTURE.md`](docs/MODULAR_ARCHITECTURE.md), [`docs/boomboom-modular-architecture.html`](docs/boomboom-modular-architecture.html).
+See [`docs/ADR-003-live-ai-trading-desk.md`](docs/ADR-003-live-ai-trading-desk.md) (Accepted + Addendum A), [`docs/ARCHITECTURE_DECISION.md`](docs/ARCHITECTURE_DECISION.md) (index; ADR-002 VOID), [`docs/MODULAR_ARCHITECTURE.md`](docs/MODULAR_ARCHITECTURE.md), [`docs/AUDIT_REMEDIATION_PLAN_2026-10-21.md`](docs/AUDIT_REMEDIATION_PLAN_2026-10-21.md) (Confirmed), [`docs/boomboom-modular-architecture.html`](docs/boomboom-modular-architecture.html).
 
 **What to buy (VPS / broker / paid APIs):** [`docs/PROCUREMENT_GUIDE.md`](docs/PROCUREMENT_GUIDE.md) — Phase 1 Alpaca Paper + Hetzner CPX21 + Telegram; Phase 2 Polygon daily bars; Phase 3 live only after paper gate.
 

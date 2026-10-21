@@ -5,9 +5,9 @@
 > **This document is frozen.** It is a session-recovery ledger, not architecture, product, or sequencing authority.
 >
 > Conflicts are resolved by, in order:
-> 1. **ADR-003 + Addendum A (Accepted)** — [`docs/ARCHITECTURE_DECISION.md`](docs/ARCHITECTURE_DECISION.md)
+> 1. **ADR-003 + Addendum A (Accepted)** — [`docs/ADR-003-live-ai-trading-desk.md`](docs/ADR-003-live-ai-trading-desk.md) (index: [`docs/ARCHITECTURE_DECISION.md`](docs/ARCHITECTURE_DECISION.md))
 > 2. [`docs/MODULAR_ARCHITECTURE.md`](docs/MODULAR_ARCHITECTURE.md)
-> 3. `docs/AUDIT_REMEDIATION_PLAN_2026-10-21.md` (Confirmed by Gabriel 2026-10-21; **file not in this checkout**)
+> 3. [`docs/AUDIT_REMEDIATION_PLAN_2026-10-21.md`](docs/AUDIT_REMEDIATION_PLAN_2026-10-21.md) (**Confirmed by Gabriel 2026-10-21**)
 >
 > **ADR-002 is VOID.** Do not cite this file, ADR-001, or ADR-002 as binding.
 > Visual map: [`docs/boomboom-modular-architecture.html`](docs/boomboom-modular-architecture.html)

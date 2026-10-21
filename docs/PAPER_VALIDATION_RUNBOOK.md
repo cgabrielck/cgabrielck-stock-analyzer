@@ -5,9 +5,9 @@
 > **This document is frozen.** It is historical evidence procedure only. It is **not** architecture, product, or sequencing authority.
 >
 > Conflicts are resolved by, in order:
-> 1. **ADR-003 + Addendum A (Accepted)** — [`ARCHITECTURE_DECISION.md`](ARCHITECTURE_DECISION.md)
+> 1. **ADR-003 + Addendum A (Accepted)** — [`ADR-003-live-ai-trading-desk.md`](ADR-003-live-ai-trading-desk.md) (index: [`ARCHITECTURE_DECISION.md`](ARCHITECTURE_DECISION.md))
 > 2. [`MODULAR_ARCHITECTURE.md`](MODULAR_ARCHITECTURE.md)
-> 3. `AUDIT_REMEDIATION_PLAN_2026-10-21.md` (Confirmed by Gabriel 2026-10-21; **file not in this checkout**)
+> 3. [`AUDIT_REMEDIATION_PLAN_2026-10-21.md`](AUDIT_REMEDIATION_PLAN_2026-10-21.md) (**Confirmed by Gabriel 2026-10-21**)
 >
 > **ADR-002 is VOID.** Do not cite this file, ADR-001, or ADR-002 as binding.
 > Visual map: [`boomboom-modular-architecture.html`](boomboom-modular-architecture.html)

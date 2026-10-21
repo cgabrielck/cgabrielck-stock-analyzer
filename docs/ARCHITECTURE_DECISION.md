@@ -3,65 +3,23 @@
 **Current decision: ADR-003 + Addendum A (Accepted, 2026-10-21).**  
 **ADR-002 is VOID.** ADR-001 remains history only.
 
-Binding order (highest first):
-
-1. This file — **ADR-003 + Addendum A**
-2. [`MODULAR_ARCHITECTURE.md`](MODULAR_ARCHITECTURE.md)
-3. `AUDIT_REMEDIATION_PLAN_2026-10-21.md` (Confirmed by Gabriel 2026-10-21; **not in this checkout**)
-4. Older roadmaps (`AUTO_TRADING_ROADMAP`, `NEXT_PHASE_PLAN`, `QUALITY_ROADMAP`, `PAPER_VALIDATION_RUNBOOK`, `PROGRESS_LOG`, `CGAB_WORLD_CLASS_UPGRADE`) — frozen / superseded; not authority
-
-Visual map: [`boomboom-modular-architecture.html`](boomboom-modular-architecture.html)
-
-This file records architecture authority only. It does **not** change live RiskEngine / Kelly / mandate / kill settings or trading runtime code.
+This file is the **index**. Canonical ADR-003 text lives in its own file. This file does **not** change live RiskEngine / Kelly / mandate / kill settings or trading runtime code.
 
 ---
 
-## ADR-003 — Modular desk, Intent L1, dual-clock harness
+## Index (binding order, highest first)
 
-**Status:** Accepted  
-**Date:** 2026-10-21  
-**Decision ID:** ADR-003  
-**Voids:** ADR-002  
-**Supersedes:** ADR-002 (VOID), ADR-001 (history)  
-**Addendum:** Addendum A (below)  
-**Operating architecture:** [`MODULAR_ARCHITECTURE.md`](MODULAR_ARCHITECTURE.md)
+1. **[`ADR-003-live-ai-trading-desk.md`](ADR-003-live-ai-trading-desk.md)** — **Accepted** by Gabriel (chat) 2026-10-21, including **Addendum A** (Proposal-governed self-upgrade: Learn → Proposal → Approve → Merge; L1 may auto; L2 only after Approve).
+2. **[`MODULAR_ARCHITECTURE.md`](MODULAR_ARCHITECTURE.md)** — M1–M13, dual-clock H1–H3, L1/L2, `HarnessProposal`, Intent v0.
+3. **[`AUDIT_REMEDIATION_PLAN_2026-10-21.md`](AUDIT_REMEDIATION_PLAN_2026-10-21.md)** — **Confirmed by Gabriel 2026-10-21** (Hong Kong time). Next-doc work under ADR-003.
+4. Older roadmaps — **frozen / superseded**, not authority:
+   `AUTO_TRADING_ROADMAP`, `NEXT_PHASE_PLAN`, `QUALITY_ROADMAP`, `PAPER_VALIDATION_RUNBOOK`, `PROGRESS_LOG`, `CGAB_WORLD_CLASS_UPGRADE`.
 
-**Provenance:** On 2026-10-21 the PM (Gabriel) stated ADR-003 + Addendum A is **Accepted**. At `origin/main` `721d04d` and every other remote branch then in this checkout, no file named ADR-003 / Addendum A / `MODULAR_ARCHITECTURE.md` / `AUDIT_REMEDIATION_PLAN_2026-10-21.md` / `boomboom-modular-architecture.html` existed. This record is the docs-sync write-down of that Accepted decision, mapped to paths that **do** exist in the repo. It is not a silent rewrite of risk, mandate, or kill settings.
+Visual map: [`boomboom-modular-architecture.html`](boomboom-modular-architecture.html)
 
-### Context
+**ADR-002 is VOID** (owner decision 2026-10-21). Do not cite it as authoritative. Overlap with ADR-003 engineering preference (evolve `backend/trading/`, Desk = product) is coincidence, not inheritance.
 
-ADR-002 correctly named the FastAPI desk as the product UI and Streamlit as lab. It is nonetheless **VOID** as binding authority: later work needs a modular L1/L2 split (Intent vs order), a dual-clock harness (H1–H3), and an explicit ban on treating `backend/lab/advisory_debate.py` as product M7 or wiring it to `OrderManager`.
-
-### Decision
-
-1. **Do not greenfield-rewrite the repo.** Keep RiskEngine, mandate, kill switch, Kelly, Alpaca `BrokerAdapter`, scoring DNA, and the rule that LLMs / Telegram cannot place orders. This docs batch does not change those live settings.
-2. **Product UI is the Desk:** FastAPI (`backend/api/app.py`) serving `web/static`. **Streamlit (`backend/app.py`) is lab / legacy**, not the commercial surface.
-3. **Two SKUs, one kernel:** Research (analysis) and Paper Auto. Live is a gated add-on, not unsupervised.
-4. **Modular layers:** L1 = Intent (HarnessProposal → IntentStore). L2 = execution (`OrderManager`, broker, fills). Intent v0 **must not** carry L2 fields. See Addendum A and [`MODULAR_ARCHITECTURE.md`](MODULAR_ARCHITECTURE.md) §4–§5.
-5. **Dual-clock, H1–H3:** Research/Scan clock and Execution/Worker clock must not be collapsed. Harness flow is **Propose (H1) → Approve (H2) → Merge (H3)**. Merge does not bypass RiskEngine / mandate / kill.
-6. **Hard boundary:** `backend/lab/advisory_debate.py` is **not** product M7 and **must not** be wired to `OrderManager`. Evidence today: module docstring, `POST /api/lab/advisory`, `tests/lab/test_desk_slice_b.py`.
-7. **Steal mechanisms, not repos.** TradingAgents-style debate stays advisory / lab. Never become a crypto/vnpy bot.
-8. Paid bars (Polygon) on the seal/paper path; Yahoo is labeled fallback.
-
-### Consequences
-
-- New product features land on the Desk first. Streamlit may receive critical lab fixes only.
-- `OrderStore` / `JSONOrderStore` (`backend/trading/storage.py`) is the **L2 order ledger**, not IntentStore. IntentStore is the L1 target under this ADR; it is **not implemented** in Python on `main` as of 721d04d.
-- Older roadmaps that still say “Streamlit is the product / research UI” or that bind ADR-001 / ADR-002 are frozen. Conflicts resolve here.
-- Customer live still requires Stage-2 seal + paper runbook. 24/5 paper may be demoed now.
-
-### Addendum A — Intent v0, L1 vs L2, harness (Accepted)
-
-**Status:** Accepted (part of ADR-003)  
-**Binds:** [`MODULAR_ARCHITECTURE.md`](MODULAR_ARCHITECTURE.md) §4–§7
-
-**L1 (allowed on Intent v0):** `schema_version`, `intent_id`, `symbol`, `side`, `stop`, `conviction_tier`, `expiry`, `as_of`, `source`, `status` (`proposed` | `approved` | `merged` | `rejected` | `expired`).
-
-**L2 (forbidden on Intent v0):** `quantity`, `notional`, `limit_price`, `order_type`, `order_class`, `broker_order_id`, `idempotency_key`, `filled_*`, `slippage_pct`, `commission`, `take_profit_price` as a broker leg. Sizing and broker tickets belong to RiskEngine / Kelly / `OrderManager` after H3 Merge.
-
-**HarnessProposal** is the only supported write path into IntentStore: Propose → Approve (human / Desk; never LLM or Telegram) → Merge. Merged intents may become eligible for L2; they are not orders.
-
-Full schema and clock table: [`MODULAR_ARCHITECTURE.md`](MODULAR_ARCHITECTURE.md) §3–§7.
+Product surface under ADR-003: **Desk** = FastAPI + `web/static`. **Streamlit** = lab / legacy. Product **M7** is AI advisory in the modular map; `backend/lab/advisory_debate.py` is **not** M7 and must not wire to `OrderManager`.
 
 ---
 
@@ -93,7 +51,7 @@ The product goal is a **sellable** top-tier AI system with two functions: (1) wo
 - Expanding the worker universe requires batching and rate limits (not a naive 74-ticker Yahoo burst).
 - Customer live still requires Stage-2 seal + paper runbook. 24/5 paper may be demoed now.
 
-What still holds is restated under **ADR-003**. What no longer holds: using this ADR as the constitution, or treating any Wave/committee/lab debate as an execution path.
+What no longer holds: using this ADR as the constitution.
 
 ---
 
