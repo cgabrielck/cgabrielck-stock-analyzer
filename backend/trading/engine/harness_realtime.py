@@ -234,8 +234,10 @@ def consume_active_intents(
 
     Never calls LLM. Never talks to a broker. process_signal must be the
     existing M8→M9 path (SignalProcessor.process_signal). MandateGate is
-    evaluated before size/submit (same as the strategy scan path). Kill,
-    cooldown, VIX, and price_history are supplied by the caller via
+    evaluated before size/submit (same as the strategy scan path). A buy
+    that is handed to process_signal and is not risk-rejected counts via
+    MandateGate.record_order so max_daily_orders applies inside this loop.
+    Kill, cooldown, VIX, and price_history are supplied by the caller via
     killed / risk_extras / vix_multiplier.
 
     Per-intent exceptions before claim are fail-closed for that intent this
@@ -469,6 +471,13 @@ def _consume_one_intent(
             _order_field(order, "id") or _order_field(order, "order_id") or ""
         ) or None
     action = consume_action_for_order(order)
+    # Strategy scan counts a buy only after process_signal returns without a
+    # risk reject. Without this, every active buy in the tick sees the same
+    # orders_today and max_daily_orders does not hold.
+    if action == "consumed" and intent.side == IntentSide.BUY:
+        record_order = getattr(mandate_gate, "record_order", None)
+        if callable(record_order):
+            record_order()
     return ConsumeResult(
         intent_id=intent.intent_id,
         action=action,

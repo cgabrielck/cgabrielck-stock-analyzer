@@ -456,6 +456,105 @@ def test_cancel_before_consume_skips_submit(tmp_path):
     assert all(row.intent_id != "race-cancel" or row.action != "consumed" for row in results)
 
 
+def test_mandate_daily_cap_counts_each_accepted_buy(tmp_path):
+    """max_daily_orders must stick inside one consume loop, same as the strategy scan."""
+    from backend.trading.safety.mandate import MandateGate, TradingMandate
+
+    store = _store(
+        tmp_path,
+        _buy(
+            intent_id="day-1",
+            symbol="AAPL",
+            as_of=(NOW + timedelta(seconds=2)).isoformat(),
+        ),
+        _buy(
+            intent_id="day-2",
+            symbol="MSFT",
+            as_of=(NOW + timedelta(seconds=1)).isoformat(),
+        ),
+    )
+    gate = MandateGate(mandate=TradingMandate(max_daily_orders=1))
+    calls = []
+
+    def process_signal(signal, **kwargs):
+        calls.append(signal["symbol"])
+        return SimpleNamespace(id=f"ord-{signal['symbol']}")
+
+    results = consume_active_intents(
+        store,
+        process_signal=process_signal,
+        get_price=lambda _s: 150.0,
+        account_summary=SimpleNamespace(portfolio_value=40_000, positions=[]),
+        now=NOW,
+        limits=RiskLimits(),
+        mandate_gate=gate,
+    )
+    by_id = {row.intent_id: row for row in results}
+    assert calls == ["AAPL"]
+    assert gate.orders_today == 1
+    assert by_id["day-1"].action == "consumed"
+    assert store.get("day-1").status is IntentStatus.CONSUMED
+    assert by_id["day-2"].action == "skipped_mandate"
+    assert store.get("day-2").status is IntentStatus.ACTIVE
+    assert "daily order limit" in (by_id["day-2"].reason or "").lower()
+
+
+def test_mandate_daily_cap_ignores_sells_and_risk_rejects(tmp_path):
+    from backend.trading.models import OrderStatus
+    from backend.trading.safety.mandate import MandateGate, TradingMandate
+
+    store = _store(
+        tmp_path,
+        _sell(
+            intent_id="day-sell",
+            symbol="AAPL",
+            as_of=(NOW + timedelta(seconds=3)).isoformat(),
+        ),
+        _buy(
+            intent_id="day-rej",
+            symbol="MSFT",
+            as_of=(NOW + timedelta(seconds=2)).isoformat(),
+        ),
+        _buy(
+            intent_id="day-ok",
+            symbol="NVDA",
+            as_of=(NOW + timedelta(seconds=1)).isoformat(),
+        ),
+    )
+    gate = MandateGate(mandate=TradingMandate(max_daily_orders=1))
+    calls = []
+
+    def process_signal(signal, **kwargs):
+        calls.append(signal["intent_id"])
+        if signal["intent_id"] == "day-rej":
+            return SimpleNamespace(
+                id="ord-rej",
+                status=OrderStatus.REJECTED,
+                error_message="Risk Gate Rejected: cooldown",
+            )
+        return SimpleNamespace(id=f"ord-{signal['intent_id']}")
+
+    results = consume_active_intents(
+        store,
+        process_signal=process_signal,
+        get_price=lambda _s: 150.0,
+        account_summary=SimpleNamespace(
+            portfolio_value=40_000,
+            positions=[SimpleNamespace(symbol="AAPL", quantity=4)],
+        ),
+        now=NOW,
+        limits=RiskLimits(),
+        mandate_gate=gate,
+    )
+    by_id = {row.intent_id: row for row in results}
+    assert by_id["day-sell"].action == "consumed"
+    assert by_id["day-rej"].action == "consumed_risk_rejected"
+    assert by_id["day-ok"].action == "consumed"
+    assert calls == ["day-sell", "day-rej", "day-ok"]
+    assert gate.orders_today == 1
+    assert store.get("day-ok").status is IntentStatus.CONSUMED
+
+
 def test_consume_claim_beats_cancel_before_process_signal(tmp_path):
     from backend.trading.intents.store import IntentConflictError
 
