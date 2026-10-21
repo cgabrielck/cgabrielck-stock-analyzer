@@ -25,6 +25,7 @@ from typing import Dict, List, Optional
 from pydantic import BaseModel, ConfigDict, field_validator
 
 from backend.trading.models import Order, OrderSide
+from backend.trading.risk.gates import positive_price
 from backend.utils.constants import DATA_DIR
 
 logger = logging.getLogger(__name__)
@@ -237,7 +238,8 @@ class MandateGate:
                                    reason=f"{order.symbol} is not on the mandate allow-list.")
 
         # Constraint 4: max notional per order
-        price = ref_price if ref_price is not None else order.limit_price
+        raw_price = ref_price if ref_price is not None else order.limit_price
+        price = positive_price(raw_price)
         if m.max_notional_per_order is not None and price is not None:
             notional = order.quantity * price
             if notional > m.max_notional_per_order:

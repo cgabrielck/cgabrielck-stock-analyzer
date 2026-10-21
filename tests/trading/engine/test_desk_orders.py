@@ -9,12 +9,15 @@ import pytest
 from backend.trading.engine.desk_orders import (
     DESK_STRATEGY_ID,
     KILL_BUY_DETAIL,
+    NO_CONSTRAINING_PRICE_DETAIL,
+    constraining_order_price,
     ops_mandate_payload,
     place_desk_order,
     reset_desk_mandate_gate,
+    resolve_reference_price,
 )
 from backend.trading.engine.order_manager import InMemoryOrderStore
-from backend.trading.models import AccountSummary, Order, OrderSide, OrderStatus, OrderType
+from backend.trading.models import AccountSummary, Order, OrderSide, OrderStatus, OrderType, Position
 from backend.trading.risk.gates import RiskEngine, RiskLimits
 from backend.trading.safety import audit, kill_switch
 from backend.utils.provenance import journal_store
@@ -107,6 +110,190 @@ def test_mandate_blocked_symbol_does_not_call_broker(tmp_path):
     rows = journal_store.load_raw_entries()
     assert rows
     assert any("GME" in str(row.get("symbol")) for row in rows)
+
+
+def test_resolve_reference_price_ignores_unconstrained_market_limit():
+    """Market limit_price is not on MarketOrderRequest — must not be the ref."""
+    order = _order(order_type=OrderType.MARKET, quantity=10000, limit_price=0.01)
+    assert constraining_order_price(order) is None
+    px = resolve_reference_price(order, _account(), quote_fn=lambda _s: 150.0)
+    assert px == 150.0
+
+
+def test_resolve_reference_price_market_tiny_limit_without_quote_is_none():
+    order = _order(order_type=OrderType.MARKET, limit_price=0.01)
+    assert resolve_reference_price(order, _account(), quote_fn=lambda _s: None) is None
+
+
+def test_resolve_reference_price_uses_position_mark_for_market():
+    account = _account(
+        positions=[
+            Position(
+                id="p1",
+                symbol="AAPL",
+                quantity=10,
+                average_entry_price=140.0,
+                current_price=148.5,
+            )
+        ]
+    )
+    order = _order(order_type=OrderType.MARKET, limit_price=0.01)
+    assert resolve_reference_price(account=account, order=order, quote_fn=lambda _s: None) == 148.5
+
+
+def test_market_buy_tiny_limit_price_409_does_not_hit_broker(tmp_path):
+    """qty=10000 × dummy $0.01 would look like $100; real quote $150 is $1.5M."""
+    path = _mandate_file(tmp_path, TIGHT)
+    broker = _broker()
+    result = place_desk_order(
+        _order(
+            order_type=OrderType.MARKET,
+            quantity=10000,
+            limit_price=0.01,
+            id="mkt-tiny-buy",
+            idempotency_key="mkt-tiny-buy",
+        ),
+        broker=broker,
+        store=InMemoryOrderStore(),
+        mandate_path=path,
+        quote_fn=lambda _s: 150.0,
+    )
+    assert result.http_status == 409
+    assert result.blocked is True
+    assert result.gate in ("mandate", "risk")
+    broker.submit_order.assert_not_called()
+    detail = (result.detail or "").lower()
+    assert "notional" in detail or "exceed" in detail
+
+
+def test_market_sell_tiny_limit_price_409_does_not_hit_broker(tmp_path):
+    path = _mandate_file(tmp_path, TIGHT)
+    broker = _broker()
+    result = place_desk_order(
+        _order(
+            side=OrderSide.SELL,
+            order_type=OrderType.MARKET,
+            quantity=10000,
+            limit_price=0.01,
+            id="mkt-tiny-sell",
+            idempotency_key="mkt-tiny-sell",
+        ),
+        broker=broker,
+        store=InMemoryOrderStore(),
+        mandate_path=path,
+        quote_fn=lambda _s: 150.0,
+    )
+    assert result.http_status == 409
+    assert result.blocked is True
+    broker.submit_order.assert_not_called()
+    detail = (result.detail or "").lower()
+    assert "notional" in detail or "exceed" in detail or "risk" in detail
+
+
+def test_market_zero_limit_without_quote_does_not_approve(tmp_path):
+    path = _mandate_file(tmp_path, TIGHT)
+    broker = _broker()
+    result = place_desk_order(
+        _order(
+            order_type=OrderType.MARKET,
+            quantity=10,
+            limit_price=0.0,
+            id="mkt-zero",
+            idempotency_key="mkt-zero",
+        ),
+        broker=broker,
+        store=InMemoryOrderStore(),
+        mandate_path=path,
+        quote_fn=lambda _s: None,
+    )
+    assert result.http_status == 409
+    assert result.detail == NO_CONSTRAINING_PRICE_DETAIL
+    broker.submit_order.assert_not_called()
+
+
+def test_market_negative_limit_without_quote_does_not_approve(tmp_path):
+    path = _mandate_file(tmp_path, TIGHT)
+    broker = _broker()
+    result = place_desk_order(
+        _order(
+            order_type=OrderType.MARKET,
+            quantity=10,
+            limit_price=-5.0,
+            id="mkt-neg",
+            idempotency_key="mkt-neg",
+        ),
+        broker=broker,
+        store=InMemoryOrderStore(),
+        mandate_path=path,
+        quote_fn=lambda _s: None,
+    )
+    assert result.http_status == 409
+    assert result.detail == NO_CONSTRAINING_PRICE_DETAIL
+    broker.submit_order.assert_not_called()
+
+
+def test_limit_price_zero_without_quote_does_not_approve(tmp_path):
+    path = _mandate_file(tmp_path, TIGHT)
+    broker = _broker()
+    result = place_desk_order(
+        _order(
+            order_type=OrderType.LIMIT,
+            quantity=10,
+            limit_price=0.0,
+            id="lim-zero",
+            idempotency_key="lim-zero",
+        ),
+        broker=broker,
+        store=InMemoryOrderStore(),
+        mandate_path=path,
+        quote_fn=lambda _s: None,
+    )
+    assert result.http_status == 409
+    assert result.detail == NO_CONSTRAINING_PRICE_DETAIL
+    broker.submit_order.assert_not_called()
+
+
+def test_limit_price_zero_quote_does_not_constrain_limit_order(tmp_path):
+    """A quote is not on LimitOrderRequest; limit<=0 must not approve."""
+    path = _mandate_file(tmp_path, TIGHT)
+    broker = _broker()
+    result = place_desk_order(
+        _order(
+            order_type=OrderType.LIMIT,
+            quantity=1,
+            limit_price=0.0,
+            id="lim-zero-quote",
+            idempotency_key="lim-zero-quote",
+        ),
+        broker=broker,
+        store=InMemoryOrderStore(),
+        mandate_path=path,
+        quote_fn=lambda _s: 150.0,
+    )
+    assert result.http_status == 409
+    assert result.detail == NO_CONSTRAINING_PRICE_DETAIL
+    broker.submit_order.assert_not_called()
+
+
+def test_market_order_with_honest_quote_still_submits(tmp_path):
+    path = _mandate_file(tmp_path, TIGHT)
+    broker = _broker()
+    result = place_desk_order(
+        _order(
+            order_type=OrderType.MARKET,
+            quantity=1,
+            limit_price=None,
+            id="mkt-honest",
+            idempotency_key="mkt-honest",
+        ),
+        broker=broker,
+        store=InMemoryOrderStore(),
+        mandate_path=path,
+        quote_fn=lambda _s: 150.0,
+    )
+    assert result.http_status == 200
+    assert result.blocked is False
+    broker.submit_order.assert_called_once()
 
 
 def test_risk_reject_does_not_call_broker(tmp_path):

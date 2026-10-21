@@ -43,6 +43,18 @@ class TestRiskEngine(unittest.TestCase):
         self.assertFalse(decision.approved)
         self.assertIn("reference price", decision.reason)
 
+    def test_reject_zero_limit_price_notional(self):
+        order = self._create_order(qty=10000, limit=0.0)
+        decision = self.engine.evaluate_order(order, self.base_account)
+        self.assertFalse(decision.approved)
+        self.assertIn("reference price", decision.reason)
+
+    def test_reject_negative_limit_price_notional(self):
+        order = self._create_order(qty=10, limit=-1.0)
+        decision = self.engine.evaluate_order(order, self.base_account)
+        self.assertFalse(decision.approved)
+        self.assertIn("reference price", decision.reason)
+
     def test_reject_max_order_notional(self):
         order = self._create_order(qty=100, limit=200.0) # $20,000 notional > $10,000 limit
         decision = self.engine.evaluate_order(order, self.base_account)

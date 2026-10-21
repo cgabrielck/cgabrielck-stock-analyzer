@@ -26,8 +26,8 @@ from typing import Any, Callable, Dict, Optional, Tuple
 
 from backend.trading.broker import BrokerAdapter
 from backend.trading.engine.order_manager import OrderManager, OrderStore
-from backend.trading.models import AccountSummary, Order, OrderSide, OrderStatus
-from backend.trading.risk.gates import RiskEngine
+from backend.trading.models import AccountSummary, Order, OrderSide, OrderStatus, OrderType
+from backend.trading.risk.gates import RiskEngine, positive_price
 from backend.trading.safety import audit, kill_switch
 from backend.trading.safety.mandate import (
     MANDATE_STATUS_CORRUPT,
@@ -43,6 +43,14 @@ logger = logging.getLogger(__name__)
 DESK_ACTOR = "desk"
 DESK_STRATEGY_ID = "desk_manual"
 KILL_BUY_DETAIL = "Kill switch is on — new buys blocked."
+NO_CONSTRAINING_PRICE_DETAIL = (
+    "Cannot approve order without a positive price that constrains "
+    "the submitted order."
+)
+
+# Alpaca MarketOrderRequest / StopOrderRequest ignore limit_price.
+_UNCONSTRAINED_ORDER_TYPES = frozenset({OrderType.MARKET.value, OrderType.STOP.value})
+_LIMIT_BOUND_ORDER_TYPES = frozenset({OrderType.LIMIT.value, OrderType.STOP_LIMIT.value})
 
 _gate_lock = threading.Lock()
 _desk_gate: Optional[MandateGate] = None
@@ -79,41 +87,62 @@ def default_quote_price(symbol: str) -> Optional[float]:
         return None
 
 
+def _order_type_key(order: Order) -> str:
+    otype = getattr(order, "order_type", None)
+    raw = otype.value if isinstance(otype, OrderType) else otype
+    return str(raw or "").lower()
+
+
+def constraining_order_price(order: Order) -> Optional[float]:
+    """Price that actually binds the broker request, else None.
+
+    ``limit_price`` is ignored for market/stop: Alpaca ``MarketOrderRequest``
+    / ``StopOrderRequest`` do not send it, so a client-supplied tiny/zero/
+    negative limit must not understate Mandate/RiskEngine notional.
+    """
+    key = _order_type_key(order)
+    if key in _UNCONSTRAINED_ORDER_TYPES:
+        return None
+    if key in _LIMIT_BOUND_ORDER_TYPES:
+        return positive_price(order.limit_price)
+    return None
+
+
+def _mark_price(account: Optional[AccountSummary], symbol: str) -> Optional[float]:
+    if account is None:
+        return None
+    want = str(symbol or "").upper()
+    for pos in account.positions or []:
+        if str(getattr(pos, "symbol", "") or "").upper() != want:
+            continue
+        px = positive_price(getattr(pos, "current_price", None))
+        if px is not None:
+            return px
+    return None
+
+
 def resolve_reference_price(
     order: Order,
     account: Optional[AccountSummary] = None,
     quote_fn: Optional[Callable[[str], Optional[float]]] = None,
 ) -> Optional[float]:
-    """Limit price, then mark on an existing position, then an optional quote."""
-    if order.limit_price is not None:
-        try:
-            px = float(order.limit_price)
-            if px > 0:
-                return px
-        except (TypeError, ValueError):
-            pass
+    """Positive price for notional: constraining limit, else mark, else quote.
+
+    Never prefers an unconstrained ``limit_price`` (market/stop, or limit<=0).
+    """
+    bound = constraining_order_price(order)
+    if bound is not None:
+        return bound
     symbol = str(order.symbol or "").upper()
-    if account is not None:
-        for pos in account.positions or []:
-            if str(getattr(pos, "symbol", "") or "").upper() != symbol:
-                continue
-            mark = getattr(pos, "current_price", None)
-            if mark in (None, ""):
-                continue
-            try:
-                px = float(mark)
-            except (TypeError, ValueError):
-                continue
-            if px > 0:
-                return px
+    mark = _mark_price(account, symbol)
+    if mark is not None:
+        return mark
     fn = quote_fn or default_quote_price
     try:
-        quoted = fn(symbol)
-        if quoted is not None and float(quoted) > 0:
-            return float(quoted)
+        return positive_price(fn(symbol))
     except Exception:
         logger.debug("desk quote_fn failed for %s", symbol, exc_info=True)
-    return None
+        return None
 
 
 def desk_mandate_snapshot(path: Any = None) -> MandateSnapshot:
@@ -364,9 +393,35 @@ def place_desk_order(
         )
 
     ref_price = resolve_reference_price(order, account, quote_fn=quote_fn)
+    bound = constraining_order_price(order)
+    otype_key = _order_type_key(order)
+    # Limit/stop-limit on the wire must carry a positive limit; a quote does
+    # not constrain LimitOrderRequest. Market/stop need mark/quote instead.
+    if otype_key in _LIMIT_BOUND_ORDER_TYPES:
+        approval_price = bound
+    else:
+        approval_price = positive_price(ref_price)
+    if approval_price is None:
+        detail = NO_CONSTRAINING_PRICE_DETAIL
+        audit_id = audit.log_risk_decision(
+            order.symbol, side, float(order.quantity or 0), False, detail, actor=DESK_ACTOR
+        )
+        return _block(
+            order,
+            store=store,
+            http_status=409,
+            detail=detail,
+            gate="risk",
+            audit_id=audit_id,
+            mandate_status=snapshot.status,
+            mandate_path=snapshot.path,
+        )
+
     eval_order = order.model_copy()
-    if eval_order.limit_price is None and ref_price is not None:
-        eval_order.limit_price = ref_price
+    # RiskEngine reads order.limit_price; stamp the honest approval price so a
+    # dummy market limit cannot understate notional at the kernel.
+    eval_order.limit_price = approval_price
+    ref_price = approval_price
 
     gate = _gate_for_snapshot(snapshot)
     mandate_decision = gate.evaluate(eval_order, ref_price)

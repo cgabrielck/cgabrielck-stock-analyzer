@@ -7,7 +7,11 @@ from unittest.mock import MagicMock
 import pytest
 from fastapi.testclient import TestClient
 
-from backend.trading.engine.desk_orders import KILL_BUY_DETAIL, reset_desk_mandate_gate
+from backend.trading.engine.desk_orders import (
+    KILL_BUY_DETAIL,
+    NO_CONSTRAINING_PRICE_DETAIL,
+    reset_desk_mandate_gate,
+)
 from backend.trading.engine.order_manager import InMemoryOrderStore
 from backend.trading.models import AccountSummary, OrderStatus
 from backend.trading.safety import audit, kill_switch
@@ -186,6 +190,85 @@ def test_api_reject_journal_failure_is_not_success(desk_api, monkeypatch):
     assert detail["journaled"] is False
     assert detail["broker_submitted"] is False
     assert "durable audit" in detail["message"].lower()
+    desk_api["broker"].submit_order.assert_not_called()
+
+
+def test_api_market_buy_tiny_limit_price_409_no_broker(desk_api, monkeypatch):
+    from backend.trading.engine import desk_orders as desk_mod
+
+    monkeypatch.setattr(desk_mod, "default_quote_price", lambda _s: 150.0)
+    client = desk_api["client"]
+    res = client.post(
+        "/api/orders",
+        json={
+            "symbol": "AAPL",
+            "side": "buy",
+            "quantity": 10000,
+            "order_type": "market",
+            "limit_price": 0.01,
+        },
+    )
+    assert res.status_code == 409, res.text
+    desk_api["broker"].submit_order.assert_not_called()
+    assert "notional" in res.json()["detail"].lower() or "exceed" in res.json()["detail"].lower()
+
+
+def test_api_market_sell_tiny_limit_price_409_no_broker(desk_api, monkeypatch):
+    from backend.trading.engine import desk_orders as desk_mod
+
+    monkeypatch.setattr(desk_mod, "default_quote_price", lambda _s: 150.0)
+    client = desk_api["client"]
+    res = client.post(
+        "/api/orders",
+        json={
+            "symbol": "AAPL",
+            "side": "sell",
+            "quantity": 10000,
+            "order_type": "market",
+            "limit_price": 0.01,
+        },
+    )
+    assert res.status_code == 409, res.text
+    desk_api["broker"].submit_order.assert_not_called()
+
+
+def test_api_limit_price_zero_without_quote_409_no_broker(desk_api, monkeypatch):
+    from backend.trading.engine import desk_orders as desk_mod
+
+    monkeypatch.setattr(desk_mod, "default_quote_price", lambda _s: None)
+    client = desk_api["client"]
+    res = client.post(
+        "/api/orders",
+        json={
+            "symbol": "AAPL",
+            "side": "buy",
+            "quantity": 10,
+            "order_type": "limit",
+            "limit_price": 0,
+        },
+    )
+    assert res.status_code == 409, res.text
+    assert res.json()["detail"] == NO_CONSTRAINING_PRICE_DETAIL
+    desk_api["broker"].submit_order.assert_not_called()
+
+
+def test_api_market_zero_limit_without_quote_409_no_broker(desk_api, monkeypatch):
+    from backend.trading.engine import desk_orders as desk_mod
+
+    monkeypatch.setattr(desk_mod, "default_quote_price", lambda _s: None)
+    client = desk_api["client"]
+    res = client.post(
+        "/api/orders",
+        json={
+            "symbol": "AAPL",
+            "side": "buy",
+            "quantity": 10,
+            "order_type": "market",
+            "limit_price": 0,
+        },
+    )
+    assert res.status_code == 409, res.text
+    assert res.json()["detail"] == NO_CONSTRAINING_PRICE_DETAIL
     desk_api["broker"].submit_order.assert_not_called()
 
 

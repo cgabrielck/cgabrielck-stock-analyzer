@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import logging
 from datetime import date
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
 from pydantic import BaseModel
@@ -20,6 +20,23 @@ from pydantic import BaseModel
 from backend.trading.models import AccountSummary, Order, OrderSide, Position
 
 logger = logging.getLogger(__name__)
+
+
+def positive_price(value: Any) -> Optional[float]:
+    """Return *value* as a finite price > 0, else None.
+
+    Zero/negative/NaN must not be treated as a valid notional reference
+    (qty × 0 would pass a $10k cap).
+    """
+    if value is None or value == "":
+        return None
+    try:
+        px = float(value)
+    except (TypeError, ValueError):
+        return None
+    if px != px or px == float("inf") or px == float("-inf"):
+        return None
+    return px if px > 0 else None
 
 
 class RiskDecision(BaseModel):
@@ -76,14 +93,14 @@ class RiskEngine:
             return RiskDecision(approved=False,
                                 reason=f"{order.symbol} is in cool-down period (sold recently).")
 
-        # Gate 1: Determine reference price
-        ref_price = order.limit_price
+        # Gate 1: Determine reference price (must be positive; 0 understates notional).
+        ref_price = positive_price(order.limit_price)
         if ref_price is None:
             # Market orders: try to infer from price history
             if price_history and order.symbol in price_history:
                 hist = price_history[order.symbol]
                 if not hist.empty:
-                    ref_price = float(hist["Close"].iloc[-1])
+                    ref_price = positive_price(hist["Close"].iloc[-1])
             if ref_price is None:
                 return RiskDecision(
                     approved=False,
