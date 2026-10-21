@@ -1,7 +1,19 @@
 # Auto-Trading Upgrade Roadmap
 
+> ## FROZEN / SUPERSEDED (2026-10-21)
+>
+> **This document is frozen.** It is historical staging notes only. It is **not** architecture, product, or sequencing authority.
+>
+> Conflicts are resolved by, in order:
+> 1. **ADR-003 + Addendum A (Accepted)** — [`ADR-003-live-ai-trading-desk.md`](ADR-003-live-ai-trading-desk.md) (index: [`ARCHITECTURE_DECISION.md`](ARCHITECTURE_DECISION.md))
+> 2. [`MODULAR_ARCHITECTURE.md`](MODULAR_ARCHITECTURE.md)
+> 3. [`AUDIT_REMEDIATION_PLAN_2026-10-21.md`](AUDIT_REMEDIATION_PLAN_2026-10-21.md) (**Confirmed by Gabriel 2026-10-21**)
+>
+> **ADR-002 is VOID.** Do not cite this file, ADR-001, or ADR-002 as binding.
+> Visual map: [`boomboom-modular-architecture.html`](boomboom-modular-architecture.html)
+
 Status: **Stage 2 (Shadow Trading) Seal Tooling Complete — evidence window still time-gated**
-Last updated: 2026-09-10
+Last updated: 2026-09-10 (authority banner 2026-10-21)
 
 ## Goal
 
@@ -20,18 +32,19 @@ The system must not progress to live execution merely because a strategy has att
 ## Confirmed Technical Direction
 
 - **Python remains the primary application language.**
-- Streamlit remains the **research, configuration, review, and monitoring UI**.
+- ~~Streamlit remains the research, configuration, review, and monitoring UI.~~ **VOID under ADR-003.** Product UI is the FastAPI Desk (`web/static` + `backend/api/app.py`). Streamlit (`backend/app.py`) is lab / legacy.
 - Automated execution must be an independent Python service with durable state.
 - The initial execution target should be **US equities/ETFs in paper trading (Alpaca integrated)**.
 - LLMs may summarize evidence but must never bypass deterministic risk gates.
-- **Do not rebuild the research app from scratch** — see `docs/ARCHITECTURE_DECISION.md` (ADR-001).
+- **Do not rebuild the research app from scratch** — see `docs/ARCHITECTURE_DECISION.md` (**ADR-003 Accepted**; ADR-002 is VOID; ADR-001 is history).
 - **Procurement phases** (Alpaca Paper → Hetzner VPS → Polygon bars → live): `docs/PROCUREMENT_GUIDE.md`.
 
 ## Target Architecture
 
 ```text
-Streamlit research terminal (✅ Integrated Trading Dashboard)
+FastAPI Desk (product UI: web/static + backend/api/app.py)
   ├─ reads only durable system status
+Streamlit (lab / legacy; not the product surface)
 
 Signal worker      ├─> SignalProcessor (✅) ─> RiskEngine (✅) ─> OrderManager (✅)
                                                                        │
@@ -43,6 +56,8 @@ Signal worker      ├─> SignalProcessor (✅) ─> RiskEngine (✅) ─> Orde
 
 Reconciliation worker (✅ ReconciliationService) <── orders, fills, positions
 ```
+
+ADR-003: IntentStore (H3→H1) and Proposal→Approve→Merge (governance) sit *above* this L2 order path; they are two isolated routes. See [`MODULAR_ARCHITECTURE.md`](MODULAR_ARCHITECTURE.md) §4.4–§4.5. Do not wire `backend/lab/advisory_debate.py` into `OrderManager`.
 
 ## Current Project Baseline
 

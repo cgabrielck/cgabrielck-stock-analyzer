@@ -1,9 +1,11 @@
 # Cgab — World-class upgrade plan
 
+> **Architecture authority (2026-10-21):** [`ADR-003-live-ai-trading-desk.md`](ADR-003-live-ai-trading-desk.md) **Accepted + Addendum A**. Index: [`ARCHITECTURE_DECISION.md`](ARCHITECTURE_DECISION.md). Audit: [`AUDIT_REMEDIATION_PLAN_2026-10-21.md`](AUDIT_REMEDIATION_PLAN_2026-10-21.md) (Confirmed). **ADR-002 is VOID.** This file remains the OSS catalog / grade history; it is **not** binding. See [`MODULAR_ARCHITECTURE.md`](MODULAR_ARCHITECTURE.md).
+
 **Last updated:** 2026-09-17 (wait-state: Waves 1–5 landed; Wave 6 next)  
-**Status:** Operating strategy. **No trading-code changes until you approve a coding slice.**  
-**Architecture:** [`ARCHITECTURE_DECISION.md`](ARCHITECTURE_DECISION.md) **ADR-002** (ADR-001 superseded, kept as history).  
-**This file is the canonical copy** of the grade, OSS catalog, steal/refuse list, two-SKU design, and slices.
+**Status:** Frozen operating-strategy notes. **No trading-code changes until you approve a coding slice.**  
+**Architecture:** ADR-003 (this file previously bound ADR-002; that is VOID).  
+**This file is the historical copy** of the grade, OSS catalog, steal/refuse list, two-SKU design, and slices.
 
 **One-line goal:** sell two functions — (1) world-class stock analysis, (2) a paper-proven auto trader that can go live after evidence — by stealing the right ideas from famous open-source systems without throwing away Cgab’s risk core.
 
@@ -215,7 +217,7 @@ This is the best first move. It does not require FinBERT or a debate UI.
 - New features land on the FastAPI desk first. Streamlit frozen except for critical fixes.
 - Provenance chip (vendor, as-of, delay, cache age).
 - QuantStats-style tear sheet vs SPY for the paper book and for a ticker.
-- Advisory committee on Deep (cost-capped, **not** wired to OrderManager).
+- Advisory committee on Deep (cost-capped, **not** wired to OrderManager). `backend/lab/advisory_debate.py` is **not** product M7.
 - Daily digest using existing Telegram.
 
 **Exit:** Deep on 5 names looks like a memo (thesis, risks, levels, sources).
@@ -258,7 +260,7 @@ This is the best first move. It does not require FinBERT or a debate UI.
 - Will not switch the core to Freqtrade / vnpy / crypto.
 - Will not treat FinRL as the first alpha engine.
 - Will not greenfield-rewrite the whole repo.
-- Will not delete ADR-001; it is superseded by ADR-002.
+- Will not delete ADR-001; it is history. ADR-002 is VOID. Current authority is ADR-003.
 - Will not silently turn Stable into “buy the Scan.”
 
 ---
@@ -281,7 +283,7 @@ queue. This file remains the grade / OSS catalog; Waves are the coding sequence.
 | 7 | After 6 | Live gate: seal + ≥30 trading-day paper runbook + small capital + first-week human (Slice F) |
 | 8 | Last | Account isolation / commercial (Slice G) |
 
-**Landed (Waves 0–5):** ADR-002; Slice A paper-truth; session-timed auto Scan + keep-real-scores; Desk evidence (provenance, paper vs SPY net of costs, digest/tear/advisory); Polygon+calendar path; factor IC/IR lab; optional `defensive_gld`; trading-AI redesign (Stage-2 `trend`, regime `adaptive`, Connors `stable`/`reversion`, breakout+RS, risk-pct sizing, bakeoff vs SPY). Default paper strategy remains `research_list`.
+**Landed (Waves 0–5):** ADR-002 (now VOID; restated under ADR-003); Slice A paper-truth; session-timed auto Scan + keep-real-scores; Desk evidence (provenance, paper vs SPY net of costs, digest/tear/advisory); Polygon+calendar path; factor IC/IR lab; optional `defensive_gld`; trading-AI redesign (Stage-2 `trend`, regime `adaptive`, Connors `stable`/`reversion`, breakout+RS, risk-pct sizing, bakeoff vs SPY). Default paper strategy remains `research_list`.
 
 **Do not start next (Wave 6+):** Lean/Nautilus sidecars; FinBERT as a trading gate; live; silently rewriting `research_list` / Stable. Those wait for their Wave.
 
