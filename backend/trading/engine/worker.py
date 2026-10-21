@@ -201,6 +201,8 @@ class TradingWorker:
                         self.risk_engine.record_day_start(account.portfolio_value)
                         # Run strategy
                         self._run_strategy_signals(account)
+                        # H1 consume of H3 intents (thin hook; see harness_realtime TODO).
+                        self._consume_intents(account)
                         # Run daily reconciliation
                         self._run_reconciliation(account)
 
@@ -760,6 +762,48 @@ class TradingWorker:
             logger.error("Reconciliation failed: %s", exc)
 
     # ------------------------------------------------------------------
+    # H1 Intent consume (thin hook — full H1/H2 split is TODO)
+    # ------------------------------------------------------------------
+
+    def _consume_intents(self, account) -> None:
+        """Consume active Intent v0 rows through M8. Never calls LLM or a broker.
+
+        TODO(full-h1-h2-split): move to a dedicated ~1s harness_realtime worker.
+        TradingWorker stays on H3 cadence; this hook is a no-op when the
+        IntentStore is empty.
+        """
+        try:
+            from backend.trading.engine.harness_realtime import consume_active_intents
+            from backend.trading.intents.store import create_intent_store
+
+            store = getattr(self, "intent_store", None)
+            if store is None:
+                store = create_intent_store()
+                self.intent_store = store
+            if not store.list(status="active", limit=1):
+                return
+
+            def _price(symbol: str) -> Optional[float]:
+                df = self._fetch_ohlcv(symbol, period="5d")
+                if df is None or getattr(df, "empty", True):
+                    return None
+                try:
+                    return float(df["Close"].iloc[-1])
+                except Exception:
+                    return None
+
+            consume_active_intents(
+                store,
+                process_signal=self.signal_processor.process_signal,
+                get_price=_price,
+                account_summary=account,
+                killed=bool(self.is_halted),
+                limits=self.risk_engine.limits,
+            )
+        except Exception as exc:
+            logger.debug("intent consume skipped: %s", exc)
+
+    # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
 
@@ -1316,6 +1360,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         account = worker._safe_get_account()
         if account:
             worker._run_strategy_signals(account)
+            worker._consume_intents(account)
         _write_heartbeat()
         logger.info("Single-cycle run complete.")
         return 0

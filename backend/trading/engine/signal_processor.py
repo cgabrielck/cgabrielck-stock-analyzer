@@ -106,6 +106,7 @@ class SignalProcessor:
                     draft_order,
                     audit_id=audit_id,
                     strategy_id=signal.get("strategy_id"),
+                    intent_id=signal.get("intent_id"),
                 )
             except Exception:
                 logger.exception("Failed to persist risk-reject journal/audit for %s", symbol)

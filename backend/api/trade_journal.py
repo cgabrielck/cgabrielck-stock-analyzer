@@ -95,9 +95,15 @@ def record_from_order(
     *,
     audit_id: Optional[str] = None,
     strategy_id: Optional[str] = None,
+    intent_id: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     """API facade — recording lives in utils.provenance.journal_store."""
-    return journal_store.record_from_order(order, audit_id=audit_id, strategy_id=strategy_id)
+    return journal_store.record_from_order(
+        order,
+        audit_id=audit_id,
+        strategy_id=strategy_id,
+        intent_id=intent_id,
+    )
 
 
 def get_entry(log_id: str, *, order_store: Any = None) -> Optional[Dict[str, Any]]:

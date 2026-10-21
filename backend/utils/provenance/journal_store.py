@@ -66,11 +66,17 @@ def record_from_order(
     *,
     audit_id: Optional[str] = None,
     strategy_id: Optional[str] = None,
+    intent_id: Optional[str] = None,
     path: Optional[Path] = None,
 ) -> Optional[Dict[str, Any]]:
     """Persist a TradeLogEntry from an order. Engine and API both call this layer."""
     try:
-        entry = from_order(order, audit_id=audit_id, strategy_id=strategy_id)
+        entry = from_order(
+            order,
+            audit_id=audit_id,
+            strategy_id=strategy_id,
+            intent_id=intent_id,
+        )
         if not entry:
             return None
         return append_entry(entry, path=path)

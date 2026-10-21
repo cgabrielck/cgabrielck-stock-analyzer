@@ -165,10 +165,10 @@ M2 ──┼──► M3 ──► M6 ──► M5 ──► M7
 |----|------|
 | **Purpose** | 具名策略：VALID／skip_codes、入場結構；可並存多策略 |
 | **Owns（現有）** | `backend/trading/strategies/`（`base.py`, `registry.py`, `stable.py`, `aggressive.py`, `trend.py`, `adaptive.py`, `stage2.py`, `research_list.py`, `defensive_gld.py`, `skip_codes.py`） |
-| **Public interfaces** | Strategy registry；evaluate(symbol, ctx) → signal／skip；worker 選策略名 |
+| **Public interfaces** | Strategy registry；evaluate(symbol, ctx) → signal／skip；worker 選策略名；H3 `upsert_active_intent`（`backend/trading/intents/writer.py`）寫 IntentStore |
 | **Writes** | 策略評估日誌（可入 journal）；唔直接下單 |
 | **MUST NEVER** | 靜默改名頂替另一策略行為；跳過 M8 |
-| **Tests** | `tests/trading/strategies/*` |
+| **Tests** | `tests/trading/strategies/*`；IntentStore：`tests/trading/intents/*` |
 | **Evolution** | 新策略＝新檔＋registry；「買 Scan 名單」必須獨立策略名 |
 
 ---
@@ -209,7 +209,7 @@ M2 ──┼──► M3 ──► M6 ──► M5 ──► M7
 | 項 | 內容 |
 |----|------|
 | **Purpose** | 訊號經 processor → 風控後下單；paper／shadow／live |
-| **Owns（現有）** | `backend/trading/engine/signal_processor.py`, `order_manager.py`, `shadow.py`, `worker.py`, `cadence.py`；`backend/trading/broker.py`, `alpaca_broker.py`；`backend/trading/models.py`, `storage.py`；`backend/trading/reconciliation/service.py`；`backend/trading/performance/tracker.py`；數據 `shadow_orders.*`, `trading_orders.sqlite3`, `performance_*.json` |
+| **Owns（現有）** | `backend/trading/engine/signal_processor.py`, `order_manager.py`, `shadow.py`, `worker.py`, `cadence.py`, `harness_realtime.py`（H1 consume hook；完整 H1/H2 拆分 TODO）；`backend/trading/broker.py`, `alpaca_broker.py`；`backend/trading/models.py`, `storage.py`；`backend/trading/reconciliation/service.py`；`backend/trading/performance/tracker.py`；數據 `shadow_orders.*`, `trading_orders.sqlite3`, `performance_*.json` |
 | **Public interfaces** | Worker tick；submit／cancel order（經 M8）；shadow fill；broker adapter |
 | **Writes** | orders／fills／positions／shadow／performance |
 | **MUST NEVER** | 接受未過 M8 嘅訂單；`--allow-live` 未過晉升閘；聊天渠道落單 |
@@ -238,7 +238,7 @@ M2 ──┼──► M3 ──► M6 ──► M5 ──► M7
 |----|------|
 | **Purpose** | 遠端用戶面：FastAPI desk + web（圖表、訊號、日誌、ops） |
 | **Owns（現有）** | `backend/api/app.py`（主路由）, `desk_auth.py`, `desk_digest.py`, `paper_performance.py`, `worker_ctl.py`, `provenance.py`, …；`web/src/App.tsx`, `api.ts`, `web/static/`；`backend/trading/ui/`（monitor／dashboard——偏 lab）；`backend/static/` |
-| **Public interfaces** | 見現有 `/api/*`：account、positions、orders、chart、scan、deep、journal、ops、worker、performance、lab…；**新增 TBD：** `/api/signals`, 增強 chart indicators |
+| **Public interfaces** | 見現有 `/api/*`：account、positions、orders、chart、scan、deep、journal、ops、worker、performance、lab、`/api/intents`（L1 IntentStore；local／unverified）…；**新增 TBD：** `/api/signals`, 增強 chart indicators |
 | **Writes** | 經服務層；UI 唔直寫 sqlite |
 | **MUST NEVER** | 前端計算倉位繞 M8；暴露 secrets；用 TG 當下單 UI |
 | **Tests** | API 層測試分散於 `tests/test_app_state.py` 等；E2E **TBD** |
@@ -359,7 +359,7 @@ flowchart TD
 
 **同現況：** `TradingWorker` 預設偏 H3 節奏（例如 60s）。演進方向＝拆出 `harness_realtime`（H1／H2）與 `decision_worker`（H3→IntentStore）；升頻唔准把 LLM 拉入 H1。
 
-**IntentStore vs OrderStore：** IntentStore（H3 寫、H1 消費）**尚未實作**。現有 `OrderStore`／`JSONOrderStore`（`backend/trading/storage.py`）係 **L2 訂單帳本**，唔係 IntentStore。唔好把 `Order` 欄位塞進 Intent v0。
+**IntentStore vs OrderStore：** IntentStore（H3 寫、H1 消費）= `backend/trading/intents/`（`intent.v0` JSON file ledger，見 `JSONIntentStore`）。現有 `OrderStore`／`JSONOrderStore`／`SQLiteOrderStore`（`backend/trading/storage.py`）係 **L2 訂單帳本**，唔係 IntentStore。唔好把 `Order` 欄位塞進 Intent v0。H1 consume hook：`backend/trading/engine/harness_realtime.py`（完整 H1/H2 worker 拆分仍 TODO）。
 
 ```mermaid
 flowchart TB
@@ -707,3 +707,4 @@ flowchart LR
 - **2026-10-21:** 新增 §4.4 雙時鐘 Harness、§4.5 Proposal→Approve→Merge 治理、§5.5 `HarnessProposal`；對齊 ADR-003 Addendum A。
 - **2026-10-21 (docs sync):** 頂欄綁定 AUDIT 計劃（Confirmed）；§5.6 Intent v0；M7 註明 `lab/advisory_debate` ≠ 產品 M7／禁止 OrderManager；IntentStore ≠ L2 `OrderStore`。
 - **2026-10-21 (P0 order):** Confirmed — journal／provenance first; IntentStore (H1/H3) later. See audit plan item 4.
+- **2026-10-21 (IntentStore):** `intent.v0` JSON IntentStore + H3 `upsert_active_intent` + thin H1 `harness_realtime` consume hook. Full H1/H2 worker split still TODO. Not live.
