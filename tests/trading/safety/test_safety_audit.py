@@ -119,6 +119,18 @@ def test_multiple_events_append(isolated_audit_dir):
     assert ids == [1, 2, 3]
 
 
+def test_log_event_writes_audit_v0_fields(isolated_audit_dir):
+    event_id = audit.log_risk_decision("AAPL", "buy", 2.0, False, "Too large")
+    assert event_id
+    events = audit.read_recent_events(limit=10, days=2)
+    assert events
+    row = events[0]
+    assert row["schema_version"] == "audit.v0"
+    assert row["event_id"] == event_id
+    assert row["kind"] == "risk_reject"
+    assert audit.get_event(event_id)["symbol"] == "AAPL"
+
+
 def test_audit_failure_does_not_raise(isolated_audit_dir, monkeypatch):
     """Audit failures are logged but never propagate exceptions."""
     # Simulate write failure by making the dir read-only

@@ -26,7 +26,7 @@ First visit: a short tour appears. Replay it from **More → Guide** or the **?*
 |---|---|
 | **Navigation** | Daily workspace: Desk (holdings), Orders, Research, Market, Chart |
 | **Apps** | Tools: AI Mode (tune + start auto), Strategies, Alerts, Calendar |
-| **More** | Journal, Options, Settings, Guide |
+| **More** | Trade journal (orders / rejects / notes + audit links), Options, Settings, Guide |
 
 ### 3. Desk vs AI Mode
 
@@ -42,7 +42,7 @@ The top bar **AUTO ON** means the worker process is alive and its heartbeat is f
 2. Kill switch on Desk must be **OFF** (Resume) or the bot will not open new buys.
 3. AI Mode → strategy (start with **stable**) → **Start paper auto**.
 4. The worker polls about once a minute. It fetches prices, scores names, then sizes with Kelly and RiskEngine.
-5. Fills appear on **Desk → Holdings** and **Orders**. Empty holdings = no fill yet.
+5. Fills appear on **Desk → Holdings** and **Orders**. Empty holdings = no fill yet. **More → Trade journal** shows the same local ledger plus risk rejects (reason codes) and audit/provenance links. An empty journal is not a live book.
 
 US regular hours are about **09:30–16:00 ET**. Outside that window the worker stays alive but **does not run strategy cycles**, unless `.env` has `IGNORE_MARKET_HOURS=true`. Auto Scan (while FastAPI is up) defaults to US session slots; for **hourly 24h Scan** set `SCAN_AUTO=1`, `SCAN_INTERVAL_MIN=60`, and `SCAN_OUTSIDE_HOURS=true`.
 
@@ -98,7 +98,7 @@ Bind the FastAPI Desk so phones on the same Wi-Fi can open the **same** UI as lo
 |---|---|
 | **導覽** | 日常工作區：工作台（持倉）、訂單、研究、行情、圖表 |
 | **應用** | 工具：AI 模式（調參並啟動自動）、策略、警示、行事曆 |
-| **更多** | 日誌、選擇權、設定、教學 |
+| **更多** | 交易日誌（訂單／拒絕／筆記＋審計連結）、選擇權、設定、教學 |
 
 ### 3. 工作台與 AI 模式
 
@@ -114,7 +114,7 @@ Bind the FastAPI Desk so phones on the same Wi-Fi can open the **same** UI as lo
 2. 工作台上的緊急停止必須是關閉（Resume），否則不會開新倉。
 3. AI 模式 → 選策略（建議先用 **stable**）→ **啟動紙上自動交易**。
 4. 行程約每分鐘掃描一次：抓行情、評分、凱利倉位、風控，通過才下單。
-5. 成交後出現在 **工作台持倉** 與 **訂單**。空白 = 還沒成交。
+5. 成交後出現在 **工作台持倉** 與 **訂單**。空白 = 還沒成交。**更多 → 交易日誌** 顯示同一本機帳本，加上風控拒絕（原因碼）與 audit／provenance 連結。日誌空白不是即時成交。
 
 美股正規交易約 **美東 09:30–16:00**。盤外行程仍在，但 **不跑策略迴圈**，除非 `.env` 設 `IGNORE_MARKET_HOURS=true`。自動 Scan（FastAPI 開著時）預設跟美東盤中時段；若要 **全日每小時掃一次**，設 `SCAN_AUTO=1`、`SCAN_INTERVAL_MIN=60`、`SCAN_OUTSIDE_HOURS=true`。
 

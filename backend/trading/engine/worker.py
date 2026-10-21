@@ -627,7 +627,7 @@ class TradingWorker:
 
             # Audit the risk / submission outcome
             if (result.error_message or "").startswith("Risk Gate Rejected"):
-                audit.log_risk_decision(ticker, "buy", qty, False, result.error_message or "")
+                # SignalProcessor already wrote AuditEvent + TradeLogEntry.
                 logger.info("BLOCKED %s: %s", ticker, result.error_message)
                 summary_rows.append({
                     "ticker": ticker, "action": "BLOCKED",

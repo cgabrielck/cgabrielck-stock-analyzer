@@ -91,6 +91,24 @@ class SignalProcessor:
             draft_order.status = OrderStatus.REJECTED
             draft_order.error_message = f"Risk Gate Rejected: {risk_decision.reason}"
             self.order_manager.store.save_order(draft_order)
+            try:
+                from backend.trading.safety import audit
+                from backend.utils.provenance.journal_store import record_from_order
+
+                audit_id = audit.log_risk_decision(
+                    symbol,
+                    side.value,
+                    float(draft_order.quantity or 0),
+                    False,
+                    draft_order.error_message,
+                )
+                record_from_order(
+                    draft_order,
+                    audit_id=audit_id,
+                    strategy_id=signal.get("strategy_id"),
+                )
+            except Exception:
+                logger.exception("Failed to persist risk-reject journal/audit for %s", symbol)
             return draft_order
 
         draft_order.status = OrderStatus.RISK_APPROVED

@@ -31,6 +31,7 @@ Architecture authority is ADR-003, not the frozen [QUALITY_ROADMAP](docs/QUALITY
 
 ## What's New / 近期更新
 
+- **Desk trade journal (P0)** — FastAPI Desk `More → Trade journal` / `更多 → 交易日誌` shows orders, risk rejects (reason codes), and notes with audit/provenance links. Empty is not a live fill. Streamlit journal stays lab/legacy.
 - **Chart redesigned** — Clean simple/detail mode. Default view focuses on ~90 recent daily candles with natural scroll, pinch-zoom, and drag panning. No cluttered toolbar — just the price, volume, trend line, entry zone, stop, and target 1. Toggle detail mode for SMA/EMA, Bollinger Bands, RSI, MACD, Fibonacci, and Double Top/Bottom patterns with plain-language indicator explanations.
 - **Chart pattern overlays** — Double Top / Double Bottom detection with look-ahead bias prevention, Fibonacci retracement levels, and TradingView Pine Script v6 export for independent verification.
 - **Price alert monitoring** — Directional crossing state machine with confirmation bars, re-arm logic (0.5% away from level), stale quote rejection, and duplicate-safe events. Standalone background worker (default 60s interval) checks alerts when the browser is closed.
@@ -223,7 +224,7 @@ Cached market information uses a five-minute TTL. Running analysis with force re
 
 ## Professional UI / 專業交易介面
 
-**Product UI is the FastAPI Desk** (`web/static`, served by `backend/api/app.py`): Scan, Deep, Auto, paper evidence, provenance, and operator controls. Dark institutional-terminal visual language (see `docs/ui/alphadesk-desk-demo.html`).
+**Product UI is the FastAPI Desk** (`web/static`, served by `backend/api/app.py`): Scan, Deep, Auto, paper evidence, provenance, operator controls, and the **trade journal** (`More → Trade journal` / `更多 → 交易日誌`). That view lists recent orders, risk rejects, and notes with audit/provenance links from `GET /api/journal` — empty means nothing was recorded, not a live fill. Streamlit’s journal remains lab/legacy only. Dark institutional-terminal visual language (see `docs/ui/alphadesk-desk-demo.html`).
 
 The **Streamlit** app (`backend/app.py`) is **lab / legacy**. It still has a dark terminal layout (responsive, Core/Satellite labels, regime banner, recommendation cards, Plotly charts, journal, en / 简体中文 / 繁體中文) but it is not the surface we sell or extend first.
 

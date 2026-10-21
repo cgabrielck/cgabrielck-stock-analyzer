@@ -124,3 +124,17 @@ def scan_book_provenance(
             else "Yahoo primary — set POLYGON_API_KEY for paid daily bars on the seal path. Without a key the customer narrative stays Yahoo fallback (not live)."
         ),
     }
+
+
+def journal_provenance(
+    *,
+    source: str,
+    as_of: Optional[str] = None,
+    extra: Optional[Dict[str, Any]] = None,
+    note: Optional[str] = None,
+    vendor: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Desk journal/audit chip. Local ledgers never look verified or live."""
+    from backend.utils.provenance.trade_log import journal_provenance as _journal_provenance
+
+    return _journal_provenance(source=source, as_of=as_of, extra=extra, note=note, vendor=vendor)
