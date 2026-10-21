@@ -132,6 +132,23 @@ def test_merge_dedupes_order_and_audit():
     assert rows[0]["symbol"] == "META"
 
 
+def test_merge_attaches_audit_link_to_order_twin():
+    rows = merge_trade_logs(
+        [],
+        [{"id": "ord-6", "symbol": "NVDA", "side": "buy", "quantity": 8, "status": "rejected",
+          "error_message": "Risk Gate Rejected: Insufficient buying power. Need $4000, have $200.",
+          "updated_at": "2026-10-21T14:00:00+00:00"}],
+        [{"event_id": "aud-6", "kind": "risk_reject", "symbol": "NVDA",
+          "approved": False,
+          "reason": "Risk Gate Rejected: Insufficient buying power. Need $4000, have $200.",
+          "ts": "2026-10-21T14:05:00+00:00"}],
+        limit=20,
+    )
+    assert len(rows) == 1
+    assert rows[0]["order_id"] == "ord-6"
+    assert rows[0]["links"]["audit_ref"] == "/api/journal/audit/aud-6"
+
+
 def test_empty_merge_is_empty():
     assert merge_trade_logs([], [], [], limit=10) == []
 

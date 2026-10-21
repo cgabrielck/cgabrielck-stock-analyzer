@@ -502,15 +502,22 @@ def merge_trade_logs(
 ) -> List[Dict[str, Any]]:
     entries: List[Dict[str, Any]] = []
     seen: Set[str] = set()
+    index: Dict[str, Dict[str, Any]] = {}
 
     def accept(entry: Optional[Dict[str, Any]]) -> None:
         if not entry:
             return
         keys = _dedupe_keys(entry)
-        if any(k in seen for k in keys):
+        existing = next((index[k] for k in keys if k in index), None)
+        if existing:
+            _enrich_entry(existing, entry)
+            for k in keys:
+                seen.add(k)
+                index[k] = existing
             return
         for k in keys:
             seen.add(k)
+            index[k] = entry
         entries.append(entry)
 
     for raw in journal_rows or []:
@@ -551,7 +558,30 @@ def _dedupe_keys(entry: Dict[str, Any]) -> List[str]:
         keys.append(f"order:{entry['order_id']}:{entry.get('status')}")
     if entry.get("risk_decision_id"):
         keys.append(f"audit:{entry['risk_decision_id']}")
+    summary = str(entry.get("user_visible_summary") or "").strip()
+    if entry.get("symbol") and entry.get("status") in {"risk_rejected", "vetoed"} and summary:
+        keys.append(f"twin:{entry.get('symbol')}:{entry.get('status')}:{summary}")
     return keys
+
+
+def _enrich_entry(base: Dict[str, Any], incoming: Dict[str, Any]) -> None:
+    """Fold a later twin (audit vs order) into the row already shown."""
+    if not base.get("order_id") and incoming.get("order_id"):
+        base["order_id"] = incoming["order_id"]
+    if not base.get("risk_decision_id") and incoming.get("risk_decision_id"):
+        base["risk_decision_id"] = incoming["risk_decision_id"]
+    incoming_ref = (incoming.get("links") or {}).get("audit_ref") or ""
+    if incoming_ref and not (base.get("links") or {}).get("audit_ref"):
+        base.setdefault("links", {})["audit_ref"] = incoming_ref
+    codes = list(base.get("reason_codes") or [])
+    for code in incoming.get("reason_codes") or []:
+        if code not in codes:
+            codes.append(code)
+    base["reason_codes"] = codes
+    if incoming.get("qty") and not base.get("qty"):
+        base["qty"] = incoming["qty"]
+    if incoming.get("side") and not base.get("side"):
+        base["side"] = incoming["side"]
 
 
 def _side(value: Any) -> Optional[str]:
