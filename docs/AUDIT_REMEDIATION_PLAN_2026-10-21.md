@@ -37,8 +37,9 @@ Keep ADR-003; revise docs before build. Risk if skip: Python rule kernel + docs 
 3. **Intent v0 + 架構圖**  
    於 `MODULAR_ARCHITECTURE` §5 補 **Intent v0 schema**；更新 `boomboom-modular-architecture.html`：dual-clock、Proposal/Approve path、IntentStore、L1/L2。
 
-4. **Lock P0 order decision（鎖定 P0 順序）**  
-   在開編碼工單前決定：先用戶可見 journal／provenance，定先拆 H1/H3 IntentStore——唔好只強化後台 worker。
+4. **Lock P0 order decision（鎖定 P0 順序）** — **Confirmed 2026-10-21**  
+   **First:** user-visible journal / provenance. **Later:** IntentStore (H1/H3 split).  
+   已鎖定：先用戶可見 journal／provenance；IntentStore（H1/H3 拆分）其後。唔再當開放決策。唔好只強化後台 worker。
 
 5. **One-pager bounded intelligence acceptance（有界智能驗收一頁）**  
    - closed veto codes v0  
