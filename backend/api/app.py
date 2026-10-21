@@ -37,7 +37,6 @@ from backend.utils.constants import DATA_DIR, STOCK_UNIVERSE
 APP_NAME = "Cgab"
 AI_MODE_PATH = Path(DATA_DIR) / "ai_mode.json"
 WATCHLIST_PATH = Path(DATA_DIR) / "watchlist.json"
-JOURNAL_PATH = Path(DATA_DIR) / "trade_journal.json"
 
 DEFAULT_AI_MODE = {
     "strategy": "breakout",
@@ -501,6 +500,17 @@ def guide() -> Dict[str, Any]:
                 },
             },
             {
+                "id": "journal",
+                "en": {
+                    "title": "Trade journal is on the Desk",
+                    "body": "More → Journal shows recent orders, risk rejects, and notes with audit/provenance links. Empty means nothing was recorded — not a live fill. Streamlit’s journal is lab/legacy only.",
+                },
+                "zh": {
+                    "title": "交易日誌在 Desk",
+                    "body": "更多 → 交易日誌顯示近期訂單、風控拒絕與筆記，並可跟著 audit／provenance 連結。空白代表尚未入帳，不是即時成交。Streamlit 日誌只是實驗室／舊介面。",
+                },
+            },
+            {
                 "id": "lang",
                 "en": {
                     "title": "English and 繁體中文",
@@ -690,36 +700,46 @@ def calendar() -> Dict[str, Any]:
 
 
 @app.get("/api/journal")
-def journal() -> Dict[str, Any]:
-    raw = _read_json(JOURNAL_PATH, [])
-    if isinstance(raw, dict):
-        raw = raw.get("entries") or raw.get("trades") or []
-    return {"entries": raw}
+def journal(limit: int = 100, kind: str = "all") -> Dict[str, Any]:
+    from backend.api import trade_journal
+
+    return trade_journal.build_journal_response(
+        order_store=_store,
+        limit=max(1, min(int(limit or 100), 400)),
+        kind=str(kind or "all"),
+    )
+
+
+@app.get("/api/journal/audit/{event_id}")
+def journal_audit(event_id: str) -> Dict[str, Any]:
+    from backend.api import trade_journal
+
+    event = trade_journal.get_audit_event(event_id)
+    if not event:
+        raise HTTPException(status_code=404, detail="Audit event not found")
+    return event
+
+
+@app.get("/api/journal/entry/{log_id}")
+def journal_entry(log_id: str) -> Dict[str, Any]:
+    from backend.api import trade_journal
+
+    entry = trade_journal.get_entry(log_id, order_store=_store)
+    if not entry:
+        raise HTTPException(status_code=404, detail="Journal entry not found")
+    linked = None
+    audit_id = entry.get("risk_decision_id")
+    if audit_id:
+        linked = trade_journal.get_audit_event(str(audit_id))
+    return {"entry": entry, "audit": linked}
 
 
 @app.post("/api/journal")
 def add_journal(body: JournalIn) -> Dict[str, Any]:
-    raw = _read_json(JOURNAL_PATH, [])
-    if isinstance(raw, dict):
-        entries = raw.get("entries") or []
-        wrapper = raw
-    else:
-        entries = raw
-        wrapper = None
-    entry = {
-        "id": str(uuid.uuid4()),
-        "ts": datetime.now(timezone.utc).isoformat(),
-        "symbol": body.symbol.upper(),
-        "note": body.note,
-        "side": body.side,
-    }
-    entries = list(entries) + [entry]
-    if wrapper is not None:
-        wrapper["entries"] = entries
-        _write_json(JOURNAL_PATH, wrapper)
-    else:
-        _write_json(JOURNAL_PATH, entries)
-    return {"entries": entries[-100:]}
+    from backend.api import trade_journal
+
+    trade_journal.add_note(body.symbol, body.note, body.side)
+    return trade_journal.build_journal_response(order_store=_store, limit=100)
 
 
 @app.get("/api/digest")

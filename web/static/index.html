@@ -107,6 +107,16 @@
     }
     .tour-card h2 { margin:8px 0 10px; }
     .hidden { display:none; }
+    .jnl-status { font-weight:700; letter-spacing:.02em; }
+    .jnl-status.risk_rejected, .jnl-status.vetoed, .jnl-status.canceled { color:var(--rose); }
+    .jnl-status.filled { color:var(--mint); }
+    .jnl-status.submitted, .jnl-status.shadow { color:var(--cyan); }
+    .jnl-status.proposed { color:var(--muted); }
+    .jnl-codes { display:flex; gap:6px; flex-wrap:wrap; }
+    .jnl-code { border:1px solid var(--line); border-radius:999px; padding:2px 8px; font-size:11px; color:#e7c36a; }
+    .jnl-row { cursor:pointer; }
+    .jnl-row:hover td { background:rgba(45,226,197,.04); }
+    .jnl-detail { background:#0b1820; border:1px solid var(--line); border-radius:12px; padding:12px; margin-top:12px; font-size:12px; color:var(--muted); white-space:pre-wrap; }
     .icon-btn { width:36px; height:36px; border-radius:50%; border:1px solid var(--line); background:var(--card); color:var(--cyan); cursor:pointer; font-weight:800; }
     .menu-btn { display:none; }
     .nav-scrim { display:none; }
@@ -248,7 +258,29 @@ const I18N = {
     "page.alerts":"Alerts",
     "page.calendar":"Calendar",
     "page.guide":"Guide",
-    "page.journal":"Journal",
+    "page.journal":"Trade journal",
+    "journal.lead":"Orders, risk rejects, and operator notes from the local ledger. Empty means nothing was recorded — not a live fill. Streamlit journal is lab/legacy.",
+    "journal.add":"Add note",
+    "journal.note_ph":"Note (not a fill)",
+    "journal.empty":"No recorded orders, rejects, or notes yet. This is not a live book.",
+    "journal.filter.all":"All",
+    "journal.filter.reject":"Rejects",
+    "journal.filter.order":"Orders",
+    "journal.filter.note":"Notes",
+    "journal.col.time":"Time",
+    "journal.col.symbol":"Symbol",
+    "journal.col.side":"Side",
+    "journal.col.qty":"Qty",
+    "journal.col.status":"Status",
+    "journal.col.reasons":"Reason codes",
+    "journal.col.summary":"Summary",
+    "journal.col.provenance":"Provenance",
+    "journal.col.audit":"Audit",
+    "journal.audit":"Open audit",
+    "journal.unverified":"unverified",
+    "journal.no_audit":"No audit link",
+    "journal.detail":"Entry + audit",
+    "journal.close":"Close",
     "page.options":"Options",
     "page.settings":"Settings",
     "search.ph":"Search symbol…",
@@ -387,7 +419,7 @@ const I18N = {
     "t0.t":"Welcome to Cgab",
     "t0.b":"This desk researches US stocks and can auto-trade on Alpaca paper. The PAPER badge means no live cash.",
     "t1.t":"Three sidebar groups",
-    "t1.b":"Navigation is the daily workspace. Apps is where you start the AI worker. More has the written guide.",
+    "t1.b":"Navigation is the daily workspace. Apps is where you start the AI worker. More has the trade journal and written guide.",
     "t2.t":"Desk is the live paper book",
     "t2.b":"Equity and holdings come from Alpaca paper. An empty table means no fills yet — not a broken screen.",
     "t3.t":"Start paper auto in AI Mode",
@@ -418,7 +450,29 @@ const I18N = {
     "page.alerts":"警示",
     "page.calendar":"行事曆",
     "page.guide":"教學",
-    "page.journal":"日誌",
+    "page.journal":"交易日誌",
+    "journal.lead":"本機帳本中的訂單、風控拒絕與操作筆記。空白代表尚未入帳，不是即時成交。Streamlit 日誌只是實驗室／舊介面。",
+    "journal.add":"新增筆記",
+    "journal.note_ph":"筆記（不是成交）",
+    "journal.empty":"尚無訂單、拒絕或筆記。這不是即時帳本。",
+    "journal.filter.all":"全部",
+    "journal.filter.reject":"拒絕",
+    "journal.filter.order":"訂單",
+    "journal.filter.note":"筆記",
+    "journal.col.time":"時間",
+    "journal.col.symbol":"代碼",
+    "journal.col.side":"方向",
+    "journal.col.qty":"數量",
+    "journal.col.status":"狀態",
+    "journal.col.reasons":"原因碼",
+    "journal.col.summary":"摘要",
+    "journal.col.provenance":"來源",
+    "journal.col.audit":"審計",
+    "journal.audit":"開啟審計",
+    "journal.unverified":"未驗證",
+    "journal.no_audit":"無審計連結",
+    "journal.detail":"條目＋審計",
+    "journal.close":"關閉",
     "page.options":"選擇權",
     "page.settings":"設定",
     "search.ph":"搜尋代碼…",
@@ -557,7 +611,7 @@ const I18N = {
     "t0.t":"歡迎使用 Cgab",
     "t0.b":"這是美股研究工作台，可在 Alpaca 模擬盤自動交易。PAPER 代表不會動用真錢。",
     "t1.t":"側欄三個分組",
-    "t1.b":"導覽是日常工作區。應用用來啟動 AI 工作行程。更多裡面有完整教學。",
+    "t1.b":"導覽是日常工作區。應用用來啟動 AI 工作行程。更多裡面有交易日誌與完整教學。",
     "t2.t":"工作台是模擬帳本",
     "t2.b":"權益與持倉來自 Alpaca 模擬帳戶。表格空白代表還沒成交，不是畫面壞掉。",
     "t3.t":"在 AI 模式啟動自動交易",
@@ -1640,14 +1694,81 @@ async function guide(){
   $("#replay").onclick=()=>{ tourStep=0; showTour(); };
 }
 
-async function journal(){
-  const d = await api("/api/journal");
-  const rows = [...(d.entries||[])].reverse().slice(0,40);
+function journalProvChip(p){
+  if(!p || typeof p !== "object") return `<span class="chip">${esc(t("journal.unverified"))}</span>`;
+  const src = p.source || "unknown";
+  const asOf = p.as_of ? String(p.as_of).replace("T"," ").slice(0,19) : "—";
+  const label = `${src} · ${t("journal.unverified")} · as-of ${asOf}`;
+  return `<span class="chip" title="${esc(p.note||"")}">${esc(label)}</span>`;
+}
+function journalAuditLink(e){
+  const ref = (e.links && e.links.audit_ref) || (e.risk_decision_id ? `/api/journal/audit/${e.risk_decision_id}` : "");
+  if(!ref) return `<span class="muted">${t("journal.no_audit")}</span>`;
+  return `<button class="tab jnl-audit" data-ref="${esc(ref)}" data-id="${esc(e.log_id||"")}">${t("journal.audit")}</button>`;
+}
+async function journal(kind){
+  const filter = kind || journal._kind || "all";
+  journal._kind = filter;
+  const d = await api("/api/journal?limit=120&kind="+encodeURIComponent(filter));
+  const rows = d.entries || [];
+  const disc = lang==="zh-TW" ? (d.disclaimer_zh||t("journal.lead")) : (d.disclaimer||t("journal.lead"));
+  const empty = !rows.length;
+  const filters = ["all","reject","order","note"].map(k=>{
+    const on = filter===k ? " on" : "";
+    return `<button class="tab${on}" data-kind="${k}">${t("journal.filter."+k)}</button>`;
+  }).join("");
+  const body = empty
+    ? `<tr><td colspan="9" class="muted">${esc(t("journal.empty"))}</td></tr>`
+    : rows.map(e=>`<tr class="jnl-row" data-id="${esc(e.log_id||"")}">
+        <td>${esc(String(e.ts||"").replace("T"," ").slice(0,19))}</td>
+        <td>${esc(e.symbol||"—")}</td>
+        <td>${esc(e.side||"—")}</td>
+        <td>${e.qty?esc(String(e.qty)): "—"}</td>
+        <td class="jnl-status ${esc(e.status||"")}">${esc(e.status||"—")}</td>
+        <td><div class="jnl-codes">${(e.reason_codes||[]).map(c=>`<span class="jnl-code">${esc(c)}</span>`).join("")||"—"}</div></td>
+        <td>${esc(e.user_visible_summary||e.note||"—")}</td>
+        <td>${journalProvChip(e.provenance)}</td>
+        <td>${journalAuditLink(e)}</td>
+      </tr>`).join("");
   root.innerHTML = `<div class="card"><h3>${t("page.journal")}</h3>
-    <div class="row"><input id="js" value="AAPL" style="width:90px" /><input id="jn" placeholder="Note" style="flex:1" /><button class="btn" id="ja">Add</button></div>
-    <table><thead><tr><th>Time</th><th>Symbol</th><th>Note</th></tr></thead>
-    <tbody>${rows.map(e=>`<tr><td>${String(e.ts||"").slice(0,19)}</td><td>${e.symbol||""}</td><td>${e.note||JSON.stringify(e)}</td></tr>`).join("")}</tbody></table></div>`;
-  $("#ja").onclick=async()=>{ await api("/api/journal",{method:"POST",body:JSON.stringify({symbol:$("#js").value,note:$("#jn").value})}); journal(); };
+    <p class="muted">${esc(disc)}</p>
+    <div class="row" style="margin:10px 0">${filters}</div>
+    <div class="row"><input id="js" value="AAPL" style="width:90px" /><input id="jn" placeholder="${t("journal.note_ph")}" style="flex:1" /><button class="btn" id="ja">${t("journal.add")}</button></div>
+    <table><thead><tr>
+      <th>${t("journal.col.time")}</th><th>${t("journal.col.symbol")}</th><th>${t("journal.col.side")}</th>
+      <th>${t("journal.col.qty")}</th><th>${t("journal.col.status")}</th><th>${t("journal.col.reasons")}</th>
+      <th>${t("journal.col.summary")}</th><th>${t("journal.col.provenance")}</th><th>${t("journal.col.audit")}</th>
+    </tr></thead><tbody>${body}</tbody></table>
+    <div id="jnlDetail" class="jnl-detail hidden"></div>
+  </div>`;
+  $("#ja").onclick=async()=>{
+    const note=$("#jn").value.trim();
+    if(!note) return;
+    await api("/api/journal",{method:"POST",body:JSON.stringify({symbol:$("#js").value,note})});
+    journal(filter);
+  };
+  root.querySelectorAll(".tab[data-kind]").forEach(b=>b.onclick=()=>journal(b.dataset.kind));
+  const detail=$("#jnlDetail");
+  async function openEntry(id, ref){
+    if(!id && !ref) return;
+    try {
+      const path = id ? "/api/journal/entry/"+encodeURIComponent(id) : ref;
+      const payload = await api(path);
+      detail.classList.remove("hidden");
+      detail.textContent = t("journal.detail")+"\n"+JSON.stringify(payload, null, 2);
+    } catch(err){
+      detail.classList.remove("hidden");
+      detail.textContent = err.message || t("journal.no_audit");
+    }
+  }
+  root.querySelectorAll(".jnl-row").forEach(row=>row.onclick=(ev)=>{
+    if(ev.target.closest(".jnl-audit")) return;
+    openEntry(row.dataset.id);
+  });
+  root.querySelectorAll(".jnl-audit").forEach(btn=>btn.onclick=(ev)=>{
+    ev.stopPropagation();
+    openEntry(btn.dataset.id, btn.dataset.ref);
+  });
 }
 
 async function options(){

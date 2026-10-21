@@ -37,8 +37,10 @@ export const api = {
   research: (symbol: string) => req<any>(`/api/research/${symbol}`),
   options: (symbol: string) => req<any>(`/api/options/${symbol}`),
   calendar: () => req<{ events: any[] }>("/api/calendar"),
-  journal: () => req<{ entries: any[] }>("/api/journal"),
+  journal: (kind = "all") => req<{ entries: any[]; empty?: boolean; disclaimer?: string; disclaimer_zh?: string }>("/api/journal?limit=120&kind=" + encodeURIComponent(kind)),
   addJournal: (body: object) => req<any>("/api/journal", { method: "POST", body: JSON.stringify(body) }),
+  journalEntry: (logId: string) => req<any>("/api/journal/entry/" + encodeURIComponent(logId)),
+  journalAudit: (eventId: string) => req<any>("/api/journal/audit/" + encodeURIComponent(eventId)),
   performance: () => req<any>("/api/performance"),
   universe: () => req<{ universe: any[] }>("/api/universe"),
 };

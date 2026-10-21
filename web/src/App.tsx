@@ -30,7 +30,7 @@ const NAV = [
     { id: "calendar", label: "Calendar" },
   ]},
   { group: "MORE", sub: "Guide & extras", mark: "+", klass: "g-more", items: [
-    { id: "journal", label: "Journal" },
+    { id: "journal", label: "Trade journal" },
     { id: "options", label: "Options" },
     { id: "settings", label: "Settings" },
   ]},
@@ -494,23 +494,54 @@ function Journal() {
   const [entries, setEntries] = useState<any[]>([]);
   const [note, setNote] = useState("");
   const [symbol, setSymbol] = useState("AAPL");
-  useEffect(() => { api.journal().then((d) => setEntries(d.entries || [])).catch(() => {}); }, []);
+  const [kind, setKind] = useState("all");
+  const [disclaimer, setDisclaimer] = useState("Orders, risk rejects, and notes. Empty is not a live fill.");
+  const [detail, setDetail] = useState("");
+  const load = (filter = kind) => {
+    api.journal(filter).then((d) => {
+      setEntries(d.entries || []);
+      setDisclaimer(d.disclaimer || "Empty is not a live book.");
+    }).catch(() => setEntries([]));
+  };
+  useEffect(() => { load(kind); }, [kind]);
   return (
     <div className="card">
-      <h3>Journal</h3>
-      <form className="row" onSubmit={async (e) => { e.preventDefault(); const d = await api.addJournal({ symbol, note }); setEntries(d.entries); setNote(""); }}>
+      <h3>Trade journal</h3>
+      <p className="muted">{disclaimer}</p>
+      <div className="row" style={{ margin: "10px 0" }}>
+        {["all", "reject", "order", "note"].map((k) => (
+          <button key={k} className={`tab${kind === k ? " on" : ""}`} onClick={() => setKind(k)}>{k}</button>
+        ))}
+      </div>
+      <form className="row" onSubmit={async (e) => { e.preventDefault(); if (!note.trim()) return; const d = await api.addJournal({ symbol, note }); setEntries(d.entries || []); setNote(""); }}>
         <input value={symbol} onChange={(e) => setSymbol(e.target.value.toUpperCase())} style={{ width: 90 }} />
-        <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Note" style={{ flex: 1 }} />
-        <button className="btn">Add</button>
+        <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Note (not a fill)" style={{ flex: 1 }} />
+        <button className="btn">Add note</button>
       </form>
       <table className="table">
-        <thead><tr><th>Time</th><th>Symbol</th><th>Note</th></tr></thead>
+        <thead><tr><th>Time</th><th>Symbol</th><th>Side</th><th>Qty</th><th>Status</th><th>Reasons</th><th>Summary</th><th>Provenance</th><th>Audit</th></tr></thead>
         <tbody>
-          {[...entries].reverse().slice(0, 40).map((e, i) => (
-            <tr key={e.id || i}><td>{String(e.ts || e.created_at || "").slice(0, 19)}</td><td>{e.symbol}</td><td>{e.note || JSON.stringify(e)}</td></tr>
+          {entries.length === 0 && <tr><td colSpan={9} className="muted">No recorded orders, rejects, or notes yet. This is not a live book.</td></tr>}
+          {entries.map((e, i) => (
+            <tr key={e.log_id || e.id || i} onClick={async () => {
+              if (!e.log_id) return;
+              try { setDetail(JSON.stringify(await api.journalEntry(e.log_id), null, 2)); }
+              catch (err: any) { setDetail(err.message || "not found"); }
+            }}>
+              <td>{String(e.ts || "").replace("T", " ").slice(0, 19)}</td>
+              <td>{e.symbol}</td>
+              <td>{e.side || "—"}</td>
+              <td>{e.qty || "—"}</td>
+              <td>{e.status || "—"}</td>
+              <td>{(e.reason_codes || []).join(" · ") || "—"}</td>
+              <td>{e.user_visible_summary || e.note || "—"}</td>
+              <td>{e.provenance?.source || "unknown"} · unverified</td>
+              <td>{e.links?.audit_ref ? "open" : "—"}</td>
+            </tr>
           ))}
         </tbody>
       </table>
+      {detail && <pre className="muted" style={{ whiteSpace: "pre-wrap" }}>{detail}</pre>}
     </div>
   );
 }
