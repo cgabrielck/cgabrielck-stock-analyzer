@@ -190,6 +190,68 @@ def test_market_sell_tiny_limit_price_409_does_not_hit_broker(tmp_path):
     assert "notional" in detail or "exceed" in detail or "risk" in detail
 
 
+def test_resolve_reference_price_ignores_unconstrained_stop_limit():
+    """Stop limit_price is not on StopOrderRequest — same ignore path as market."""
+    order = _order(order_type=OrderType.STOP, quantity=10000, limit_price=0.01)
+    assert constraining_order_price(order) is None
+    px = resolve_reference_price(order, _account(), quote_fn=lambda _s: 150.0)
+    assert px == 150.0
+
+
+def test_resolve_reference_price_stop_tiny_limit_without_quote_is_none():
+    order = _order(order_type=OrderType.STOP, limit_price=0.01)
+    assert resolve_reference_price(order, _account(), quote_fn=lambda _s: None) is None
+
+
+def test_stop_buy_tiny_limit_price_409_does_not_hit_broker(tmp_path):
+    """Contract symmetry with market: stop + dummy $0.01 must use quote/mark."""
+    path = _mandate_file(tmp_path, TIGHT)
+    broker = _broker()
+    result = place_desk_order(
+        _order(
+            order_type=OrderType.STOP,
+            quantity=10000,
+            limit_price=0.01,
+            id="stp-tiny-buy",
+            idempotency_key="stp-tiny-buy",
+        ),
+        broker=broker,
+        store=InMemoryOrderStore(),
+        mandate_path=path,
+        quote_fn=lambda _s: 150.0,
+    )
+    assert result.http_status == 409
+    assert result.blocked is True
+    assert result.gate in ("mandate", "risk")
+    broker.submit_order.assert_not_called()
+    detail = (result.detail or "").lower()
+    assert "notional" in detail or "exceed" in detail
+
+
+def test_stop_sell_tiny_limit_price_409_does_not_hit_broker(tmp_path):
+    path = _mandate_file(tmp_path, TIGHT)
+    broker = _broker()
+    result = place_desk_order(
+        _order(
+            side=OrderSide.SELL,
+            order_type=OrderType.STOP,
+            quantity=10000,
+            limit_price=0.01,
+            id="stp-tiny-sell",
+            idempotency_key="stp-tiny-sell",
+        ),
+        broker=broker,
+        store=InMemoryOrderStore(),
+        mandate_path=path,
+        quote_fn=lambda _s: 150.0,
+    )
+    assert result.http_status == 409
+    assert result.blocked is True
+    broker.submit_order.assert_not_called()
+    detail = (result.detail or "").lower()
+    assert "notional" in detail or "exceed" in detail or "risk" in detail
+
+
 def test_market_zero_limit_without_quote_does_not_approve(tmp_path):
     path = _mandate_file(tmp_path, TIGHT)
     broker = _broker()

@@ -232,6 +232,45 @@ def test_api_market_sell_tiny_limit_price_409_no_broker(desk_api, monkeypatch):
     desk_api["broker"].submit_order.assert_not_called()
 
 
+def test_api_stop_buy_tiny_limit_price_409_no_broker(desk_api, monkeypatch):
+    from backend.trading.engine import desk_orders as desk_mod
+
+    monkeypatch.setattr(desk_mod, "default_quote_price", lambda _s: 150.0)
+    client = desk_api["client"]
+    res = client.post(
+        "/api/orders",
+        json={
+            "symbol": "AAPL",
+            "side": "buy",
+            "quantity": 10000,
+            "order_type": "stop",
+            "limit_price": 0.01,
+        },
+    )
+    assert res.status_code == 409, res.text
+    desk_api["broker"].submit_order.assert_not_called()
+    assert "notional" in res.json()["detail"].lower() or "exceed" in res.json()["detail"].lower()
+
+
+def test_api_stop_sell_tiny_limit_price_409_no_broker(desk_api, monkeypatch):
+    from backend.trading.engine import desk_orders as desk_mod
+
+    monkeypatch.setattr(desk_mod, "default_quote_price", lambda _s: 150.0)
+    client = desk_api["client"]
+    res = client.post(
+        "/api/orders",
+        json={
+            "symbol": "AAPL",
+            "side": "sell",
+            "quantity": 10000,
+            "order_type": "stop",
+            "limit_price": 0.01,
+        },
+    )
+    assert res.status_code == 409, res.text
+    desk_api["broker"].submit_order.assert_not_called()
+
+
 def test_api_limit_price_zero_without_quote_409_no_broker(desk_api, monkeypatch):
     from backend.trading.engine import desk_orders as desk_mod
 
