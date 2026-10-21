@@ -792,6 +792,28 @@ class TradingWorker:
                 except Exception:
                     return None
 
+            # Same M8 inputs as _run_strategy_signals: VIX, cooldown, OHLCV
+            # history (correlation), MandateGate. Intents still go through
+            # full M8 — gates, sizer, mandate, kill.
+            vix_level = self._fetch_vix()
+            now = datetime.now(timezone.utc)
+            self._cooldown = {
+                t: ts for t, ts in self._cooldown.items()
+                if (now - ts).total_seconds() < COOLDOWN_HOURS * 3600
+            }
+            cooldown_tickers = list(self._cooldown.keys())
+            price_history: Dict[str, pd.DataFrame] = {}
+            needed = {row.symbol for row in store.list(status="active", limit=1000)}
+            for pos in getattr(account, "positions", None) or []:
+                sym = getattr(pos, "symbol", None) or (pos.get("symbol") if isinstance(pos, dict) else None)
+                if sym:
+                    needed.add(str(sym).upper())
+            for symbol in needed:
+                df = self._fetch_ohlcv(symbol, period="1y")
+                if df is not None and len(df) >= 30:
+                    price_history[symbol] = df
+            vix_mult = self.risk_engine.vix_size_multiplier(vix_level)
+
             consume_active_intents(
                 store,
                 process_signal=self.signal_processor.process_signal,
@@ -799,6 +821,13 @@ class TradingWorker:
                 account_summary=account,
                 killed=bool(self.is_halted),
                 limits=self.risk_engine.limits,
+                mandate_gate=self.mandate_gate,
+                risk_extras={
+                    "vix_level": vix_level,
+                    "price_history": price_history,
+                    "cooldown_tickers": cooldown_tickers,
+                },
+                vix_multiplier=vix_mult,
             )
         except Exception as exc:
             logger.error("H1 intent consume loop failed: %s", exc, exc_info=True)

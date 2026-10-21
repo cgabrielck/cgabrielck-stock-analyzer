@@ -63,22 +63,12 @@ def upsert_active_intent(
     if intent_id:
         payload["intent_id"] = intent_id
     intent = parse_intent(payload)
-
-    cancelled = 0
-    for existing in store.list(status=IntentStatus.ACTIVE.value, symbol=intent.symbol, limit=500):
-        if existing.intent_id == intent.intent_id:
-            continue
-        if existing.side != intent.side:
-            continue
-        store.set_status(existing.intent_id, IntentStatus.CANCELLED)
-        cancelled += 1
     stored = store.save(intent)
     logger.info(
-        "H3 upsert intent %s %s %s tier=%s (cancelled_prior=%s)",
+        "H3 upsert intent %s %s %s tier=%s",
         stored.intent_id,
         stored.side.value,
         stored.symbol,
         stored.conviction_tier,
-        cancelled,
     )
     return stored

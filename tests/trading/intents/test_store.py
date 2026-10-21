@@ -2,13 +2,14 @@
 from __future__ import annotations
 
 import json
+import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 
 from backend.trading.intents.models import IntentStatus, IntentValidationError, parse_intent
-from backend.trading.intents.store import JSONIntentStore
+from backend.trading.intents.store import IntentConflictError, JSONIntentStore
 from backend.trading.intents.writer import upsert_active_intent
 
 NOW = datetime(2026, 10, 21, 12, 0, tzinfo=timezone.utc)
@@ -119,6 +120,104 @@ def test_upsert_active_cancels_prior_same_symbol_side(tmp_path: Path):
     assert store.get(first.intent_id).status is IntentStatus.CANCELLED
     assert store.get(second.intent_id).status is IntentStatus.ACTIVE
     assert second.conviction_tier == "med"
+
+
+def test_stale_instance_save_does_not_wipe_other_intent(tmp_path: Path):
+    path = str(tmp_path / "intents.json")
+    store_a = JSONIntentStore(filepath=path)
+    store_a.save(_intent(intent_id="keep-a", symbol="AAA"))
+    store_b = JSONIntentStore(filepath=path)
+    store_b.save(_intent(intent_id="keep-b", symbol="BBB"))
+    store_a.save(_intent(intent_id="keep-a", symbol="AAA", conviction_tier="low"))
+    reloaded = JSONIntentStore(filepath=path)
+    assert reloaded.get("keep-a") is not None
+    assert reloaded.get("keep-b") is not None
+    assert reloaded.get("keep-a").conviction_tier == "low"
+
+
+def test_concurrent_saves_all_persist(tmp_path: Path):
+    path = str(tmp_path / "intents.json")
+    errors: list[BaseException] = []
+
+    def write(idx: int) -> None:
+        try:
+            store = JSONIntentStore(filepath=path)
+            store.save(_intent(intent_id=f"c-{idx}", symbol=f"S{idx}"))
+        except BaseException as exc:  # noqa: BLE001 — collect any worker failure
+            errors.append(exc)
+
+    threads = [threading.Thread(target=write, args=(i,)) for i in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert errors == []
+    reloaded = JSONIntentStore(filepath=path)
+    ids = {row.intent_id for row in reloaded.list(limit=100)}
+    assert {f"c-{i}" for i in range(8)} <= ids
+
+
+def test_concurrent_active_same_symbol_side_is_unique(tmp_path: Path):
+    path = str(tmp_path / "intents.json")
+    errors: list[BaseException] = []
+
+    def write(idx: int) -> None:
+        try:
+            store = JSONIntentStore(filepath=path)
+            store.save(_intent(intent_id=f"dup-{idx}", symbol="AAPL"))
+        except BaseException as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    threads = [threading.Thread(target=write, args=(i,)) for i in range(6)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert errors == []
+    reloaded = JSONIntentStore(filepath=path)
+    actives = reloaded.list(status="active", symbol="AAPL", limit=100)
+    assert len(actives) == 1
+
+
+def test_save_refuses_to_revive_consumed_without_new_id(tmp_path: Path):
+    store = JSONIntentStore(filepath=str(tmp_path / "intents.json"))
+    store.save(_intent(intent_id="once"))
+    store.set_status("once", IntentStatus.CONSUMED)
+    with pytest.raises(IntentConflictError, match="cannot revive"):
+        store.save(_intent(intent_id="once", status="active"))
+    assert store.get("once").status is IntentStatus.CONSUMED
+    replacement = store.save(_intent(intent_id="once-new", status="active"))
+    assert replacement.status is IntentStatus.ACTIVE
+    assert store.get("once").status is IntentStatus.CONSUMED
+
+
+def test_claim_then_cancel_is_conflict(tmp_path: Path):
+    store = JSONIntentStore(filepath=str(tmp_path / "intents.json"))
+    store.save(_intent(intent_id="cas"))
+    claimed = store.claim_for_consume("cas")
+    assert claimed is not None
+    assert claimed.status is IntentStatus.CONSUMED
+    with pytest.raises(IntentConflictError, match="cannot cancel"):
+        store.set_status("cas", IntentStatus.CANCELLED)
+    assert store.get("cas").status is IntentStatus.CONSUMED
+
+
+def test_double_cancel_is_conflict(tmp_path: Path):
+    store = JSONIntentStore(filepath=str(tmp_path / "intents.json"))
+    store.save(_intent(intent_id="dbl"))
+    assert store.set_status("dbl", IntentStatus.CANCELLED).status is IntentStatus.CANCELLED
+    with pytest.raises(IntentConflictError, match="cannot cancel"):
+        store.set_status("dbl", IntentStatus.CANCELLED)
+
+
+def test_cancel_then_claim_returns_none(tmp_path: Path):
+    store = JSONIntentStore(filepath=str(tmp_path / "intents.json"))
+    store.save(_intent(intent_id="cas2"))
+    cancelled = store.set_status("cas2", IntentStatus.CANCELLED)
+    assert cancelled is not None
+    assert cancelled.status is IntentStatus.CANCELLED
+    assert store.claim_for_consume("cas2") is None
+    assert store.get("cas2").status is IntentStatus.CANCELLED
 
 
 def test_upsert_rejects_veto_codes(tmp_path: Path):

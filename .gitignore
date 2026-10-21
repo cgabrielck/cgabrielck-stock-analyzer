@@ -22,6 +22,8 @@ backend/data/cache/
 backend/data/agent_state.json
 backend/data/trading_orders.json
 backend/data/trading_intents.json
+backend/data/trading_intents.json.lock
+backend/data/trading_intents.json.tmp
 backend/data/audit/
 backend/trading/safety/KILL_SWITCH
 data/portfolio_state.json

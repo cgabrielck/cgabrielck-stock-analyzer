@@ -15,7 +15,12 @@ from backend.trading.intents.models import (
     StopSpec,
     parse_intent,
 )
-from backend.trading.intents.store import JSONIntentStore, create_intent_store, default_intent_path
+from backend.trading.intents.store import (
+    IntentConflictError,
+    JSONIntentStore,
+    create_intent_store,
+    default_intent_path,
+)
 from backend.trading.intents.writer import upsert_active_intent
 
 __all__ = [
@@ -26,6 +31,7 @@ __all__ = [
     "IntentSide",
     "IntentStatus",
     "IntentValidationError",
+    "IntentConflictError",
     "JSONIntentStore",
     "StopSpec",
     "create_intent_store",

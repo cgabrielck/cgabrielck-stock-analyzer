@@ -25,6 +25,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from backend.trading.intents.models import Intent, IntentSide, IntentStatus
 from backend.trading.intents.store import JSONIntentStore
+from backend.trading.models import Order, OrderSide, OrderType
 from backend.trading.risk.gates import RiskLimits
 from backend.trading.risk.position_sizer import cap_shares_to_notional, shares_to_buy
 
@@ -74,7 +75,17 @@ def expire_stale_intents(
     for intent in store.list(status=IntentStatus.ACTIVE.value, limit=1000):
         if not intent.is_expired(when):
             continue
-        store.set_status(intent.intent_id, IntentStatus.EXPIRED)
+        try:
+            updated = store.set_status(intent.intent_id, IntentStatus.EXPIRED)
+        except Exception as exc:
+            logger.error(
+                "H1 expire lost the race for intent_id=%s: %s",
+                intent.intent_id,
+                exc,
+            )
+            continue
+        if updated is None or updated.status is not IntentStatus.EXPIRED:
+            continue
         out.append(
             ConsumeResult(
                 intent_id=intent.intent_id,
@@ -86,22 +97,62 @@ def expire_stale_intents(
     return out
 
 
+def _long_position_qty(account: Any, symbol: str) -> float:
+    """Shares currently long. Never negative. Desk does not allow short opens."""
+    want = str(symbol or "").upper()
+    if not want or account is None:
+        return 0.0
+    positions = getattr(account, "positions", None)
+    if positions is None and isinstance(account, dict):
+        positions = account.get("positions")
+    total = 0.0
+    for pos in positions or []:
+        name = str(getattr(pos, "symbol", None) or (pos.get("symbol") if isinstance(pos, dict) else "") or "").upper()
+        if name != want:
+            continue
+        raw = getattr(pos, "quantity", None)
+        if raw is None and isinstance(pos, dict):
+            raw = pos.get("quantity")
+        try:
+            qty = float(raw or 0)
+        except (TypeError, ValueError):
+            qty = 0.0
+        if qty > 0:
+            total += qty
+    return total
+
+
 def size_intent_qty(
     intent: Intent,
     *,
     price: float,
     equity: float,
     limits: Optional[RiskLimits] = None,
+    account_summary: Any = None,
+    vix_multiplier: float = 1.0,
 ) -> int:
-    """M8 sizer: conviction_tier picks a fraction of the RiskLimits envelope."""
+    """M8 sizer.
+
+    Buys: conviction_tier picks a fraction of the RiskLimits envelope (Kelly).
+    Sells: flatten-only from actual long qty. Never Kelly-buy math; never open a short.
+    """
+    if intent.side == IntentSide.SELL:
+        held = _long_position_qty(account_summary, intent.symbol)
+        return max(0, int(held))
     limits = limits or RiskLimits()
     if price <= 0 or equity <= 0:
         return 0
     scale = TIER_ENVELOPE_SCALE.get(intent.conviction_tier, 0.0)
     if scale <= 0:
         return 0
+    try:
+        vix_mult = float(vix_multiplier) if vix_multiplier else 1.0
+    except (TypeError, ValueError):
+        vix_mult = 1.0
+    if vix_mult <= 0:
+        vix_mult = 1.0
     qty = shares_to_buy(
-        portfolio_value=float(equity) * scale,
+        portfolio_value=float(equity) * scale * vix_mult,
         current_price=float(price),
         win_rate=_DEFAULT_WIN_RATE,
         avg_win_pct=_DEFAULT_AVG_WIN_PCT,
@@ -176,14 +227,19 @@ def consume_active_intents(
     killed: bool = False,
     limits: Optional[RiskLimits] = None,
     risk_extras: Optional[Dict[str, Any]] = None,
+    mandate_gate: Any = None,
+    vix_multiplier: float = 1.0,
 ) -> List[ConsumeResult]:
-    """H1 consume: skip expired/non-active; size via M8; hand to process_signal.
+    """H1 consume: skip expired/non-active; full M8; hand to process_signal.
 
     Never calls LLM. Never talks to a broker. process_signal must be the
-    existing M8→M9 path (SignalProcessor.process_signal).
+    existing M8→M9 path (SignalProcessor.process_signal). MandateGate is
+    evaluated before size/submit (same as the strategy scan path). Kill,
+    cooldown, VIX, and price_history are supplied by the caller via
+    killed / risk_extras / vix_multiplier.
 
-    Per-intent exceptions are fail-closed for that intent this tick (no order,
-    status stays active) and do not abort the rest of the loop.
+    Per-intent exceptions before claim are fail-closed for that intent this
+    tick (no order, status stays active) and do not abort the rest of the loop.
     """
     when = _utc(now)
     results = expire_stale_intents(store, now=when)
@@ -214,6 +270,8 @@ def consume_active_intents(
                 limits=limits,
                 equity=equity,
                 risk_extras=risk_extras,
+                mandate_gate=mandate_gate,
+                vix_multiplier=vix_multiplier,
             )
             results.append(result)
         except Exception as exc:
@@ -235,6 +293,32 @@ def consume_active_intents(
     return results
 
 
+def _mandate_draft(intent: Intent, *, qty: int, price: float) -> Order:
+    side = OrderSide.BUY if intent.side == IntentSide.BUY else OrderSide.SELL
+    return Order(
+        id=f"mandate-intent-{intent.intent_id}",
+        symbol=intent.symbol,
+        side=side,
+        order_type=OrderType.LIMIT,
+        quantity=float(qty),
+        limit_price=float(price),
+        idempotency_key=f"mandate-intent-{intent.intent_id}",
+    )
+
+
+def _mandate_blocks(mandate_gate: Any, intent: Intent, *, qty: int, price: float) -> Optional[str]:
+    if mandate_gate is None:
+        return None
+    evaluate = getattr(mandate_gate, "evaluate", None)
+    if not callable(evaluate):
+        return None
+    decision = evaluate(_mandate_draft(intent, qty=qty, price=price), price)
+    approved = bool(getattr(decision, "approved", True))
+    if approved:
+        return None
+    return str(getattr(decision, "reason", None) or "mandate_blocked")
+
+
 def _consume_one_intent(
     store: JSONIntentStore,
     intent: Intent,
@@ -246,9 +330,24 @@ def _consume_one_intent(
     limits: RiskLimits,
     equity: float,
     risk_extras: Optional[Dict[str, Any]],
+    mandate_gate: Any,
+    vix_multiplier: float,
 ) -> ConsumeResult:
     if intent.veto_codes:
-        store.set_status(intent.intent_id, IntentStatus.CANCELLED)
+        try:
+            store.set_status(intent.intent_id, IntentStatus.CANCELLED)
+        except Exception as exc:
+            logger.error(
+                "H1 veto-cancel lost the race for intent_id=%s: %s",
+                intent.intent_id,
+                exc,
+            )
+            return ConsumeResult(
+                intent_id=intent.intent_id,
+                action="skipped_claim_lost",
+                symbol=intent.symbol,
+                reason="veto_codes_race",
+            )
         return ConsumeResult(
             intent_id=intent.intent_id,
             action="cancelled",
@@ -273,13 +372,42 @@ def _consume_one_intent(
             symbol=intent.symbol,
             reason="no_reference_price",
         )
-    qty = size_intent_qty(intent, price=px, equity=equity, limits=limits)
-    if qty <= 0:
+
+    # Same MandateGate as the strategy scan path — before Kelly/flatten size.
+    blocked = _mandate_blocks(mandate_gate, intent, qty=1, price=px)
+    if blocked:
         return ConsumeResult(
             intent_id=intent.intent_id,
-            action="skipped_zero_qty",
+            action="skipped_mandate",
             symbol=intent.symbol,
-            reason="m8_sizer_zero",
+            reason=blocked,
+        )
+
+    qty = size_intent_qty(
+        intent,
+        price=px,
+        equity=equity,
+        limits=limits,
+        account_summary=account_summary,
+        vix_multiplier=vix_multiplier,
+    )
+    if qty <= 0:
+        sell = intent.side == IntentSide.SELL
+        return ConsumeResult(
+            intent_id=intent.intent_id,
+            action="skipped_no_long" if sell else "skipped_zero_qty",
+            symbol=intent.symbol,
+            qty=0,
+            reason="no_long_position" if sell else "m8_sizer_zero",
+        )
+
+    blocked = _mandate_blocks(mandate_gate, intent, qty=qty, price=px)
+    if blocked:
+        return ConsumeResult(
+            intent_id=intent.intent_id,
+            action="skipped_mandate",
+            symbol=intent.symbol,
+            reason=blocked,
         )
 
     stop_px = stop_price_from_intent(intent, px)
@@ -297,16 +425,44 @@ def _consume_one_intent(
         "intent_id": intent.intent_id,
         "conviction_tier": intent.conviction_tier,
     }
-    try:
-        order = process_signal(
-            signal,
-            account_summary=account_summary,
-            risk_extras=risk_extras or {},
-        )
-    except TypeError:
-        order = process_signal(signal)
 
-    store.set_status(intent.intent_id, IntentStatus.CONSUMED)
+    # CAS active → consumed before process_signal so a later cancel is 409
+    # and cannot race a submit. Cancel-first makes claim return None (no order).
+    claimed = store.claim_for_consume(intent.intent_id)
+    if claimed is None:
+        return ConsumeResult(
+            intent_id=intent.intent_id,
+            action="skipped_claim_lost",
+            symbol=intent.symbol,
+            reason="cancel_or_expiry_won",
+        )
+
+    try:
+        try:
+            order = process_signal(
+                signal,
+                account_summary=account_summary,
+                risk_extras=risk_extras or {},
+            )
+        except TypeError:
+            order = process_signal(signal)
+    except Exception as exc:
+        logger.error(
+            "H1 process_signal failed after claim intent_id=%s symbol=%s: %s",
+            intent.intent_id,
+            intent.symbol,
+            exc,
+            exc_info=True,
+        )
+        return ConsumeResult(
+            intent_id=intent.intent_id,
+            action="consumed_process_error",
+            symbol=intent.symbol,
+            qty=qty,
+            reason=str(exc),
+            extra={"idempotency_key": signal["idempotency_key"]},
+        )
+
     order_id = None
     if order is not None:
         order_id = str(

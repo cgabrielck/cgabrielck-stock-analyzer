@@ -18,7 +18,11 @@ from backend.trading.intents.models import (
     IntentStatus,
     IntentValidationError,
 )
-from backend.trading.intents.store import JSONIntentStore, create_intent_store
+from backend.trading.intents.store import (
+    IntentConflictError,
+    JSONIntentStore,
+    create_intent_store,
+)
 from backend.trading.intents.writer import upsert_active_intent
 
 router = APIRouter(tags=["intents"])
@@ -115,6 +119,8 @@ def write_intent(body: IntentIn, _auth: None = Depends(require_operator)) -> Dic
             veto_codes=list(body.veto_codes or []),
             intent_id=body.intent_id,
         )
+    except IntentConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except IntentValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:
@@ -126,13 +132,14 @@ def write_intent(body: IntentIn, _auth: None = Depends(require_operator)) -> Dic
 @router.post("/api/intents/{intent_id}/cancel")
 def cancel_intent(intent_id: str, _auth: None = Depends(require_operator)) -> Dict[str, Any]:
     store = get_intent_store()
-    found = store.get(intent_id)
-    if found is None:
-        raise HTTPException(status_code=404, detail="Intent not found")
-    if found.status != IntentStatus.ACTIVE:
+    try:
+        updated = store.set_status(intent_id, IntentStatus.CANCELLED)
+    except IntentConflictError as exc:
+        current = exc.current_status.value if exc.current_status is not None else "unknown"
         raise HTTPException(
             status_code=409,
-            detail=f"Intent is {found.status.value}; only active intents can be cancelled",
-        )
-    updated = store.set_status(intent_id, IntentStatus.CANCELLED)
-    return _envelope(intent=_dump(updated) if updated else _dump(found))
+            detail=f"Intent is {current}; only active intents can be cancelled",
+        ) from exc
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Intent not found")
+    return _envelope(intent=_dump(updated))

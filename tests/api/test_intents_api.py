@@ -7,6 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from backend.api.desk_auth import GUEST_FORBIDDEN
+from backend.trading.intents.models import IntentStatus
 from backend.trading.intents.store import JSONIntentStore
 
 NOW = datetime(2026, 10, 21, 16, 0, tzinfo=timezone.utc)
@@ -92,6 +93,24 @@ def test_buy_without_stop_rejected(operator_client):
     payload["stop"] = None
     res = operator_client.post("/api/intents", json=payload)
     assert res.status_code == 422
+
+
+def test_post_same_id_after_consumed_is_409(operator_client, intent_env):
+    posted = operator_client.post("/api/intents", json=_body(intent_id="once"))
+    assert posted.status_code == 200, posted.text
+    intent_env.set_status("once", IntentStatus.CONSUMED)
+    again = operator_client.post("/api/intents", json=_body(intent_id="once"))
+    assert again.status_code == 409
+    assert intent_env.get("once").status is IntentStatus.CONSUMED
+
+
+def test_cancel_after_consumed_is_409(operator_client, intent_env):
+    intent_id = operator_client.post("/api/intents", json=_body()).json()["intent"]["intent_id"]
+    intent_env.set_status(intent_id, IntentStatus.CONSUMED)
+    res = operator_client.post(f"/api/intents/{intent_id}/cancel")
+    assert res.status_code == 409
+    assert "consumed" in str(res.json().get("detail", "")).lower()
+    assert intent_env.get(intent_id).status is IntentStatus.CONSUMED
 
 
 def test_cancel_status_transition(operator_client):

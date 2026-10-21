@@ -5,6 +5,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from backend.trading.engine.harness_realtime import (
     TIER_ENVELOPE_SCALE,
     consume_active_intents,
@@ -24,6 +26,23 @@ def _store(tmp_path, *payloads) -> JSONIntentStore:
     for payload in payloads:
         store.save(parse_intent(payload))
     return store
+
+
+def _sell(**overrides):
+    data = {
+        "schema_version": "intent.v0",
+        "intent_id": "h1-sell",
+        "symbol": "AAPL",
+        "side": "sell",
+        "stop": None,
+        "conviction_tier": "med",
+        "expiry": EXPIRY.isoformat(),
+        "as_of": NOW.isoformat(),
+        "status": "active",
+        "strategy_id": "stable",
+    }
+    data.update(overrides)
+    return data
 
 
 def _buy(**overrides):
@@ -289,4 +308,174 @@ def test_worker_exposes_thin_consume_hook():
     assert "consume_active_intents" in text
     assert "TODO(full-h1-h2-split)" in text
     assert "advisory_debate" not in text
-    assert "from backend.api" not in text.split("def _consume_intents")[1][:1200]
+    consume_src = text.split("def _consume_intents")[1].split("def _is_market_hours")[0]
+    assert "from backend.api" not in consume_src
+    assert "mandate_gate" in consume_src
+    assert "cooldown_tickers" in consume_src
+    assert "price_history" in consume_src
+    assert "vix_level" in consume_src
+    assert "vix_size_multiplier" in consume_src
+
+
+def test_mandate_blocked_symbol_does_not_size_or_submit(tmp_path):
+    from unittest.mock import patch
+
+    from backend.trading.safety.mandate import MandateGate, TradingMandate
+
+    store = _store(tmp_path, _buy(intent_id="blk", symbol="GME"))
+    gate = MandateGate(mandate=TradingMandate(blocked_symbols=["GME"]))
+    calls = []
+    with patch(
+        "backend.trading.engine.harness_realtime.size_intent_qty",
+        wraps=size_intent_qty,
+    ) as sized:
+        results = consume_active_intents(
+            store,
+            process_signal=lambda *a, **k: calls.append(("signal", a, k)),
+            get_price=lambda _s: 150.0,
+            account_summary=SimpleNamespace(portfolio_value=40_000, positions=[]),
+            now=NOW,
+            mandate_gate=gate,
+        )
+    assert sized.call_count == 0
+    assert calls == []
+    assert results[0].action == "skipped_mandate"
+    assert store.get("blk").status is IntentStatus.ACTIVE
+
+
+def test_consume_forwards_risk_extras_to_process_signal(tmp_path):
+    store = _store(tmp_path, _buy(intent_id="risk-ctx"))
+    seen = []
+
+    def process_signal(signal, **kwargs):
+        seen.append(kwargs.get("risk_extras"))
+        return SimpleNamespace(id="ord-ctx")
+
+    extras = {
+        "vix_level": 22.5,
+        "price_history": {"AAPL": object()},
+        "cooldown_tickers": ["MSFT"],
+    }
+    consume_active_intents(
+        store,
+        process_signal=process_signal,
+        get_price=lambda _s: 150.0,
+        account_summary=SimpleNamespace(portfolio_value=40_000, positions=[]),
+        now=NOW,
+        risk_extras=extras,
+    )
+    assert seen == [extras]
+
+
+def test_sell_zero_position_does_not_open_short(tmp_path):
+    store = _store(tmp_path, _sell(intent_id="no-short"))
+    calls = []
+    results = consume_active_intents(
+        store,
+        process_signal=lambda *a, **k: calls.append(1),
+        get_price=lambda _s: 150.0,
+        account_summary=SimpleNamespace(portfolio_value=100_000, positions=[]),
+        now=NOW,
+        limits=RiskLimits(),
+    )
+    assert calls == []
+    assert results[0].action == "skipped_no_long"
+    assert results[0].qty == 0
+    assert store.get("no-short").status is IntentStatus.ACTIVE
+
+
+def test_sell_flatten_uses_long_qty_not_kelly():
+    buy_qty = size_intent_qty(
+        parse_intent(_buy()),
+        price=150.0,
+        equity=100_000,
+        limits=RiskLimits(),
+    )
+    sell_none = size_intent_qty(
+        parse_intent(_sell()),
+        price=150.0,
+        equity=100_000,
+        limits=RiskLimits(),
+        account_summary=SimpleNamespace(portfolio_value=100_000, positions=[]),
+    )
+    sell_held = size_intent_qty(
+        parse_intent(_sell()),
+        price=150.0,
+        equity=100_000,
+        limits=RiskLimits(),
+        account_summary=SimpleNamespace(
+            portfolio_value=100_000,
+            positions=[SimpleNamespace(symbol="AAPL", quantity=9)],
+        ),
+    )
+    assert buy_qty > 0
+    assert sell_none == 0
+    assert sell_held == 9
+    assert sell_held != buy_qty
+
+
+def test_sell_with_long_submits_flatten_qty(tmp_path):
+    store = _store(tmp_path, _sell(intent_id="flat"))
+    captured = []
+
+    def process_signal(signal, **kwargs):
+        captured.append(signal)
+        return SimpleNamespace(id="ord-flat")
+
+    results = consume_active_intents(
+        store,
+        process_signal=process_signal,
+        get_price=lambda _s: 150.0,
+        account_summary=SimpleNamespace(
+            portfolio_value=40_000,
+            positions=[SimpleNamespace(symbol="AAPL", quantity=12)],
+        ),
+        now=NOW,
+        limits=RiskLimits(),
+    )
+    assert len(captured) == 1
+    assert captured[0]["side"] == "sell"
+    assert captured[0]["quantity"] == 12
+    assert results[0].action == "consumed"
+    assert store.get("flat").status is IntentStatus.CONSUMED
+
+
+def test_cancel_before_consume_skips_submit(tmp_path):
+    store = _store(tmp_path, _buy(intent_id="race-cancel"))
+    store.set_status("race-cancel", IntentStatus.CANCELLED)
+    calls = []
+    results = consume_active_intents(
+        store,
+        process_signal=lambda *a, **k: calls.append(1),
+        get_price=lambda _s: 150.0,
+        account_summary=SimpleNamespace(portfolio_value=40_000, positions=[]),
+        now=NOW,
+    )
+    assert calls == []
+    assert store.get("race-cancel").status is IntentStatus.CANCELLED
+    assert all(row.intent_id != "race-cancel" or row.action != "consumed" for row in results)
+
+
+def test_consume_claim_beats_cancel_before_process_signal(tmp_path):
+    from backend.trading.intents.store import IntentConflictError
+
+    store = _store(tmp_path, _buy(intent_id="race-go"))
+    calls = []
+
+    def process_signal(signal, **kwargs):
+        with pytest.raises(IntentConflictError):
+            store.set_status("race-go", IntentStatus.CANCELLED)
+        calls.append(signal)
+        return SimpleNamespace(id="ord-go")
+
+    results = consume_active_intents(
+        store,
+        process_signal=process_signal,
+        get_price=lambda _s: 150.0,
+        account_summary=SimpleNamespace(portfolio_value=40_000, positions=[]),
+        now=NOW,
+        limits=RiskLimits(),
+    )
+    assert calls
+    assert results[0].action == "consumed"
+    assert store.get("race-go").status is IntentStatus.CONSUMED
