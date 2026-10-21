@@ -7,7 +7,7 @@ This module contains the core execution logic for the auto-trading upgrade. It i
 *   `models.py`: Pydantic data models for Orders, Positions, Account State, etc.
 *   `broker.py`: The abstract `BrokerAdapter` interface.
 *   `alpaca_broker.py`: The concrete implementation of the Alpaca REST API (defaulting to Paper Trading).
-*   `storage.py`: Durable storage implementation (`JSONOrderStore`) for order intent ledgers.
+*   `storage.py`: Durable storage implementation (`JSONOrderStore`) for the **L2** order ledger. Not ADR-003 IntentStore.
 *   `engine/`:
     *   `order_manager.py`: State machine for orders, handling idempotency and broker submission.
     *   `signal_processor.py`: The entry point for strategy signals. Evaluates risk and forwards to the Order Manager.

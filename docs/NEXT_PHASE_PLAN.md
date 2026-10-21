@@ -1,8 +1,22 @@
 # ALPHA//DESK — 下一阶段详细计划 (Next Phase Plan)
 
-Last updated: 2026-08-15
+> ## 已凍結／已被取代 (2026-10-21)
+>
+> **本文件已凍結。** 僅作歷史提案，**不是**架構、產品或排程權威。
+>
+> 衝突依下列順序解決：
+> 1. **ADR-003 + Addendum A（Accepted）** — [`ARCHITECTURE_DECISION.md`](ARCHITECTURE_DECISION.md)
+> 2. [`MODULAR_ARCHITECTURE.md`](MODULAR_ARCHITECTURE.md)
+> 3. `AUDIT_REMEDIATION_PLAN_2026-10-21.md`（Gabriel 2026-10-21 確認；**本 checkout 無此檔**）
+>
+> **ADR-002 為 VOID。** 不可再引用本檔、ADR-001 或 ADR-002 作為約束。
+> 視覺圖：[`boomboom-modular-architecture.html`](boomboom-modular-architecture.html)
+>
+> 產品 UI = FastAPI Desk；Streamlit = lab／legacy。`lab/advisory_debate` ≠ 產品 M7，禁止接到 `OrderManager`。
+
+Last updated: 2026-08-15 (authority banner 2026-10-21)
 Author: agent session (build mode)
-Status: **提案 — 待用户确认**
+Status: **凍結 — 非現行計畫**
 
 ---
 

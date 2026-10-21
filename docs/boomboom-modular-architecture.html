@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Cgab — Modular architecture (ADR-003)</title>
+  <style>
+    :root {
+      --bg:#071016; --card:#0e1c22; --card2:#12242c; --line:#1a3d44;
+      --cyan:#2de2c5; --purple:#7c6cff; --mint:#3ee0a0; --rose:#ff6b81;
+      --gold:#e7c36a; --text:#e8fffb; --muted:#8aa8ae;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; background: radial-gradient(1200px 600px at 80% -10%, #14343a 0%, transparent 50%), var(--bg); color: var(--text); font-family: "Segoe UI", Inter, system-ui, sans-serif; }
+    header { padding: 22px 28px 12px; border-bottom: 1px solid var(--line); }
+    header h1 { margin: 0 0 6px; font-size: 22px; letter-spacing: .04em; }
+    header p { margin: 0; color: var(--muted); font-size: 14px; max-width: 920px; line-height: 1.5; }
+    .accent { color: var(--cyan); }
+    .warn { color: var(--gold); }
+    .bad { color: var(--rose); }
+    main { padding: 24px 28px 48px; display: grid; gap: 22px; max-width: 1180px; }
+    section { background: linear-gradient(180deg, rgba(18,36,44,.92), rgba(8,18,22,.8)); border: 1px solid rgba(45,226,197,.14); border-radius: 16px; padding: 18px 20px 20px; }
+    h2 { margin: 0 0 12px; font-size: 15px; letter-spacing: .14em; text-transform: uppercase; color: var(--cyan); }
+    h3 { margin: 14px 0 8px; font-size: 14px; color: #c5e8e2; }
+    p, li { color: #c5e8e2; font-size: 14px; line-height: 1.55; }
+    a { color: var(--cyan); }
+    .flow { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 8px 0 4px; }
+    .node {
+      border-radius: 12px; padding: 10px 14px; min-width: 132px; text-align: center;
+      border: 1px solid var(--line); background: #0b1820; font-weight: 700; font-size: 13px;
+    }
+    .node small { display: block; font-weight: 600; color: var(--muted); font-size: 11px; margin-top: 4px; }
+    .h1 { border-color: rgba(45,226,197,.45); color: var(--cyan); }
+    .h2 { border-color: rgba(124,108,255,.5); color: #cfc8ff; }
+    .h3 { border-color: rgba(62,224,160,.5); color: var(--mint); }
+    .l2 { border-color: rgba(231,195,106,.45); color: var(--gold); }
+    .arrow { color: var(--muted); font-size: 18px; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    @media (max-width: 800px) { .grid { grid-template-columns: 1fr; } }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #15343c; vertical-align: top; }
+    th { color: var(--muted); font-weight: 700; letter-spacing: .06em; text-transform: uppercase; font-size: 11px; }
+    .pill { display: inline-block; border-radius: 999px; padding: 2px 8px; font-size: 11px; font-weight: 800; letter-spacing: .06em; border: 1px solid currentColor; }
+    .ok { color: var(--mint); }
+    .no { color: var(--rose); }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: #e8fffb; background: #07141a; padding: 1px 5px; border-radius: 6px; }
+    .x { color: var(--rose); font-weight: 800; }
+    footer { color: var(--muted); font-size: 12px; padding: 0 8px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Cgab <span class="accent">modular architecture</span></h1>
+    <p>
+      Binding: <strong>ADR-003 + Addendum A (Accepted)</strong> ·
+      <a href="ARCHITECTURE_DECISION.md">ARCHITECTURE_DECISION.md</a> ·
+      <a href="MODULAR_ARCHITECTURE.md">MODULAR_ARCHITECTURE.md</a>.
+      ADR-002 is <span class="warn">VOID</span>.
+      Product = Desk (FastAPI + <code>web/static</code>). Streamlit = lab / legacy.
+      This page is documentation only — it does not change RiskEngine / mandate / kill.
+    </p>
+  </header>
+  <main>
+    <section>
+      <h2>Proposal → Approve → Merge</h2>
+      <div class="flow">
+        <div class="node h1">H1 Propose<small>Research clock · Intent v0</small></div>
+        <div class="arrow">→</div>
+        <div class="node h2">H2 Approve<small>Human on Desk only</small></div>
+        <div class="arrow">→</div>
+        <div class="node h3">H3 Merge<small>IntentStore status=merged</small></div>
+        <div class="arrow">→</div>
+        <div class="node l2">L2 OrderManager<small>Kelly / Risk / mandate / kill</small></div>
+      </div>
+      <p>
+        LLM, Telegram, and <code>backend/lab/advisory_debate.py</code> cannot Approve or Merge.
+        Merge makes an intent <em>eligible</em> for L2; it is not a broker fill.
+      </p>
+    </section>
+
+    <section>
+      <h2>Dual-clock · H1–H3</h2>
+      <div class="grid">
+        <div>
+          <h3>Research / Scan clock</h3>
+          <p>Desk lifespan: <code>backend/api/scan_scheduler.py</code>. Freshness: <code>SIGNAL_MAX_AGE_HOURS</code> / <code>SCAN_STALE_AFTER_HOURS</code> in <code>backend/api/research_jobs.py</code>.</p>
+          <p>Owns H1 Propose and the <code>as_of</code> on Intent v0. Stale research fail-closes <strong>new buys</strong>.</p>
+        </div>
+        <div>
+          <h3>Execution / Worker clock</h3>
+          <p>Worker: <code>backend/trading/engine/worker.py</code> + cadence <code>backend/trading/engine/cadence.py</code>.</p>
+          <p>Owns H3 Merge consumption and L2 submit. Exits / SELL may still run when the research clock is stale.</p>
+        </div>
+      </div>
+      <p>Do not collapse the two clocks. A worker tick is not proof that Scan is fresh.</p>
+    </section>
+
+    <section>
+      <h2>IntentStore (L1) vs OrderStore (L2)</h2>
+      <table>
+        <thead>
+          <tr><th></th><th>IntentStore · L1</th><th>OrderStore · L2</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Contract</td>
+            <td>ADR-003 / MODULAR §5–§7. <span class="pill warn">docs only on main</span></td>
+            <td><code>backend/trading/storage.py</code> · <code>OrderManager</code></td>
+          </tr>
+          <tr>
+            <td>Records</td>
+            <td><code>HarnessProposal</code> + Intent v0</td>
+            <td><code>Order</code>, fills, broker ids</td>
+          </tr>
+          <tr>
+            <td>Allowed fields</td>
+            <td>expiry, side, stop, conviction_tier, as_of, source, status</td>
+            <td>quantity, order_type, idempotency_key, fills, slippage</td>
+          </tr>
+          <tr>
+            <td>May call OrderManager?</td>
+            <td><span class="pill no">NO</span></td>
+            <td><span class="pill ok">YES</span> after H3, through RiskEngine</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>L1 Intent v0 · forbid L2 fields</h2>
+      <p>Required on Intent v0: <code>schema_version=intent.v0</code>, <code>intent_id</code>, <code>symbol</code>, <code>side</code>, <code>stop</code>, <code>conviction_tier</code>, <code>expiry</code>, <code>as_of</code>, <code>source</code>, <code>status</code>.</p>
+      <p><span class="x">Forbidden on Intent v0:</span> quantity / notional, limit_price, order_type, order_class, broker_order_id, idempotency_key, filled_*, slippage_pct, commission, take_profit as a broker leg, OrderStatus values (<code>draft</code>, <code>risk_approved</code>, <code>submitted</code>, …).</p>
+    </section>
+
+    <section>
+      <h2>Product vs lab</h2>
+      <table>
+        <thead>
+          <tr><th>Surface</th><th>Path</th><th>Role</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Desk · product</td>
+            <td><code>backend/api/app.py</code> + <code>web/static</code></td>
+            <td>Commercial UI. H2 Approve lives here.</td>
+          </tr>
+          <tr>
+            <td>Streamlit · lab / legacy</td>
+            <td><code>backend/app.py</code></td>
+            <td>Not the product surface.</td>
+          </tr>
+          <tr>
+            <td>Lab advisory</td>
+            <td><code>backend/lab/advisory_debate.py</code></td>
+            <td><span class="bad">≠ product M7</span>. Must <strong>not</strong> wire to OrderManager.</td>
+          </tr>
+        </tbody>
+      </table>
+      <p>
+        Hard boundary: lab advisory is a research memo (<code>POST /api/lab/advisory</code>, tests in <code>tests/lab/test_desk_slice_b.py</code>).
+        It is not product M7 and it is not an H1 proposal source that can skip H2.
+      </p>
+    </section>
+
+    <footer>
+      Frozen roadmaps are not authority. Conflicts resolve to ADR-003 + MODULAR_ARCHITECTURE.md.
+      Audit plan <code>AUDIT_REMEDIATION_PLAN_2026-10-21.md</code> was confirmed by Gabriel 2026-10-21 but was not in this git checkout.
+    </footer>
+  </main>
+</body>
+</html>

@@ -1,24 +1,33 @@
 # ALPHA//DESK — Institutional-Grade Equity Research Terminal
 
-[![Live App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://stock-analyzergit-ijue4vuwb7kuvizn62fema.streamlit.app/)
 [![Python](https://img.shields.io/badge/Python-3.12+-3776AB?logo=python&logoColor=white)](https://python.org)
 [![Tests](https://img.shields.io/badge/tests-191_passing-22d3c5)](#testing--測試)
 [![Last commit](https://img.shields.io/github/last-commit/cgabrielck/stock-analyzer)](https://github.com/cgabrielck/stock-analyzer/commits/main)
+[![Lab Streamlit](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://stock-analyzergit-ijue4vuwb7kuvizn62fema.streamlit.app/)
 
 > A risk-aware US equity research terminal combining fundamental quality, technical signals, active-session prices, market-regime controls, walk-forward backtesting, portfolio sizing, and optional LLM analysis. Designed for individual researchers who want institutional-grade tooling without a Bloomberg terminal bill.
 >
 > 風險調整型美股研究終端，整合基本面、技術訊號、即時交易時段價格、市場狀態、walk-forward 回測、倉位管理與選用的 LLM 分析。專為個人研究者打造的機構級工具。
 
-**Product name: Cgab.** Trading desk at http://127.0.0.1:8000 (FastAPI serves the UI; paper only).
+## Product surfaces / 產品介面
+
+**Product name: Cgab.** Binding architecture: [ADR-003 + Addendum A](docs/ARCHITECTURE_DECISION.md) (Accepted). [Modular architecture](docs/MODULAR_ARCHITECTURE.md) · [visual map](docs/boomboom-modular-architecture.html). **ADR-002 is VOID.**
+
+| Surface | What it is | How to run |
+|---------|------------|------------|
+| **Desk (product)** | FastAPI (`backend/api/app.py`) serving `web/static` | `uvicorn backend.api.app:app --host 127.0.0.1 --port 8000` → http://127.0.0.1:8000 |
+| **Streamlit (lab / legacy)** | `backend/app.py` — not the commercial UI | `streamlit run backend/app.py` → http://localhost:8501 |
+
+Paper only on the Desk worker path. Do not treat the public Streamlit Cloud app as the product.
 
 ```bat
 cd C:\Users\001\cgabrielck-stock-analyzer
 .\.venv\Scripts\python.exe -m uvicorn backend.api.app:app --host 127.0.0.1 --port 8000
 ```
 
-**Live application / 線上版本:** [stock-analyzergit-ijue4vuwb7kuvizn62fema.streamlit.app](https://stock-analyzergit-ijue4vuwb7kuvizn62fema.streamlit.app/)
+**Lab / legacy Streamlit (not the product):** [stock-analyzergit-ijue4vuwb7kuvizn62fema.streamlit.app](https://stock-analyzergit-ijue4vuwb7kuvizn62fema.streamlit.app/)
 
-Quality grades, architecture decisions, and the phased enhancement plan are tracked in [docs/QUALITY_ROADMAP.md](docs/QUALITY_ROADMAP.md).
+Architecture authority is ADR-003, not the frozen [QUALITY_ROADMAP](docs/QUALITY_ROADMAP.md) or [AUTO_TRADING_ROADMAP](docs/AUTO_TRADING_ROADMAP.md).
 
 ## What's New / 近期更新
 
@@ -214,57 +223,42 @@ Cached market information uses a five-minute TTL. Running analysis with force re
 
 ## Professional UI / 專業交易介面
 
-The Streamlit interface uses a custom dark institutional-terminal design:
+**Product UI is the FastAPI Desk** (`web/static`, served by `backend/api/app.py`): Scan, Deep, Auto, paper evidence, provenance, and operator controls. Dark institutional-terminal visual language (see `docs/ui/alphadesk-desk-demo.html`).
 
-- Responsive desktop, tablet, and mobile layouts
-- Core/Satellite universe labels
-- Market-regime and target-exposure banner
-- Risk-adjusted recommendation cards
-- Model score, risk penalty, and selection-score breakdown
-- Dark Plotly technical and backtest charts
-- Portfolio risk overview, correlation alerts, stop-loss alerts, and trade journal
-- English, 简体中文, and 繁體中文 localization
+The **Streamlit** app (`backend/app.py`) is **lab / legacy**. It still has a dark terminal layout (responsive, Core/Satellite labels, regime banner, recommendation cards, Plotly charts, journal, en / 简体中文 / 繁體中文) but it is not the surface we sell or extend first.
+
+New product features land on the Desk. Streamlit receives critical lab fixes only.
 
 ## Architecture / 系統架構
 
+ADR-003: Desk = product; Streamlit = lab / legacy; L1 Intent vs L2 Order; dual-clock H1–H3. Details in [docs/MODULAR_ARCHITECTURE.md](docs/MODULAR_ARCHITECTURE.md).
+
 ```text
 stock-analyzer/
+├── web/static/                        Desk product UI (served by FastAPI)
 ├── backend/
-│   ├── app.py                         Streamlit terminal UI
+│   ├── api/app.py                     Desk FastAPI app (product)
+│   ├── app.py                         Streamlit lab / legacy UI
+│   ├── lab/advisory_debate.py         Lab memo only — not product M7, never OrderManager
 │   ├── run_agent.py                   CLI entry point
 │   ├── i18n.py                        en / zh_cn / zh_tw translations
-│   ├── agents/
-│   │   ├── data_fetcher.py            Provider fallback orchestration
-│   │   ├── technical_analyzer.py      Technical indicators + price risk
-│   │   ├── fundamental_analyzer.py    Fundamental scoring
-│   │   ├── risk_analyzer.py           Risk metrics + score modifier
-│   │   ├── market_regime.py           SPY/VIX regime engine
-│   │   ├── recommender.py             End-to-end recommendation pipeline
-│   │   ├── portfolio_manager.py       Weights, stops, P&L, correlations
-│   │   ├── llm_agent.py               OpenAI-compatible LLM integration
-│   │   ├── sec_analyzer.py            SEC filing context
-│   │   ├── trading_strategies.py      Per-stock strategy analysis
-│   │   └── china_data_fetcher.py      Sina / East Money fallbacks
-│   ├── backtesting/
-│   │   ├── engine.py                  Monthly walk-forward simulator
-│   │   ├── calibration.py             Expanding score calibration
-│   │   └── universe.py                Dated universe snapshots
-│   └── utils/
-│       ├── constants.py               Universe, sectors, score weights
-│       ├── selection.py               Shared constrained selector
-│       ├── price_utils.py             Session-aware quote selection
-│       └── cache.py                   Thread-safe memory/disk cache
-├── tests/                              Unit and regression tests
-├── .streamlit/config.toml              Production dark theme
-├── pytest.ini                          Test path configuration
-├── requirements.txt                    Python dependencies
-└── runtime.txt                         Streamlit Cloud Python version
+│   ├── agents/                        Scoring, regime, LLM assist, data fallbacks
+│   ├── trading/                       L2 worker, RiskEngine, mandate, kill, Alpaca
+│   ├── backtesting/                   Walk-forward + factor lab
+│   └── utils/                         Universe, selection, session quotes, cache
+├── docs/ARCHITECTURE_DECISION.md      ADR-003 (binding)
+├── docs/MODULAR_ARCHITECTURE.md       Intent v0, dual-clock, L1/L2
+├── tests/
+├── requirements.txt
+└── runtime.txt                        Streamlit Cloud Python version (lab host)
 ```
 
 ## Tech Stack / 技術棧
 
 - **Python 3.12**
-- **Streamlit** for the web application
+- **FastAPI + `web/static`** for the **product** Desk
+- **Streamlit** for the **lab / legacy** UI only
+- **Uvicorn** to serve the Desk
 - **Pandas** and **NumPy** for time-series and quantitative calculations
 - **yfinance** for Yahoo market and fundamental data
 - **AKShare**, **Requests**, and **BeautifulSoup4** for fallback data and parsing
@@ -286,10 +280,19 @@ python3.12 -m venv .venv312
 source .venv312/bin/activate
 pip install -r requirements.txt
 
+# Product Desk
+python -m uvicorn backend.api.app:app --host 127.0.0.1 --port 8000
+```
+
+Open [http://127.0.0.1:8000](http://127.0.0.1:8000).
+
+Lab / legacy Streamlit (optional):
+
+```bash
 streamlit run backend/app.py
 ```
 
-Open [http://localhost:8501](http://localhost:8501).
+Open [http://localhost:8501](http://localhost:8501). This is not the product surface.
 
 CLI mode:
 
@@ -299,7 +302,7 @@ PYTHONPATH=backend python backend/run_agent.py
 
 ## API Configuration / API 設定
 
-LLM analysis is optional. Configure an OpenAI-compatible provider in `.env` locally or Streamlit Secrets in cloud deployment:
+LLM analysis is optional. Configure an OpenAI-compatible provider in `.env` locally (Desk) or Streamlit Secrets (lab Cloud host only):
 
 ```env
 LLM_API_KEY=your-api-key
@@ -338,7 +341,9 @@ Additional checks:
 git diff --check
 ```
 
-## Streamlit Cloud Deployment / 雲端部署
+## Lab / legacy Streamlit Cloud / 實驗室雲端（非產品）
+
+The public Streamlit Cloud host is a **lab / legacy** deploy. Product traffic belongs on the FastAPI Desk. The steps below are kept so the lab app can still boot; they are not a product-launch checklist.
 
 1. Push the repository to GitHub.
 2. Connect it at [share.streamlit.io](https://share.streamlit.io).
@@ -372,10 +377,10 @@ Guest analysis works without account configuration. To enable persistent usernam
 
 1. Create a Supabase project.
 2. Run `backend/persistence/migrations/001_accounts.sql` through `007_option_alert_lifecycle.sql` in numeric order in the Supabase SQL editor. Migration 006 retains email-prefixed database column/function names as an internal compatibility layer, but the worker delivers through Telegram only. Migration 007 enables option event types and requires manual confirmation of a simulated option entry before stop and target rules begin monitoring.
-3. Add `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` to server-side Streamlit Secrets.
+3. Add `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` to server-side secrets (Desk `.env` or lab Streamlit Secrets).
 4. Restart the app.
 
-The service-role key bypasses row-level security and must never be exposed in browser code or committed to Git. The account adapter is called only by Streamlit server-side Python. Direct access through Supabase's public anon/authenticated roles remains denied because the migration enables RLS without public policies.
+The service-role key bypasses row-level security and must never be exposed in browser code or committed to Git. The account adapter is called only by server-side Python. Direct access through Supabase's public anon/authenticated roles remains denied because the migration enables RLS without public policies.
 
 The current product requirement stores PIN values as plaintext and allows any PIN format. A database operator or database leak can therefore reveal every PIN. Use unique PINs that are not reused for other services. One-way PIN hashing is strongly recommended before production use.
 
@@ -383,7 +388,7 @@ Authenticated users can save deterministic Deep Research plans, compare a re-ana
 
 ### Price alert worker
 
-Price alert rules are monitored outside Streamlit so checks continue after the browser closes. Deploy a long-running worker on Railway, Render, or another process host with `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, and `ALERT_OWNER_USER_ID`, then run:
+Price alert rules are monitored outside the UI process so checks continue after the browser closes. Deploy a long-running worker on Railway, Render, or another process host with `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, and `ALERT_OWNER_USER_ID`, then run:
 
 ```bash
 python backend/alert_worker.py

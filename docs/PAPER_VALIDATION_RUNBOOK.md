@@ -1,6 +1,18 @@
 # Paper Validation Runbook (Stage 3 Gate)
 
-Last updated: 2026-09-16
+> ## FROZEN / SUPERSEDED (2026-10-21)
+>
+> **This document is frozen.** It is historical evidence procedure only. It is **not** architecture, product, or sequencing authority.
+>
+> Conflicts are resolved by, in order:
+> 1. **ADR-003 + Addendum A (Accepted)** — [`ARCHITECTURE_DECISION.md`](ARCHITECTURE_DECISION.md)
+> 2. [`MODULAR_ARCHITECTURE.md`](MODULAR_ARCHITECTURE.md)
+> 3. `AUDIT_REMEDIATION_PLAN_2026-10-21.md` (Confirmed by Gabriel 2026-10-21; **file not in this checkout**)
+>
+> **ADR-002 is VOID.** Do not cite this file, ADR-001, or ADR-002 as binding.
+> Visual map: [`boomboom-modular-architecture.html`](boomboom-modular-architecture.html)
+
+Last updated: 2026-09-16 (authority banner 2026-10-21)
 
 This runbook is the **human-time** gate between Stage 2 shadow seals and any
 small-capital live trading. Code cannot skip calendar time.
@@ -15,8 +27,8 @@ an IC factory (Wave 4).
 
 ## Preconditions
 
-1. ADR-002 accepted (`docs/ARCHITECTURE_DECISION.md`) — FastAPI desk is product UI;
-   keep RiskEngine / Kelly / mandate / kill / Alpaca paper.
+1. ADR-003 Accepted (`docs/ARCHITECTURE_DECISION.md`, including Addendum A) — FastAPI desk is product UI;
+   Streamlit is lab/legacy; keep RiskEngine / Kelly / mandate / kill / Alpaca paper. **ADR-002 is VOID.**
 2. `data/historical_universe.json` present (built via `scripts/build_historical_universe.py`).
 3. Stage 2 seal artifact `backend/data/performance_shadow.json` with `seal_passed: true`
    for a window of **≥ 30 calendar days** (prefer ≥ 90).

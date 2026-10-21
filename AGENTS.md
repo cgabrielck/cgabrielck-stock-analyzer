@@ -1,9 +1,12 @@
 # Stock Analyzer — Enhancement Plan
 
-## Architecture Decision (ADR-002)
+## Architecture Decision (ADR-003)
 
-**FastAPI desk is the product UI; Streamlit is lab. Keep RiskEngine / Kelly / mandate / kill / Alpaca. Two SKUs (research + paper auto). Do not greenfield-rewrite.** ADR-001 is superseded (kept as history).  
-See [`docs/ARCHITECTURE_DECISION.md`](docs/ARCHITECTURE_DECISION.md), [`docs/CGAB_WORLD_CLASS_UPGRADE.md`](docs/CGAB_WORLD_CLASS_UPGRADE.md), [`docs/AUTO_TRADING_ROADMAP.md`](docs/AUTO_TRADING_ROADMAP.md).
+**Desk (FastAPI + `web/static`) is the product UI; Streamlit is lab / legacy. Keep RiskEngine / Kelly / mandate / kill / Alpaca. Two SKUs (research + paper auto). Do not greenfield-rewrite.** Modular L1 Intent vs L2 Order; dual-clock H1–H3; `lab/advisory_debate` ≠ product M7 and must not wire to `OrderManager`.
+
+**ADR-002 is VOID. ADR-001 is history.** Older roadmaps (`AUTO_TRADING_ROADMAP`, `NEXT_PHASE_PLAN`, `QUALITY_ROADMAP`, `PAPER_VALIDATION_RUNBOOK`, `PROGRESS_LOG`) are frozen.
+
+See [`docs/ARCHITECTURE_DECISION.md`](docs/ARCHITECTURE_DECISION.md) (ADR-003 + Addendum A), [`docs/MODULAR_ARCHITECTURE.md`](docs/MODULAR_ARCHITECTURE.md), [`docs/boomboom-modular-architecture.html`](docs/boomboom-modular-architecture.html).
 
 **What to buy (VPS / broker / paid APIs):** [`docs/PROCUREMENT_GUIDE.md`](docs/PROCUREMENT_GUIDE.md) — Phase 1 Alpaca Paper + Hetzner CPX21 + Telegram; Phase 2 Polygon daily bars; Phase 3 live only after paper gate.
 

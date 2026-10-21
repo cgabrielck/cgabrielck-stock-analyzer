@@ -1,6 +1,18 @@
 # Stock Analyzer Quality Roadmap
 
-Last reviewed: 2026-07-22
+> ## FROZEN / SUPERSEDED (2026-10-21)
+>
+> **This document is frozen.** It is a 2026-07 quality grade, not architecture, product, or sequencing authority.
+>
+> Conflicts are resolved by, in order:
+> 1. **ADR-003 + Addendum A (Accepted)** — [`ARCHITECTURE_DECISION.md`](ARCHITECTURE_DECISION.md)
+> 2. [`MODULAR_ARCHITECTURE.md`](MODULAR_ARCHITECTURE.md)
+> 3. `AUDIT_REMEDIATION_PLAN_2026-10-21.md` (Confirmed by Gabriel 2026-10-21; **file not in this checkout**)
+>
+> **ADR-002 is VOID.** Do not cite this file, ADR-001, or ADR-002 as binding.
+> Product UI is the FastAPI Desk; Streamlit is lab / legacy. Visual map: [`boomboom-modular-architecture.html`](boomboom-modular-architecture.html)
+
+Last reviewed: 2026-07-22 (authority banner 2026-10-21)
 
 ## Current Grade
 

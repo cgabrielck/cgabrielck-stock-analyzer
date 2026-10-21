@@ -1,5 +1,7 @@
 # Lab citation-try（`lab/citation-try`）
 
+> **Hard boundary (ADR-003):** `backend/lab/advisory_debate.py` **≠ 產品 M7**。Lab debate 係研究草稿，**禁止**接到 `OrderManager`、worker 買入、IntentStore Merge，或當作 H2 Approve。見 [`MODULAR_ARCHITECTURE.md`](MODULAR_ARCHITECTURE.md) §8。
+
 **目的：** 對照「裝可選庫」vs「唔裝」嘅*可審計*指標，**唔**用 Yahoo 12 檔 bakeoff 贏 SPY 當勝負。  
 **紅線：** LLM／FinBERT／Advisory／QuantStats **永遠唔下單**；唔改 breakout MACD／RS／1R 硬閘。
 

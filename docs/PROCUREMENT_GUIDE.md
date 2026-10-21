@@ -1,8 +1,10 @@
 # ALPHA//DESK 付費服務與 VPS 採購指南
 
-Last updated: 2026-09-10
+> Architecture: **ADR-003 Accepted** ([`ARCHITECTURE_DECISION.md`](ARCHITECTURE_DECISION.md)). **ADR-002 is VOID.** Product = FastAPI Desk; Streamlit = lab/legacy. This guide is procurement only.
 
-依現行架構（Alpaca 下單 + Streamlit 研究端 + Worker 常駐）與
+Last updated: 2026-09-10 (authority pointer 2026-10-21)
+
+依現行架構（Alpaca 下單 + FastAPI Desk 產品端 + Worker 常駐；Streamlit 為 lab/legacy）與
 [`PAPER_VALIDATION_RUNBOOK.md`](PAPER_VALIDATION_RUNBOOK.md)、
 [`../deploy/README.md`](../deploy/README.md)、
 [`PAID_DATA_PIT_PLAN.md`](PAID_DATA_PIT_PLAN.md)、
@@ -16,7 +18,7 @@ Last updated: 2026-09-10
 1. **先驗證、再加碼**：Shadow／紙上階段不必買齊實時股票＋實時期權。
 2. **不要買**淘寶轉賣／共享 API Key 當正式行情來源。
 3. 「不差錢」也不代表一次開雙 Advanced（約 $400／月量級）；先把 **下單路徑 + 常駐 Worker + 可靠日 K** 跑穩，再加 SIP／OPRA。
-4. 對齊 ADR-001：保留研究 UI，錢花在執行與數據，不花在重寫前端。
+4. 對齊 ADR-003：保留 Desk 產品 UI 與風控核心，錢花在執行與數據，不花在重寫前端或把 Streamlit 當產品。
 
 ```text
 Phase1 Shadow/Paper  →  Phase2 可靠日K  →  Phase3 小資金實盤

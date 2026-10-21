@@ -14,18 +14,18 @@ Paste this file (or `@docs/LOCAL_CURSOR_HANDOFF.md`) into your **local Cursor** 
 ## 0. One-line status
 
 Personal US-equity **research terminal + Stage-2 shadow/paper trading scaffold**.  
-**Do not rebuild from scratch.** Product UI = FastAPI desk; Streamlit = lab (ADR-002). Keep RiskEngine, Kelly, mandate, kill switch, Alpaca.  
+**Do not rebuild from scratch.** Product UI = FastAPI desk; Streamlit = lab / legacy (**ADR-003**; ADR-002 is VOID). Keep RiskEngine, Kelly, mandate, kill switch, Alpaca.  
 Grade vs a sellable top AI desk: **5.8 / 10**. Operating plan: [`CGAB_WORLD_CLASS_UPGRADE.md`](CGAB_WORLD_CLASS_UPGRADE.md).
 
 ---
 
-## 1. Architecture decision (ADR-002) — MUST FOLLOW
+## 1. Architecture decision (ADR-003) — MUST FOLLOW
 
-**FastAPI desk is the product; Streamlit is lab. Keep risk kernel. No greenfield rewrite.** ADR-001 superseded.
+**FastAPI desk is the product; Streamlit is lab / legacy. Keep risk kernel. No greenfield rewrite.** ADR-002 is VOID. ADR-001 is history. Modular L1 Intent vs L2 Order; do not wire `lab/advisory_debate` to `OrderManager`. See [`ARCHITECTURE_DECISION.md`](ARCHITECTURE_DECISION.md) and [`MODULAR_ARCHITECTURE.md`](MODULAR_ARCHITECTURE.md).
 
 | Keep | Upgrade |
 |------|---------|
-| Streamlit UI (`backend/app.py`) | Polygon (or paid) equity bars |
+| FastAPI Desk (`web/static` + `backend/api/app.py`); Streamlit as lab/legacy | Polygon (or paid) equity bars |
 | Scoring, regime, Kelly, RiskEngine | Stage-2 multi-month seal evidence |
 | Mandate, kill switch, Alpaca adapter | SQLite durable ledger (done); ops alerts |
 | Paper/shadow path | Paper validation → small live only after sign-off |
@@ -68,13 +68,14 @@ Full text: [`docs/ARCHITECTURE_DECISION.md`](ARCHITECTURE_DECISION.md)
 ### Docs (read in this order)
 1. **This file** — handoff  
 2. [`PROCUREMENT_GUIDE.md`](PROCUREMENT_GUIDE.md) — what to buy  
-3. [`ARCHITECTURE_DECISION.md`](ARCHITECTURE_DECISION.md) — keep vs rebuild  
-4. [`AUTO_TRADING_ROADMAP.md`](AUTO_TRADING_ROADMAP.md) — stages  
-5. [`STAGE2_SEAL_REPORT.md`](STAGE2_SEAL_REPORT.md) — seal template  
-6. [`PAPER_VALIDATION_RUNBOOK.md`](PAPER_VALIDATION_RUNBOOK.md) — Stage-3 human gate  
-7. [`PAID_DATA_PIT_PLAN.md`](PAID_DATA_PIT_PLAN.md) — Polygon / PIT notes  
-8. [`../deploy/README.md`](../deploy/README.md) — VPS deploy  
-9. [`../AGENTS.md`](../AGENTS.md) — product enhancement plan + ADR pointer  
+3. [`ARCHITECTURE_DECISION.md`](ARCHITECTURE_DECISION.md) — **ADR-003** (ADR-002 VOID)  
+4. [`MODULAR_ARCHITECTURE.md`](MODULAR_ARCHITECTURE.md) — Intent v0, dual-clock, L1/L2  
+5. [`AUTO_TRADING_ROADMAP.md`](AUTO_TRADING_ROADMAP.md) — frozen stages  
+6. [`STAGE2_SEAL_REPORT.md`](STAGE2_SEAL_REPORT.md) — seal template  
+7. [`PAPER_VALIDATION_RUNBOOK.md`](PAPER_VALIDATION_RUNBOOK.md) — Stage-3 human gate  
+8. [`PAID_DATA_PIT_PLAN.md`](PAID_DATA_PIT_PLAN.md) — Polygon / PIT notes  
+9. [`../deploy/README.md`](../deploy/README.md) — VPS deploy  
+10. [`../AGENTS.md`](../AGENTS.md) — product enhancement plan + ADR pointer  
 
 ---
 
@@ -102,7 +103,7 @@ Full text: [`docs/ARCHITECTURE_DECISION.md`](ARCHITECTURE_DECISION.md)
 
 ### Next engineering (local or Cloud Agent)
 - [ ] **Follow [`STRATEGY_ADOPTION.md`](STRATEGY_ADOPTION.md)** — unify research↔worker signals; real RS; ATR risk units; paid bars + shadow seal; Quality split. Do **not** add HFT/MM/stat-arb-neutral/DL-RL-entry without a new ADR.
-- [ ] Wire/verify end-to-end: local Streamlit + shadow worker with real Alpaca paper  
+- [ ] Wire/verify end-to-end: local FastAPI Desk + shadow worker with real Alpaca paper (Streamlit is lab only)  
 - [ ] Confirm `POLYGON_API_KEY` path in worker on Windows + VPS  
 - [ ] Accumulate shadow evidence calendar window; fill `STAGE2_SEAL_REPORT`  
 - [ ] Deploy systemd worker on VPS per `deploy/README.md`  
@@ -133,7 +134,7 @@ Details: [`PROCUREMENT_GUIDE.md`](PROCUREMENT_GUIDE.md)
 | Use **local Cursor Agent** when… | Use **Cloud Agent** when… |
 |----------------------------------|---------------------------|
 | Editing files under `C:\Users\001\...` | Long unattended tasks / PR factory |
-| Filling `.env`, running Streamlit UI | You need Linux/deploy parity |
+| Filling `.env`, running the FastAPI Desk | You need Linux/deploy parity |
 | Debugging with your keys on disk | Machine can sleep; job continues on VM |
 | Day-to-day feature work | Big refactors with CI/PR |
 
@@ -192,10 +193,11 @@ Copy-paste:
 ```text
 Read docs/LOCAL_CURSOR_HANDOFF.md and docs/PROCUREMENT_GUIDE.md first.
 Project: ALPHA//DESK at C:\Users\001\cgabrielck-stock-analyzer.
-Rules: ADR-001 keep Streamlit research UI; do not rebuild from scratch;
-never bypass risk gates; no live trading without paper runbook.
-Task: help me create .env from .env.example, verify the app starts with
-streamlit run backend/app.py, and outline the next shadow-trading steps.
+Rules: ADR-003 Desk (FastAPI+web) is product, Streamlit is lab/legacy; ADR-002 is VOID;
+do not rebuild from scratch; never bypass risk gates; no live trading without paper runbook;
+lab/advisory_debate is not product M7 and must not wire to OrderManager.
+Task: help me create .env from .env.example, verify the Desk starts with
+uvicorn backend.api.app:app --host 127.0.0.1 --port 8000, and outline the next shadow-trading steps.
 Reply in Traditional Chinese unless I ask otherwise.
 ```
 
