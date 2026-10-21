@@ -242,10 +242,19 @@ def test_ops_missing_does_not_invent_loaded_mandate(tmp_path):
 
 
 def test_desk_orders_module_does_not_import_intent_or_signal_processor():
+    import ast
     from pathlib import Path
 
-    text = Path(__file__).resolve().parents[3] / "backend" / "trading" / "engine" / "desk_orders.py"
-    src = text.read_text(encoding="utf-8")
-    assert "IntentStore" not in src
-    assert "from backend.trading.engine.signal_processor" not in src
-    assert "process_signal" not in src
+    path = Path(__file__).resolve().parents[3] / "backend" / "trading" / "engine" / "desk_orders.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    imported = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported.extend(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            imported.append(node.module or "")
+            imported.extend(f"{node.module}.{alias.name}" for alias in node.names)
+    joined = " ".join(imported)
+    assert "IntentStore" not in joined
+    assert "signal_processor" not in joined
+    assert "process_signal" not in joined
