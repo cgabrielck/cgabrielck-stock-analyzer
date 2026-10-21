@@ -93,7 +93,7 @@ class SignalProcessor:
             self.order_manager.store.save_order(draft_order)
             try:
                 from backend.trading.safety import audit
-                from backend.api.trade_journal import record_from_order
+                from backend.utils.provenance.journal_store import record_from_order
 
                 audit_id = audit.log_risk_decision(
                     symbol,

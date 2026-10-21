@@ -15,7 +15,10 @@ class TestSignalProcessor(unittest.TestCase):
             order_manager=self.mock_order_manager
         )
         self._audit_patch = patch("backend.trading.safety.audit.log_risk_decision", return_value="aud-mock")
-        self._journal_patch = patch("backend.api.trade_journal.record_from_order", return_value={"log_id": "tl-mock"})
+        self._journal_patch = patch(
+            "backend.utils.provenance.journal_store.record_from_order",
+            return_value={"log_id": "tl-mock"},
+        )
         self.audit_mock = self._audit_patch.start()
         self.journal_mock = self._journal_patch.start()
         self.addCleanup(self._audit_patch.stop)
@@ -80,6 +83,14 @@ class TestSignalProcessor(unittest.TestCase):
         
         self.assertEqual(result_order.status, OrderStatus.SUBMITTED)
         self.mock_order_manager.submit_new_order.assert_called_once()
+
+    def test_signal_processor_does_not_import_backend_api(self):
+        from pathlib import Path
+
+        src = Path("backend/trading/engine/signal_processor.py").read_text(encoding="utf-8")
+        self.assertNotIn("from backend.api", src)
+        self.assertNotIn("import backend.api", src)
+        self.assertIn("backend.utils.provenance.journal_store", src)
 
 if __name__ == '__main__':
     unittest.main()

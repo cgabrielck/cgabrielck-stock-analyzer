@@ -2,12 +2,15 @@
 from __future__ import annotations
 
 import json
+import logging
 import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from backend.utils.constants import DATA_DIR
-from backend.utils.provenance.trade_log import TRADE_LOG_SCHEMA, normalize_trade_log
+from backend.utils.provenance.trade_log import TRADE_LOG_SCHEMA, from_order, normalize_trade_log
+
+logger = logging.getLogger(__name__)
 
 JOURNAL_PATH = Path(DATA_DIR) / "trade_journal.json"
 _LOCK = threading.RLock()
@@ -56,6 +59,24 @@ def append_entry(entry: Dict[str, Any], path: Optional[Path] = None) -> Dict[str
         rows.append(normalized)
         save_entries(rows, target)
     return normalized
+
+
+def record_from_order(
+    order: Any,
+    *,
+    audit_id: Optional[str] = None,
+    strategy_id: Optional[str] = None,
+    path: Optional[Path] = None,
+) -> Optional[Dict[str, Any]]:
+    """Persist a TradeLogEntry from an order. Engine and API both call this layer."""
+    try:
+        entry = from_order(order, audit_id=audit_id, strategy_id=strategy_id)
+        if not entry:
+            return None
+        return append_entry(entry, path=path)
+    except Exception as exc:
+        logger.warning("journal record_from_order failed: %s", exc)
+        return None
 
 
 def find_entry(log_id: str, path: Optional[Path] = None) -> Optional[Dict[str, Any]]:

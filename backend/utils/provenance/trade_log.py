@@ -195,18 +195,36 @@ def _status_from_order(order: Any) -> str:
     return "proposed"
 
 
-def _fills_from_order(order: Any, status: str) -> List[Dict[str, Any]]:
-    """Only materialize a fill when the ledger already recorded one. Never invent."""
-    if status != "filled":
-        return []
-    price = _field(order, "filled_avg_price")
-    qty = _field(order, "quantity", "qty", default=0)
-    if price in (None, "", 0, 0.0):
+def _recorded_fill_price(*sources: Any) -> Optional[float]:
+    """Return a real fill price, or None. Limit/mark prices do not count."""
+    for source in sources:
+        if source is None:
+            continue
+        for key in ("filled_avg_price", "fill_price", "filled_price"):
+            raw = _field(source, key)
+            if raw in (None, "", 0, 0.0):
+                continue
+            try:
+                price = float(raw)
+            except (TypeError, ValueError):
+                continue
+            if price > 0:
+                return price
+    return None
+
+
+def _fills_from_price(price: Optional[float], qty: Any) -> List[Dict[str, Any]]:
+    """Only materialize a fill when a recorded price exists. Never invent."""
+    if price is None:
         return []
     try:
         return [{"price": float(price), "qty": float(qty or 0)}]
     except (TypeError, ValueError):
         return []
+
+
+def _filled_status(fill_price: Optional[float], *, fallback: str = "submitted") -> str:
+    return "filled" if fill_price is not None else fallback
 
 
 def empty_trade_log(
@@ -329,6 +347,9 @@ def from_order(order: Any, *, audit_id: Optional[str] = None, strategy_id: Optio
     error = str(_field(order, "error_message", "error", default="") or "")
     side = _side(_field(order, "side"))
     qty = _qty(_field(order, "quantity", "qty", default=0))
+    fill_px = _recorded_fill_price(order, data)
+    if status == "filled":
+        status = _filled_status(fill_px)
     extra_codes = ["risk_rejected"] if status == "risk_rejected" else []
     codes = reason_codes_from_text(error, extra=extra_codes)
     summary = error or _order_summary(symbol, side, qty, status)
@@ -346,7 +367,7 @@ def from_order(order: Any, *, audit_id: Optional[str] = None, strategy_id: Optio
             "qty": qty,
             "order_id": order_id,
             "risk_decision_id": audit_id,
-            "fills": _fills_from_order(order, status),
+            "fills": _fills_from_price(fill_px, qty) if status == "filled" else [],
             "user_visible_summary": summary,
             "links": {"audit_ref": audit_ref, "signal_ref": ""},
             "reason_codes": codes,
@@ -391,6 +412,7 @@ def from_audit_event(event: Any) -> Optional[Dict[str, Any]]:
     reason = data.get("reason") or payload.get("reason") or data.get("error_message") or ""
     extra: List[str] = []
     status = "proposed"
+    fill_px = _recorded_fill_price(data, payload)
     if kind == "risk_reject":
         status = "risk_rejected"
         extra.append("risk_rejected")
@@ -401,15 +423,14 @@ def from_audit_event(event: Any) -> Optional[Dict[str, Any]]:
         status = "risk_rejected"
         extra.append("kill_switch")
     elif kind == "order_fill":
-        status = "filled"
+        # Same rule as order_submit: kind=order_fill is not a fill without a price.
+        status = _filled_status(fill_px)
     elif kind == "order_submit":
         raw_status = str(data.get("status") or payload.get("status") or "submitted").lower()
         if raw_status in ("rejected", "canceled", "cancelled"):
             status = "canceled"
         elif raw_status == "filled":
-            # Do not upgrade a submit log to filled without a recorded fill price.
-            fill_px = data.get("filled_avg_price") or payload.get("filled_avg_price")
-            status = "filled" if fill_px not in (None, "", 0, 0.0) else "submitted"
+            status = _filled_status(fill_px)
         else:
             status = "submitted"
     elif kind == "resume":
@@ -428,7 +449,7 @@ def from_audit_event(event: Any) -> Optional[Dict[str, Any]]:
             "qty": qty,
             "order_id": str(order_id) if order_id else None,
             "risk_decision_id": event_id,
-            "fills": [],
+            "fills": _fills_from_price(fill_px, qty) if status == "filled" else [],
             "user_visible_summary": summary,
             "links": {"audit_ref": f"/api/journal/audit/{event_id}", "signal_ref": ""},
             "reason_codes": codes,

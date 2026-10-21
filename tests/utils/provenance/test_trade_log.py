@@ -77,8 +77,9 @@ def test_filled_only_when_price_recorded():
         "filled_avg_price": None,
     })
     assert missing is not None
-    assert missing["status"] == "filled"
+    assert missing["status"] == "submitted"
     assert missing["fills"] == []
+    assert missing["kind"] == "order"
 
     real = from_order({
         "id": "ord-4",
@@ -88,7 +89,60 @@ def test_filled_only_when_price_recorded():
         "status": "filled",
         "filled_avg_price": 189.5,
     })
+    assert real["status"] == "filled"
     assert real["fills"] == [{"price": 189.5, "qty": 2.0}]
+    assert real["kind"] == "fill"
+
+
+def test_audit_order_fill_without_price_is_not_filled():
+    entry = from_audit_event({
+        "schema_version": "audit.v0",
+        "event_id": "aud-fill-0",
+        "ts": "2026-10-21T15:00:00+00:00",
+        "kind": "order_fill",
+        "event_type": "order_fill",
+        "symbol": "MSFT",
+        "side": "buy",
+        "quantity": 4,
+        "status": "filled",
+        "limit_price": 400.0,
+    })
+    assert entry is not None
+    assert entry["status"] != "filled"
+    assert entry["status"] == "submitted"
+    assert entry["fills"] == []
+    assert entry["kind"] == "order"
+
+
+def test_audit_order_fill_zero_price_is_not_filled():
+    entry = from_audit_event({
+        "kind": "order_fill",
+        "event_id": "aud-fill-zero",
+        "ts": "2026-10-21T15:01:00+00:00",
+        "symbol": "MSFT",
+        "quantity": 1,
+        "filled_avg_price": 0,
+        "payload": {"filled_avg_price": 0.0},
+    })
+    assert entry is not None
+    assert entry["status"] == "submitted"
+    assert entry["fills"] == []
+
+
+def test_audit_order_fill_with_price_is_filled():
+    entry = from_audit_event({
+        "kind": "order_fill",
+        "event_id": "aud-fill-ok",
+        "ts": "2026-10-21T15:02:00+00:00",
+        "symbol": "MSFT",
+        "side": "buy",
+        "quantity": 3,
+        "payload": {"filled_avg_price": 412.25},
+    })
+    assert entry is not None
+    assert entry["status"] == "filled"
+    assert entry["fills"] == [{"price": 412.25, "qty": 3.0}]
+    assert entry["kind"] == "fill"
 
 
 def test_audit_risk_reject_becomes_journal_row():
@@ -166,3 +220,27 @@ def test_provenance_never_claims_verified_for_local_sources():
     assert p["vendor"] is None
     assert looks_like_verified_fake({"source": "order_store", "verified": True}) is True
     assert looks_like_verified_fake(p) is False
+
+
+def test_record_from_order_lives_in_journal_store(tmp_path, monkeypatch):
+    from backend.utils.provenance import journal_store
+
+    monkeypatch.setattr(journal_store, "JOURNAL_PATH", tmp_path / "trade_journal.json")
+    stored = journal_store.record_from_order(
+        {
+            "id": "ord-rec",
+            "symbol": "IBM",
+            "side": "buy",
+            "quantity": 2,
+            "status": "rejected",
+            "error_message": "Risk Gate Rejected: Too large",
+        },
+        audit_id="aud-rec",
+        strategy_id="stable",
+    )
+    assert stored is not None
+    assert stored["symbol"] == "IBM"
+    assert stored["status"] == "risk_rejected"
+    assert stored["risk_decision_id"] == "aud-rec"
+    assert stored["strategy_id"] == "stable"
+    assert (tmp_path / "trade_journal.json").exists()

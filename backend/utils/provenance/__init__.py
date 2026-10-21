@@ -1,3 +1,4 @@
+from .journal_store import record_from_order
 from .tracker import DataProvenance, TraceableArtifact
 from .trade_log import (
     TRADE_LOG_SCHEMA,
@@ -19,4 +20,5 @@ __all__ = [
     "merge_trade_logs",
     "normalize_audit_event",
     "normalize_trade_log",
+    "record_from_order",
 ]

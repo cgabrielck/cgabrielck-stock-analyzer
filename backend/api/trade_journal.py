@@ -8,11 +8,9 @@ from backend.utils.provenance import journal_store
 from backend.utils.provenance.trade_log import (
     TRADE_LOG_SCHEMA,
     from_audit_event,
-    from_order,
     looks_like_verified_fake,
     make_note_entry,
     merge_trade_logs,
-    normalize_trade_log,
 )
 
 logger = logging.getLogger(__name__)
@@ -98,14 +96,8 @@ def record_from_order(
     audit_id: Optional[str] = None,
     strategy_id: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
-    try:
-        entry = from_order(order, audit_id=audit_id, strategy_id=strategy_id)
-        if not entry:
-            return None
-        return journal_store.append_entry(entry)
-    except Exception as exc:
-        logger.warning("journal record_from_order failed: %s", exc)
-        return None
+    """API facade — recording lives in utils.provenance.journal_store."""
+    return journal_store.record_from_order(order, audit_id=audit_id, strategy_id=strategy_id)
 
 
 def get_entry(log_id: str, *, order_store: Any = None) -> Optional[Dict[str, Any]]:
