@@ -143,3 +143,51 @@ def test_example_comments_do_not_break_load():
     example = Path(__file__).resolve().parents[3] / "config" / "mandate.example.json"
     mandate = load_mandate(example)
     assert mandate.allowed_sides == ["buy", "sell"]
+
+
+def test_inspect_mandate_missing_is_not_loaded(tmp_path):
+    from backend.trading.safety.mandate import inspect_mandate
+
+    snap = inspect_mandate(tmp_path / "absent.json")
+    assert snap.status == "missing"
+    assert snap.mandate is None
+    assert snap.error
+
+
+def test_inspect_mandate_corrupt_is_not_loaded(tmp_path):
+    from backend.trading.safety.mandate import inspect_mandate
+
+    target = tmp_path / "mandate.json"
+    target.write_text("{not-json", encoding="utf-8")
+    snap = inspect_mandate(target)
+    assert snap.status == "corrupt"
+    assert snap.mandate is None
+
+
+def test_inspect_mandate_loaded_matches_file(tmp_path):
+    import json
+
+    from backend.trading.safety.mandate import inspect_mandate
+
+    target = tmp_path / "mandate.json"
+    target.write_text(json.dumps({"blocked_symbols": ["GME"], "max_notional_per_order": 1000}), encoding="utf-8")
+    snap = inspect_mandate(target)
+    assert snap.is_loaded
+    assert snap.status == "loaded"
+    assert snap.mandate is not None
+    assert "GME" in snap.mandate.blocked_symbols
+    assert snap.mandate.max_notional_per_order == 1000
+
+
+def test_load_mandate_still_fail_open_for_worker(tmp_path):
+    """Worker path stays fail-open; Desk uses inspect_mandate instead."""
+    from backend.trading.safety.mandate import TradingMandate, load_mandate
+
+    missing = load_mandate(tmp_path / "nope.json")
+    assert missing.blocked_symbols == []
+    assert missing.max_notional_per_order is None
+
+    corrupt = tmp_path / "bad.json"
+    corrupt.write_text("[]", encoding="utf-8")
+    fallback = load_mandate(corrupt)
+    assert fallback.model_dump() == TradingMandate.permissive().model_dump()

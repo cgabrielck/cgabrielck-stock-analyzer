@@ -911,6 +911,7 @@ async function desk(){
             return `<div class="row" style="justify-content:space-between"><span>${o.symbol} ${o.side} ${o.qty||o.quantity||""}${px}${st}</span><button class="btn ghost cancel" data-id="${o.id}">Cancel</button></div>`;
           }).join(""):`<p class="muted">${t("desk.none")}</p>`}</div>
         <div class="card"><h3>${t("desk.risk")}</h3><p class="muted">Kill switch ${ops.kill_switch?"ON":"OFF"}</p>
+          <p class="muted">Mandate ${esc(ops.mandate_status||"unknown")}${ops.mandate_status==="loaded"?"":" — orders fail closed"}</p>
           <div class="row"><button class="btn danger" id="halt">${t("btn.halt")}</button><button class="btn ghost" id="resume">${t("btn.resume")}</button></div>
           <p class="muted" style="margin-top:8px">${t("desk.llm")}</p>
         </div>
@@ -1791,7 +1792,7 @@ async function settings(){
   if(paperControls){
     try {
       const o = await api("/api/ops");
-      killLine = `<p class="muted">Kill switch ${o.kill_switch?"ON":"OFF"}</p>`;
+      killLine = `<p class="muted">Kill switch ${o.kill_switch?"ON":"OFF"} · Mandate ${esc(o.mandate_status||"unknown")}</p>`;
     } catch(e){ killLine = `<p class="muted">${esc(e.message)}</p>`; }
   }
   root.innerHTML = `<div class="card"><h3>${t("page.settings")}</h3>
