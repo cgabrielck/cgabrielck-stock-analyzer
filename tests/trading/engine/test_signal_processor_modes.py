@@ -44,6 +44,7 @@ class TestSignalProcessorModes(unittest.TestCase):
         )
 
         def _submit(order):
+            self.assertEqual(order.status, OrderStatus.RISK_APPROVED)
             order.status = OrderStatus.SUBMITTED
             return order
 

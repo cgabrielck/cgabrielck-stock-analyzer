@@ -83,6 +83,8 @@ class TestSignalProcessor(unittest.TestCase):
         
         self.assertEqual(result_order.status, OrderStatus.SUBMITTED)
         self.mock_order_manager.submit_new_order.assert_called_once()
+        passed = self.mock_order_manager.submit_new_order.call_args[0][0]
+        self.assertEqual(passed.status, OrderStatus.RISK_APPROVED)
 
     def test_signal_processor_does_not_import_backend_api(self):
         from pathlib import Path

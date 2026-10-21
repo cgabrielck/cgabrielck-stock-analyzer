@@ -101,6 +101,8 @@ def log_mandate_decision(
     approved: bool,
     reason: Optional[str] = None,
     notional: Optional[float] = None,
+    *,
+    actor: str = "worker",
 ) -> Optional[str]:
     """Log a mandate gate decision."""
     return log_event("mandate_decision", {
@@ -109,7 +111,7 @@ def log_mandate_decision(
         "approved": approved,
         "reason": reason,
         "notional": notional,
-    }, kind="risk_allow" if approved else "mandate_deny")
+    }, actor=actor, kind="risk_allow" if approved else "mandate_deny")
 
 
 def log_risk_decision(
@@ -118,6 +120,8 @@ def log_risk_decision(
     quantity: float,
     approved: bool,
     reason: Optional[str] = None,
+    *,
+    actor: str = "worker",
 ) -> Optional[str]:
     """Log a risk engine decision."""
     return log_event("risk_decision", {
@@ -126,7 +130,7 @@ def log_risk_decision(
         "quantity": quantity,
         "approved": approved,
         "reason": reason,
-    }, kind="risk_allow" if approved else "risk_reject")
+    }, actor=actor, kind="risk_allow" if approved else "risk_reject")
 
 
 def log_order_submission(
@@ -136,6 +140,8 @@ def log_order_submission(
     limit_price: Optional[float],
     order_id: str,
     status: str,
+    *,
+    actor: str = "worker",
 ) -> Optional[str]:
     """Log an order submission result."""
     return log_event("order_submission", {
@@ -145,7 +151,7 @@ def log_order_submission(
         "limit_price": limit_price,
         "order_id": order_id,
         "status": status,
-    }, kind="order_submit")
+    }, actor=actor, kind="order_submit")
 
 
 def iter_audit_files(*, days: int = 14, audit_dir: Optional[Path] = None) -> List[Path]:

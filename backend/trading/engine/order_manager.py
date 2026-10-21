@@ -48,9 +48,15 @@ class OrderManager:
     def submit_new_order(self, draft_order: Order) -> Order:
         """
         Attempts to submit a new order. Includes idempotency checks.
+
+        Does **not** stamp RISK_APPROVED. Callers that actually ran RiskEngine
+        (Desk place-order, SignalProcessor) must set that status themselves
+        before submit. A DRAFT stays DRAFT until the broker responds.
         """
-        if draft_order.status != OrderStatus.DRAFT:
-            raise ValueError(f"Can only submit DRAFT orders. Current status: {draft_order.status}")
+        if draft_order.status not in (OrderStatus.DRAFT, OrderStatus.RISK_APPROVED):
+            raise ValueError(
+                f"Can only submit DRAFT or RISK_APPROVED orders. Current status: {draft_order.status}"
+            )
 
         # 1. Idempotency Check
         existing_order = self.store.get_order_by_idempotency_key(draft_order.idempotency_key)
@@ -58,12 +64,9 @@ class OrderManager:
             logger.info(f"Order with idempotency key {draft_order.idempotency_key} already exists. Skipping submission.")
             return existing_order
 
-        # 2. Pre-submission setup
-        # In a full implementation, the Risk Worker would have already evaluated this 
-        # and changed the state to RISK_APPROVED. For now, we transition directly.
-        draft_order.status = OrderStatus.RISK_APPROVED
+        # 2. Persist caller status as-is (no invented RISK_APPROVED).
         self.store.save_order(draft_order)
-        
+
         logger.info(f"Submitting order to broker: {draft_order.symbol} {draft_order.side} {draft_order.quantity}")
 
         # 3. Broker Submission

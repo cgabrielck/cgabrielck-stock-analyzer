@@ -98,24 +98,81 @@ class TradingMandate(BaseModel):
         return cls()
 
 
+MANDATE_STATUS_LOADED = "loaded"
+MANDATE_STATUS_MISSING = "missing"
+MANDATE_STATUS_CORRUPT = "corrupt"
+
+
+class MandateSnapshot(BaseModel):
+    """Honest load result for Desk ops + order path (same source).
+
+    Worker ``load_mandate()`` stays fail-open for legacy deploys. Desk
+    place-order is fail-closed when status is missing or corrupt.
+    """
+
+    status: str
+    path: str
+    mandate: Optional[TradingMandate] = None
+    error: Optional[str] = None
+
+    @property
+    def is_loaded(self) -> bool:
+        return self.status == MANDATE_STATUS_LOADED and self.mandate is not None
+
+
+def inspect_mandate(path: Optional[Path] = None) -> MandateSnapshot:
+    """Load mandate with an honest status. Never invents a fake loaded file.
+
+    Missing or unreadable files return status missing/corrupt and mandate=None.
+    A present, valid file (including an explicit permissive ``{}``) is loaded.
+    """
+    target = resolve_mandate_path(path)
+    target_s = str(target)
+    if not target.exists():
+        return MandateSnapshot(
+            status=MANDATE_STATUS_MISSING,
+            path=target_s,
+            mandate=None,
+            error="mandate file not found",
+        )
+    try:
+        with open(target, "r") as f:
+            data = json.load(f)
+        mandate = TradingMandate.model_validate(data)
+        return MandateSnapshot(
+            status=MANDATE_STATUS_LOADED,
+            path=target_s,
+            mandate=mandate,
+            error=None,
+        )
+    except Exception as exc:
+        return MandateSnapshot(
+            status=MANDATE_STATUS_CORRUPT,
+            path=target_s,
+            mandate=None,
+            error=str(exc),
+        )
+
+
 def load_mandate(path: Optional[Path] = None) -> TradingMandate:
     """
     Load the mandate from config/mandate.json.
 
-    Falls back to a permissive mandate if the file is absent or malformed
-    (malformed logs a warning — we fail *open* to preserve existing behaviour,
-    but the kill switch and RiskEngine remain as safety nets).
+    Worker / legacy path: falls back to a permissive mandate if the file is
+    absent or malformed (malformed logs a warning — we fail *open* to preserve
+    existing worker behaviour, but the kill switch and RiskEngine remain as
+    safety nets). Desk place-order must use ``inspect_mandate()`` and fail closed.
     """
-    target = resolve_mandate_path(path)
-    if not target.exists():
-        return TradingMandate.permissive()
-    try:
-        with open(target, "r") as f:
-            data = json.load(f)
-        return TradingMandate.model_validate(data)
-    except Exception as exc:
-        logger.warning("Failed to load mandate from %s: %s — using permissive default.", target, exc)
-        return TradingMandate.permissive()
+    snap = inspect_mandate(path)
+    if snap.is_loaded:
+        return snap.mandate  # type: ignore[return-value]
+    if snap.status == MANDATE_STATUS_CORRUPT:
+        logger.warning(
+            "Failed to load mandate from %s: %s — using permissive default.",
+            snap.path,
+            snap.error,
+        )
+    return TradingMandate.permissive()
 
 
 class MandateGate:

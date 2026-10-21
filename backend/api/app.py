@@ -27,9 +27,9 @@ from backend.api.desk_auth import is_operator, require_operator
 from backend.trading import telegram_inbox
 from backend.trading.alpaca_broker import AlpacaBroker
 from backend.trading.engine.cadence import normalize_cadence
+from backend.trading.engine.desk_orders import ops_mandate_payload, place_desk_order
 from backend.trading.models import Order, OrderSide, OrderType
 from backend.trading.safety import kill_switch
-from backend.trading.safety.mandate import load_mandate
 from backend.trading.storage import create_order_store
 from backend.trading.strategies.registry import KNOWN_STRATEGIES
 from backend.utils.constants import DATA_DIR, STOCK_UNIVERSE
@@ -272,8 +272,6 @@ def orders(status: str = "all", limit: int = 50, _auth: None = Depends(_require_
 @app.post("/api/orders")
 def submit_order(body: OrderIn, _auth: None = Depends(_require_paper_operator)) -> Dict[str, Any]:
     _require_paper()
-    if kill_switch.is_halted() and body.side.lower() == "buy":
-        raise HTTPException(status_code=409, detail="Kill switch is on — new buys blocked.")
     try:
         side = OrderSide(body.side.lower())
         otype = OrderType(body.order_type.lower())
@@ -288,14 +286,10 @@ def submit_order(body: OrderIn, _auth: None = Depends(_require_paper_operator)) 
         limit_price=body.limit_price,
         idempotency_key=f"cgab-{uuid.uuid4()}",
     )
-    filled = _broker.submit_order(order)
-    try:
-        _store.save_order(filled)
-    except Exception:
-        pass
-    if filled.status.value == "rejected":
-        raise HTTPException(status_code=400, detail=filled.error_message or "Order rejected")
-    return filled.model_dump(mode="json")
+    result = place_desk_order(order, broker=_broker, store=_store)
+    if result.http_status != 200:
+        raise HTTPException(status_code=result.http_status, detail=result.detail)
+    return result.order.model_dump(mode="json")
 
 
 @app.post("/api/orders/{order_id}/cancel")
@@ -310,13 +304,13 @@ def cancel_order(order_id: str, _auth: None = Depends(_require_paper_operator)) 
 
 @app.get("/api/ops")
 def ops(_auth: None = Depends(require_operator)) -> Dict[str, Any]:
-    mandate = load_mandate()
-    return {
+    payload = {
         "kill_switch": kill_switch.is_halted(),
         "kill_reason": kill_switch.get_reason(),
-        "mandate": mandate.model_dump() if hasattr(mandate, "model_dump") else str(mandate),
         "paper": True,
     }
+    payload.update(ops_mandate_payload())
+    return payload
 
 
 @app.post("/api/ops/kill")
