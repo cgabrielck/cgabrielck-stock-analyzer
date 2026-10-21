@@ -118,6 +118,32 @@ def test_audit_reject_is_followable(client, journal_env):
     assert entry.json()["audit"]["event_id"] == event_id
 
 
+def test_submitted_order_journal_keeps_intent_link(client, journal_env):
+    from backend.trading.models import Order, OrderSide, OrderStatus, OrderType
+    from backend.utils.provenance.journal_store import record_from_order
+
+    order = Order(
+        id="ord-ok",
+        symbol="MSFT",
+        side=OrderSide.BUY,
+        order_type=OrderType.LIMIT,
+        quantity=4,
+        limit_price=300.0,
+        status=OrderStatus.SUBMITTED,
+        idempotency_key="idem-ok",
+    )
+    record_from_order(order, intent_id="int-ok", strategy_id="stable")
+    res = client.get("/api/journal")
+    assert res.status_code == 200
+    row = next(e for e in res.json()["entries"] if e["order_id"] == "ord-ok")
+    assert row["intent_id"] == "int-ok"
+    assert row["links"]["intent_ref"] == "/api/intents/int-ok"
+    assert row["status"] == "submitted"
+    assert row["fills"] == []
+    assert row["provenance"]["verified"] is False
+    assert row["provenance"]["live"] is False
+
+
 def test_missing_audit_is_404(client):
     res = client.get("/api/journal/audit/does-not-exist")
     assert res.status_code == 404

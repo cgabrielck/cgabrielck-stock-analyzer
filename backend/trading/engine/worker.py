@@ -801,7 +801,7 @@ class TradingWorker:
                 limits=self.risk_engine.limits,
             )
         except Exception as exc:
-            logger.debug("intent consume skipped: %s", exc)
+            logger.error("H1 intent consume loop failed: %s", exc, exc_info=True)
 
     # ------------------------------------------------------------------
     # Helpers

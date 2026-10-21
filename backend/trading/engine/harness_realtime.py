@@ -10,6 +10,11 @@ separate from TradingWorker (which remains H3-cadence today). Do not pull
 LLM, lab debate, or desk API modules into this file. Do not call a
 broker from here — process_signal (M8 RiskEngine → M9) is the only
 execution hand-off.
+
+Intent.status consumed (§5.6) means H1 handed the intent to process_signal
+so it will not retry. It is NOT a happy fill. Risk rejects stay consumed
+and are distinguished via ConsumeResult.action=consumed_risk_rejected plus
+the journal TradeLogEntry (status=risk_rejected, intent_id set).
 """
 from __future__ import annotations
 
@@ -139,6 +144,28 @@ def _account_equity(account: Any) -> float:
     return 0.0
 
 
+def _order_field(order: Any, name: str, default: Any = None) -> Any:
+    if order is None:
+        return default
+    if isinstance(order, dict):
+        return order.get(name, default)
+    return getattr(order, name, default)
+
+
+def consume_action_for_order(order: Any) -> str:
+    """Map a process_signal result to ConsumeResult.action.
+
+    Intent.status stays consumed (§5.6). This action is observability only:
+    consumed_risk_rejected means M8 rejected — not a happy fill.
+    """
+    status = _order_field(order, "status")
+    status_val = str(status.value if hasattr(status, "value") else status or "").lower()
+    err = str(_order_field(order, "error_message") or _order_field(order, "error") or "")
+    if "risk gate rejected" in err.lower() or status_val in {"risk_rejected"}:
+        return "consumed_risk_rejected"
+    return "consumed"
+
+
 def consume_active_intents(
     store: JSONIntentStore,
     *,
@@ -154,6 +181,9 @@ def consume_active_intents(
 
     Never calls LLM. Never talks to a broker. process_signal must be the
     existing M8→M9 path (SignalProcessor.process_signal).
+
+    Per-intent exceptions are fail-closed for that intent this tick (no order,
+    status stays active) and do not abort the rest of the loop.
     """
     when = _utc(now)
     results = expire_stale_intents(store, now=when)
@@ -173,101 +203,122 @@ def consume_active_intents(
     equity = _account_equity(account_summary)
 
     for intent in store.list(status=IntentStatus.ACTIVE.value, limit=1000):
-        if intent.veto_codes:
-            store.set_status(intent.intent_id, IntentStatus.CANCELLED)
-            results.append(
-                ConsumeResult(
-                    intent_id=intent.intent_id,
-                    action="cancelled",
-                    symbol=intent.symbol,
-                    reason="veto_codes",
-                )
-            )
-            continue
-        if not intent.is_consumable(when):
-            results.append(
-                ConsumeResult(
-                    intent_id=intent.intent_id,
-                    action="skipped_inactive",
-                    symbol=intent.symbol,
-                )
-            )
-            continue
-        price = get_price(intent.symbol)
         try:
-            px = float(price) if price is not None else 0.0
-        except (TypeError, ValueError):
-            px = 0.0
-        if px <= 0:
-            results.append(
-                ConsumeResult(
-                    intent_id=intent.intent_id,
-                    action="skipped_no_price",
-                    symbol=intent.symbol,
-                    reason="no_reference_price",
-                )
-            )
-            continue
-        qty = size_intent_qty(intent, price=px, equity=equity, limits=limits)
-        if qty <= 0:
-            results.append(
-                ConsumeResult(
-                    intent_id=intent.intent_id,
-                    action="skipped_zero_qty",
-                    symbol=intent.symbol,
-                    reason="m8_sizer_zero",
-                )
-            )
-            continue
-
-        stop_px = stop_price_from_intent(intent, px)
-        signal = {
-            "id": f"intent-{intent.intent_id}",
-            "symbol": intent.symbol,
-            "side": intent.side.value,
-            "quantity": qty,
-            "limit_price": px,
-            "order_type": "limit",
-            "stop_loss_price": stop_px,
-            "order_class": "simple",
-            "idempotency_key": f"intent:{intent.intent_id}",
-            "strategy_id": intent.strategy_id,
-            "intent_id": intent.intent_id,
-            "conviction_tier": intent.conviction_tier,
-        }
-        try:
-            order = process_signal(
-                signal,
+            result = _consume_one_intent(
+                store,
+                intent,
+                process_signal=process_signal,
+                get_price=get_price,
                 account_summary=account_summary,
-                risk_extras=risk_extras or {},
+                when=when,
+                limits=limits,
+                equity=equity,
+                risk_extras=risk_extras,
             )
-        except TypeError:
-            order = process_signal(signal)
+            results.append(result)
         except Exception as exc:
-            logger.warning("H1 consume process_signal failed for %s: %s", intent.intent_id, exc)
+            logger.error(
+                "H1 consume failed for intent_id=%s symbol=%s: %s",
+                intent.intent_id,
+                intent.symbol,
+                exc,
+                exc_info=True,
+            )
             results.append(
                 ConsumeResult(
                     intent_id=intent.intent_id,
                     action="skipped_process_error",
                     symbol=intent.symbol,
-                    qty=qty,
                     reason=str(exc),
                 )
             )
-            continue
-
-        store.set_status(intent.intent_id, IntentStatus.CONSUMED)
-        order_id = None
-        if order is not None:
-            order_id = str(getattr(order, "id", None) or (order.get("id") if isinstance(order, dict) else "") or "") or None
-        results.append(
-            ConsumeResult(
-                intent_id=intent.intent_id,
-                action="consumed",
-                symbol=intent.symbol,
-                qty=qty,
-                order_id=order_id,
-                extra={"idempotency_key": signal["idempotency_key"]},
-            )
-        )
     return results
+
+
+def _consume_one_intent(
+    store: JSONIntentStore,
+    intent: Intent,
+    *,
+    process_signal: ProcessSignal,
+    get_price: GetPrice,
+    account_summary: Any,
+    when: datetime,
+    limits: RiskLimits,
+    equity: float,
+    risk_extras: Optional[Dict[str, Any]],
+) -> ConsumeResult:
+    if intent.veto_codes:
+        store.set_status(intent.intent_id, IntentStatus.CANCELLED)
+        return ConsumeResult(
+            intent_id=intent.intent_id,
+            action="cancelled",
+            symbol=intent.symbol,
+            reason="veto_codes",
+        )
+    if not intent.is_consumable(when):
+        return ConsumeResult(
+            intent_id=intent.intent_id,
+            action="skipped_inactive",
+            symbol=intent.symbol,
+        )
+    price = get_price(intent.symbol)
+    try:
+        px = float(price) if price is not None else 0.0
+    except (TypeError, ValueError):
+        px = 0.0
+    if px <= 0:
+        return ConsumeResult(
+            intent_id=intent.intent_id,
+            action="skipped_no_price",
+            symbol=intent.symbol,
+            reason="no_reference_price",
+        )
+    qty = size_intent_qty(intent, price=px, equity=equity, limits=limits)
+    if qty <= 0:
+        return ConsumeResult(
+            intent_id=intent.intent_id,
+            action="skipped_zero_qty",
+            symbol=intent.symbol,
+            reason="m8_sizer_zero",
+        )
+
+    stop_px = stop_price_from_intent(intent, px)
+    signal = {
+        "id": f"intent-{intent.intent_id}",
+        "symbol": intent.symbol,
+        "side": intent.side.value,
+        "quantity": qty,
+        "limit_price": px,
+        "order_type": "limit",
+        "stop_loss_price": stop_px,
+        "order_class": "simple",
+        "idempotency_key": f"intent:{intent.intent_id}",
+        "strategy_id": intent.strategy_id,
+        "intent_id": intent.intent_id,
+        "conviction_tier": intent.conviction_tier,
+    }
+    try:
+        order = process_signal(
+            signal,
+            account_summary=account_summary,
+            risk_extras=risk_extras or {},
+        )
+    except TypeError:
+        order = process_signal(signal)
+
+    store.set_status(intent.intent_id, IntentStatus.CONSUMED)
+    order_id = None
+    if order is not None:
+        order_id = str(
+            _order_field(order, "id") or _order_field(order, "order_id") or ""
+        ) or None
+    action = consume_action_for_order(order)
+    return ConsumeResult(
+        intent_id=intent.intent_id,
+        action=action,
+        symbol=intent.symbol,
+        qty=qty,
+        order_id=order_id,
+        reason="risk_rejected" if action == "consumed_risk_rejected" else None,
+        extra={"idempotency_key": signal["idempotency_key"]},
+    )

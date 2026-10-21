@@ -91,9 +91,9 @@ class SignalProcessor:
             draft_order.status = OrderStatus.REJECTED
             draft_order.error_message = f"Risk Gate Rejected: {risk_decision.reason}"
             self.order_manager.store.save_order(draft_order)
+            audit_id = None
             try:
                 from backend.trading.safety import audit
-                from backend.utils.provenance.journal_store import record_from_order
 
                 audit_id = audit.log_risk_decision(
                     symbol,
@@ -102,14 +102,9 @@ class SignalProcessor:
                     False,
                     draft_order.error_message,
                 )
-                record_from_order(
-                    draft_order,
-                    audit_id=audit_id,
-                    strategy_id=signal.get("strategy_id"),
-                    intent_id=signal.get("intent_id"),
-                )
             except Exception:
-                logger.exception("Failed to persist risk-reject journal/audit for %s", symbol)
+                logger.exception("Failed to persist risk-reject audit for %s", symbol)
+            self._record_journal(draft_order, signal, audit_id=audit_id)
             return draft_order
 
         draft_order.status = OrderStatus.RISK_APPROVED
@@ -119,11 +114,31 @@ class SignalProcessor:
                 draft_order.status = OrderStatus.REJECTED
                 draft_order.error_message = "Shadow mode requested but ShadowTradingEngine is not configured"
                 self.order_manager.store.save_order(draft_order)
+                self._record_journal(draft_order, signal)
                 return draft_order
             logger.info("Signal Risk-Approved. Forwarding to ShadowTradingEngine.")
             bars = next_bars if next_bars is not None else None
-            return self.shadow_engine.simulate_submission(draft_order, next_bars=bars)
+            result = self.shadow_engine.simulate_submission(draft_order, next_bars=bars)
+            self._record_journal(result, signal)
+            return result
 
         logger.info("Signal Risk-Approved. Forwarding to Order Manager.")
         # Keep RISK_APPROVED from the evaluate above. OrderManager must not invent it.
-        return self.order_manager.submit_new_order(draft_order)
+        result = self.order_manager.submit_new_order(draft_order)
+        self._record_journal(result, signal)
+        return result
+
+    @staticmethod
+    def _record_journal(order: Order, signal: Dict[str, Any], *, audit_id: Optional[str] = None) -> None:
+        """Persist TradeLogEntry with intent_id on both reject and allow/submit."""
+        try:
+            from backend.utils.provenance.journal_store import record_from_order
+
+            record_from_order(
+                order,
+                audit_id=audit_id,
+                strategy_id=signal.get("strategy_id"),
+                intent_id=signal.get("intent_id"),
+            )
+        except Exception:
+            logger.exception("Failed to persist journal for %s", getattr(order, "symbol", "?"))

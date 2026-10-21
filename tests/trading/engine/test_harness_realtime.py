@@ -131,6 +131,93 @@ def test_zero_equity_does_not_hand_to_m9(tmp_path):
     assert store.get("eq").status is IntentStatus.ACTIVE
 
 
+def test_risk_reject_stays_consumed_but_action_is_not_happy(tmp_path):
+    from backend.trading.models import OrderStatus
+
+    store = _store(tmp_path, _buy(intent_id="rej"))
+
+    def process_signal(signal, **kwargs):
+        return SimpleNamespace(
+            id="ord-rej",
+            status=OrderStatus.REJECTED,
+            error_message="Risk Gate Rejected: Order notional exceeds limit.",
+        )
+
+    results = consume_active_intents(
+        store,
+        process_signal=process_signal,
+        get_price=lambda _s: 150.0,
+        account_summary=SimpleNamespace(portfolio_value=40_000),
+        now=NOW,
+        limits=RiskLimits(),
+    )
+    assert store.get("rej").status is IntentStatus.CONSUMED
+    assert results[0].action == "consumed_risk_rejected"
+    assert results[0].reason == "risk_rejected"
+    assert results[0].order_id == "ord-rej"
+
+
+def test_one_intent_exception_does_not_block_others(tmp_path, caplog):
+    import logging
+
+    store = _store(
+        tmp_path,
+        _buy(intent_id="boom", symbol="FAIL"),
+        _buy(intent_id="ok", symbol="AAPL"),
+    )
+
+    def get_price(symbol):
+        if symbol == "FAIL":
+            raise RuntimeError("quote down")
+        return 150.0
+
+    captured = []
+
+    def process_signal(signal, **kwargs):
+        captured.append(signal["intent_id"])
+        return SimpleNamespace(id="ord-ok")
+
+    with caplog.at_level(logging.ERROR):
+        results = consume_active_intents(
+            store,
+            process_signal=process_signal,
+            get_price=get_price,
+            account_summary=SimpleNamespace(portfolio_value=40_000),
+            now=NOW,
+            limits=RiskLimits(),
+        )
+    by_id = {row.intent_id: row for row in results}
+    assert by_id["boom"].action == "skipped_process_error"
+    assert store.get("boom").status is IntentStatus.ACTIVE
+    assert "ok" in captured
+    assert store.get("ok").status is IntentStatus.CONSUMED
+    assert any("intent_id=boom" in rec.message for rec in caplog.records)
+
+
+def test_worker_consume_loop_logs_error_not_debug(caplog):
+    import logging
+    from unittest.mock import MagicMock
+
+    from backend.trading.engine.worker import TradingWorker
+
+    worker = TradingWorker.__new__(TradingWorker)
+    worker.is_halted = False
+    worker.intent_store = MagicMock()
+    worker.intent_store.list.side_effect = RuntimeError("store down")
+    worker.signal_processor = MagicMock()
+    worker.risk_engine = MagicMock()
+    worker.risk_engine.limits = None
+
+    with caplog.at_level(logging.ERROR, logger="backend.trading.engine.worker"):
+        TradingWorker._consume_intents(worker, SimpleNamespace())
+    assert any("H1 intent consume loop failed" in rec.message for rec in caplog.records)
+    src = Path(__file__).resolve().parents[3] / "backend/trading/engine/worker.py"
+    text = src.read_text(encoding="utf-8")
+    consume_src = text.split("def _consume_intents")[1].split("def _is_market_hours")[0]
+    assert "logger.debug(" not in consume_src
+    assert "logger.error(" in consume_src
+
+
 def test_consumable_intent_sized_by_m8_then_consumed(tmp_path):
     store = _store(tmp_path, _buy(intent_id="go", conviction_tier="high"))
     captured = []

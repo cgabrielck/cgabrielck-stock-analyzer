@@ -62,6 +62,21 @@ class TestSignalProcessor(unittest.TestCase):
         self.assertEqual(kwargs.get("audit_id"), "aud-mock")
         self.assertEqual(kwargs.get("strategy_id"), "stable")
 
+    def test_process_signal_risk_rejected_records_intent_id(self):
+        self.mock_risk_engine.evaluate_order.return_value = RiskDecision(
+            approved=False, reason="Too large"
+        )
+        self.processor.process_signal({
+            "symbol": "AAPL",
+            "side": "buy",
+            "quantity": 10,
+            "limit_price": 150.0,
+            "intent_id": "int-rej",
+            "strategy_id": "stable",
+        })
+        kwargs = self.journal_mock.call_args.kwargs
+        self.assertEqual(kwargs.get("intent_id"), "int-rej")
+
     def test_process_signal_risk_approved(self):
         # Setup Risk to approve
         self.mock_risk_engine.evaluate_order.return_value = RiskDecision(approved=True)
@@ -85,6 +100,29 @@ class TestSignalProcessor(unittest.TestCase):
         self.mock_order_manager.submit_new_order.assert_called_once()
         passed = self.mock_order_manager.submit_new_order.call_args[0][0]
         self.assertEqual(passed.status, OrderStatus.RISK_APPROVED)
+
+    def test_process_signal_risk_approved_records_intent_id(self):
+        self.mock_risk_engine.evaluate_order.return_value = RiskDecision(approved=True)
+        submitted = MagicMock()
+        submitted.status = OrderStatus.SUBMITTED
+        submitted.symbol = "MSFT"
+        self.mock_order_manager.submit_new_order.return_value = submitted
+
+        result = self.processor.process_signal({
+            "symbol": "MSFT",
+            "side": "sell",
+            "quantity": 10,
+            "limit_price": 300.0,
+            "idempotency_key": "sig_ok",
+            "intent_id": "int-ok",
+            "strategy_id": "stable",
+        })
+        self.assertEqual(result.status, OrderStatus.SUBMITTED)
+        self.journal_mock.assert_called()
+        args, kwargs = self.journal_mock.call_args
+        self.assertIs(args[0], submitted)
+        self.assertEqual(kwargs.get("intent_id"), "int-ok")
+        self.assertEqual(kwargs.get("strategy_id"), "stable")
 
     def test_signal_processor_does_not_import_backend_api(self):
         from pathlib import Path

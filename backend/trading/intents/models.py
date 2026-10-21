@@ -85,6 +85,8 @@ class IntentSide(str, Enum):
 class IntentStatus(str, Enum):
     ACTIVE = "active"
     EXPIRED = "expired"
+    # Handed to H1→M8 process_signal. Not a fill. Risk rejects stay consumed
+    # (do not retry); journal status shows risk_rejected with intent_id.
     CONSUMED = "consumed"
     CANCELLED = "cancelled"
 

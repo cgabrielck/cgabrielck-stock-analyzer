@@ -606,6 +606,11 @@ def _enrich_entry(base: Dict[str, Any], incoming: Dict[str, Any]) -> None:
     incoming_ref = (incoming.get("links") or {}).get("audit_ref") or ""
     if incoming_ref and not (base.get("links") or {}).get("audit_ref"):
         base.setdefault("links", {})["audit_ref"] = incoming_ref
+    if incoming.get("intent_id") and not base.get("intent_id"):
+        base["intent_id"] = incoming["intent_id"]
+    incoming_intent = (incoming.get("links") or {}).get("intent_ref") or ""
+    if incoming_intent and not (base.get("links") or {}).get("intent_ref"):
+        base.setdefault("links", {})["intent_ref"] = incoming_intent
     codes = list(base.get("reason_codes") or [])
     for code in incoming.get("reason_codes") or []:
         if code not in codes:

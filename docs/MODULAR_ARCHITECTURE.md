@@ -613,7 +613,7 @@ flowchart LR
 | `conviction_tier` | 是 | 只可選 sizer **已經允許**嘅檔位（ADR-003 D1） |
 | `expiry` | 是 | 過期後 H1 **唔消費** |
 | `as_of` | 是 | H3 寫入時研究／行情時戳 |
-| `status` | 是 | `active` 先畀 H1 消費 |
+| `status` | 是 | `active` 先畀 H1 消費。`consumed` = H1 已交給 M8／process_signal（**唔係**成交）。M8 拒絕仍係 `consumed`（唔重試）；Desk journal 用 `risk_rejected` + `intent_id` 區分。`cancelled` = 主動取消／veto。唔另加 L2 OrderStatus。 |
 
 **Intent v0 禁止嘅 L2 欄位：** `quantity`／`qty`／`shares`／`notional`／raw size、`limit_price`、`order_type`、`order_class`、`broker_order_id`、`idempotency_key`、`filled_*`、`slippage_pct`、`commission`、`take_profit_price`（券商腿）、mandate／kill／live 旗標、`OrderStatus`（`draft`／`risk_approved`／`submitted`／`filled`…）。
 
@@ -708,3 +708,4 @@ flowchart LR
 - **2026-10-21 (docs sync):** 頂欄綁定 AUDIT 計劃（Confirmed）；§5.6 Intent v0；M7 註明 `lab/advisory_debate` ≠ 產品 M7／禁止 OrderManager；IntentStore ≠ L2 `OrderStore`。
 - **2026-10-21 (P0 order):** Confirmed — journal／provenance first; IntentStore (H1/H3) later. See audit plan item 4.
 - **2026-10-21 (IntentStore):** `intent.v0` JSON IntentStore + H3 `upsert_active_intent` + thin H1 `harness_realtime` consume hook. Full H1/H2 worker split still TODO. Not live.
+- **2026-10-21 (IntentStore CR):** `consumed` = handed to M8, not a fill; risk rejects stay `consumed` and show as journal `risk_rejected` + `intent_id`. No new Intent status.
