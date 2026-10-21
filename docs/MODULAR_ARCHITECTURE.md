@@ -647,6 +647,8 @@ flowchart LR
 | **P2** | 有界智能＋對照實驗＋治理提案 | M7 veto／conviction／digest、M6 對接、M9 shadow 對照、M12 VPS、**Proposal UI（M11）** | 閉合 veto＋counterfactual；E 對照；H1／H3 拆分雛形；**至少一條 Proposal→Approve→Merge／Rollback 演練** |
 | **P3** | 真倉路徑（gated） | M9 live adapter、M12 監控、M1 權限、M13 晉升檢查 | Runbook／seal／filled-only／人簽／小倉；AI 層僅在 D2 通過後啟用 |
 
+**Confirmed P0 order (2026-10-21 / ADR-003 audit plan):** user-visible journal／provenance first; IntentStore (H1/H3 split) later.
+
 **支柱對照：** VPS→M12；Market data API→M2；App→M11+M4+M5+M10；Code Review→M13。
 
 ---
@@ -704,3 +706,4 @@ flowchart LR
 ### Changelog
 - **2026-10-21:** 新增 §4.4 雙時鐘 Harness、§4.5 Proposal→Approve→Merge 治理、§5.5 `HarnessProposal`；對齊 ADR-003 Addendum A。
 - **2026-10-21 (docs sync):** 頂欄綁定 AUDIT 計劃（Confirmed）；§5.6 Intent v0；M7 註明 `lab/advisory_debate` ≠ 產品 M7／禁止 OrderManager；IntentStore ≠ L2 `OrderStore`。
+- **2026-10-21 (P0 order):** Confirmed — journal／provenance first; IntentStore (H1/H3) later. See audit plan item 4.
