@@ -21,6 +21,34 @@ class TestOrderManager(unittest.TestCase):
             idempotency_key=idem_key
         )
 
+    def test_submit_draft_does_not_stamp_risk_approved(self):
+        """OM must not invent RISK_APPROVED; only the caller that evaluated may set it."""
+        draft_order = self._create_draft_order()
+
+        def _submit(order):
+            self.assertEqual(order.status, OrderStatus.DRAFT)
+            order.status = OrderStatus.SUBMITTED
+            order.id = "broker_id_draft"
+            return order
+
+        self.mock_broker.submit_order.side_effect = _submit
+        result = self.manager.submit_new_order(draft_order)
+        self.assertEqual(result.status, OrderStatus.SUBMITTED)
+
+    def test_submit_keeps_caller_risk_approved(self):
+        order = self._create_draft_order()
+        order.status = OrderStatus.RISK_APPROVED
+
+        def _submit(submitted):
+            self.assertEqual(submitted.status, OrderStatus.RISK_APPROVED)
+            submitted.status = OrderStatus.SUBMITTED
+            submitted.id = "broker_id_risk"
+            return submitted
+
+        self.mock_broker.submit_order.side_effect = _submit
+        result = self.manager.submit_new_order(order)
+        self.assertEqual(result.status, OrderStatus.SUBMITTED)
+
     def test_submit_new_order_success(self):
         draft_order = self._create_draft_order()
         

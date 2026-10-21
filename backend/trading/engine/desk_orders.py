@@ -22,7 +22,7 @@ import logging
 import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Dict, Optional, Tuple
 
 from backend.trading.broker import BrokerAdapter
 from backend.trading.engine.order_manager import OrderManager, OrderStore
@@ -54,11 +54,12 @@ class DeskPlaceResult:
     order: Order
     blocked: bool
     http_status: int = 200
-    detail: Optional[str] = None
+    detail: Any = None
     gate: Optional[str] = None
     mandate_status: Optional[str] = None
     mandate_path: Optional[str] = None
     audit_id: Optional[str] = None
+    journaled: bool = False
 
 
 def default_quote_price(symbol: str) -> Optional[float]:
@@ -164,21 +165,69 @@ def _side_value(order: Order) -> str:
     return side.lower()
 
 
+def _journal_order(order: Order, *, audit_id: Optional[str]) -> Tuple[bool, Optional[str]]:
+    """Write a TradeLogEntry. None or raise = not journaled (never swallow)."""
+    try:
+        entry = record_from_order(order, audit_id=audit_id, strategy_id=DESK_STRATEGY_ID)
+    except Exception as exc:
+        logger.exception("Desk journal record failed for %s", order.symbol)
+        return False, f"journal: {exc}"
+    if not entry:
+        return False, "journal: record_from_order returned no entry"
+    return True, None
+
+
 def _persist_trace(
     order: Order,
     store: Optional[OrderStore],
     *,
     audit_id: Optional[str],
-) -> None:
+) -> Tuple[bool, Optional[str]]:
+    """Persist reject/accept trace. Failures are returned, not swallowed."""
+    errors = []
     if store is not None:
         try:
             store.save_order(order)
-        except Exception:
+        except Exception as exc:
             logger.exception("Desk order-store save failed for %s", order.symbol)
-    try:
-        record_from_order(order, audit_id=audit_id, strategy_id=DESK_STRATEGY_ID)
-    except Exception:
-        logger.exception("Desk journal record failed for %s", order.symbol)
+            errors.append(f"order_store: {exc}")
+    journaled, journal_err = _journal_order(order, audit_id=audit_id)
+    if not journaled and journal_err:
+        errors.append(journal_err)
+    if errors:
+        return False, "; ".join(errors)
+    return True, None
+
+
+def _reject_not_persisted_detail(reason: str, persist_err: str, gate: str) -> Dict[str, Any]:
+    return {
+        "error": "reject_not_journaled",
+        "message": (
+            f"Order was not submitted ({reason}). "
+            f"Reject was not persisted: {persist_err}. "
+            "No durable audit is claimed."
+        ),
+        "journaled": False,
+        "broker_submitted": False,
+        "gate": gate,
+        "reason": reason,
+    }
+
+
+def _journal_failed_after_broker_detail(order: Order, persist_err: str) -> Dict[str, Any]:
+    order_id = getattr(order, "id", None)
+    return {
+        "error": "journal_write_failed",
+        "message": (
+            f"Order may exist at the broker but was not journaled"
+            f"{f' (id={order_id})' if order_id else ''}. "
+            f"{persist_err}. Desk does not claim a durable audit trail."
+        ),
+        "journaled": False,
+        "broker_submitted": True,
+        "order_id": order_id,
+        "symbol": getattr(order, "symbol", None),
+    }
 
 
 def _block(
@@ -195,7 +244,19 @@ def _block(
     order.status = OrderStatus.REJECTED
     order.error_message = detail
     order.failed_at = datetime.now(timezone.utc)
-    _persist_trace(order, store, audit_id=audit_id)
+    persisted, persist_err = _persist_trace(order, store, audit_id=audit_id)
+    if not persisted:
+        return DeskPlaceResult(
+            order=order,
+            blocked=True,
+            http_status=500,
+            detail=_reject_not_persisted_detail(detail, persist_err or "unknown persist error", gate),
+            gate=gate,
+            mandate_status=mandate_status,
+            mandate_path=mandate_path,
+            audit_id=audit_id,
+            journaled=False,
+        )
     return DeskPlaceResult(
         order=order,
         blocked=True,
@@ -205,6 +266,7 @@ def _block(
         mandate_status=mandate_status,
         mandate_path=mandate_path,
         audit_id=audit_id,
+        journaled=True,
     )
 
 
@@ -367,12 +429,10 @@ def place_desk_order(
         actor=DESK_ACTOR,
     )
 
-    # 4. OrderManager + journal (honest provenance sink used by the worker).
-    order.status = OrderStatus.DRAFT
+    # 4. OrderManager + journal. Stamp RISK_APPROVED only after real evaluate.
+    order.status = OrderStatus.RISK_APPROVED
     manager = OrderManager(broker=broker, store=store)
     submitted = manager.submit_new_order(order)
-    if side == "buy":
-        gate.record_order()
     submit_audit = audit.log_order_submission(
         submitted.symbol,
         side,
@@ -382,16 +442,41 @@ def place_desk_order(
         submitted.status.value if hasattr(submitted.status, "value") else str(submitted.status),
         actor=DESK_ACTOR,
     )
-    try:
-        record_from_order(
-            submitted,
-            audit_id=submit_audit or risk_audit,
-            strategy_id=DESK_STRATEGY_ID,
-        )
-    except Exception:
-        logger.exception("Desk journal record failed for submitted %s", submitted.symbol)
-
+    journaled, journal_err = _journal_order(
+        submitted, audit_id=submit_audit or risk_audit
+    )
     blocked_broker = str(getattr(submitted.status, "value", submitted.status)).lower() == "rejected"
+    if not journaled:
+        if blocked_broker:
+            detail = _reject_not_persisted_detail(
+                submitted.error_message or "Order rejected",
+                journal_err or "journal write failed",
+                "broker",
+            )
+            return DeskPlaceResult(
+                order=submitted,
+                blocked=True,
+                http_status=500,
+                detail=detail,
+                gate="broker",
+                mandate_status=snapshot.status,
+                mandate_path=snapshot.path,
+                audit_id=submit_audit or risk_audit,
+                journaled=False,
+            )
+        return DeskPlaceResult(
+            order=submitted,
+            blocked=False,
+            http_status=502,
+            detail=_journal_failed_after_broker_detail(
+                submitted, journal_err or "journal write failed"
+            ),
+            gate="journal",
+            mandate_status=snapshot.status,
+            mandate_path=snapshot.path,
+            audit_id=submit_audit or risk_audit,
+            journaled=False,
+        )
     if blocked_broker:
         return DeskPlaceResult(
             order=submitted,
@@ -402,7 +487,11 @@ def place_desk_order(
             mandate_status=snapshot.status,
             mandate_path=snapshot.path,
             audit_id=submit_audit or risk_audit,
+            journaled=True,
         )
+    # Count daily mandate only after broker accept + durable journal (not on 502 retry).
+    if side == "buy":
+        gate.record_order()
     return DeskPlaceResult(
         order=submitted,
         blocked=False,
@@ -411,4 +500,5 @@ def place_desk_order(
         mandate_status=snapshot.status,
         mandate_path=snapshot.path,
         audit_id=submit_audit or risk_audit,
+        journaled=True,
     )

@@ -287,7 +287,7 @@ def submit_order(body: OrderIn, _auth: None = Depends(_require_paper_operator)) 
         idempotency_key=f"cgab-{uuid.uuid4()}",
     )
     result = place_desk_order(order, broker=_broker, store=_store)
-    if result.blocked:
+    if result.http_status != 200:
         raise HTTPException(status_code=result.http_status, detail=result.detail)
     return result.order.model_dump(mode="json")
 

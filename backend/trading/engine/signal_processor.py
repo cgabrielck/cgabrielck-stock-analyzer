@@ -124,6 +124,5 @@ class SignalProcessor:
             return self.shadow_engine.simulate_submission(draft_order, next_bars=bars)
 
         logger.info("Signal Risk-Approved. Forwarding to Order Manager.")
-        # OrderManager.submit_new_order currently requires DRAFT and re-marks RISK_APPROVED.
-        draft_order.status = OrderStatus.DRAFT
+        # Keep RISK_APPROVED from the evaluate above. OrderManager must not invent it.
         return self.order_manager.submit_new_order(draft_order)

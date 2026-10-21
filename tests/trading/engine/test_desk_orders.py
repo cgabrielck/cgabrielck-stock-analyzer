@@ -131,6 +131,14 @@ def test_risk_reject_does_not_call_broker(tmp_path):
 def test_happy_path_submits_via_order_manager(tmp_path):
     path = _mandate_file(tmp_path, TIGHT)
     broker = _broker()
+    seen = {}
+    inner = broker.submit_order.side_effect
+
+    def _submit(order):
+        seen["status"] = order.status
+        return inner(order)
+
+    broker.submit_order.side_effect = _submit
     store = InMemoryOrderStore()
     result = place_desk_order(
         _order(),
@@ -140,11 +148,75 @@ def test_happy_path_submits_via_order_manager(tmp_path):
     )
     assert result.blocked is False
     assert result.http_status == 200
+    assert result.journaled is True
     broker.submit_order.assert_called_once()
+    assert seen["status"] == OrderStatus.RISK_APPROVED
     assert result.order.status == OrderStatus.SUBMITTED
     assert result.mandate_status == "loaded"
     rows = journal_store.load_raw_entries()
     assert any(row.get("strategy_id") == DESK_STRATEGY_ID for row in rows)
+
+
+def test_journal_raise_after_accept_is_not_http_200(tmp_path, monkeypatch):
+    path = _mandate_file(tmp_path, TIGHT)
+    broker = _broker()
+
+    def _boom(*_a, **_k):
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr("backend.trading.engine.desk_orders.record_from_order", _boom)
+    result = place_desk_order(
+        _order(),
+        broker=broker,
+        store=InMemoryOrderStore(),
+        mandate_path=path,
+    )
+    assert result.http_status != 200
+    assert result.http_status == 502
+    assert result.journaled is False
+    assert result.detail["error"] == "journal_write_failed"
+    assert result.detail["broker_submitted"] is True
+    assert "not journaled" in result.detail["message"].lower()
+    broker.submit_order.assert_called_once()
+
+
+def test_journal_none_after_accept_is_not_http_200(tmp_path, monkeypatch):
+    path = _mandate_file(tmp_path, TIGHT)
+    monkeypatch.setattr(
+        "backend.trading.engine.desk_orders.record_from_order", lambda *_a, **_k: None
+    )
+    result = place_desk_order(
+        _order(),
+        broker=_broker(),
+        store=InMemoryOrderStore(),
+        mandate_path=path,
+    )
+    assert result.http_status == 502
+    assert result.journaled is False
+
+
+def test_reject_journal_failure_is_visible(tmp_path, monkeypatch):
+    path = _mandate_file(tmp_path, TIGHT)
+    broker = _broker()
+
+    def _boom(*_a, **_k):
+        raise RuntimeError("journal down")
+
+    monkeypatch.setattr("backend.trading.engine.desk_orders.record_from_order", _boom)
+    result = place_desk_order(
+        _order(symbol="GME", id="gme-j", idempotency_key="gme-j"),
+        broker=broker,
+        store=InMemoryOrderStore(),
+        mandate_path=path,
+    )
+    assert result.http_status == 500
+    assert result.http_status != 200
+    assert result.blocked is True
+    assert result.journaled is False
+    assert result.detail["journaled"] is False
+    assert result.detail["broker_submitted"] is False
+    assert "no durable audit" in result.detail["message"].lower()
+    broker.submit_order.assert_not_called()
 
 
 def test_missing_mandate_fail_closed(tmp_path):

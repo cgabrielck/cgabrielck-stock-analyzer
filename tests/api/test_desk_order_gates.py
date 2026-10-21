@@ -150,6 +150,45 @@ def test_api_missing_mandate_fail_closed_and_ops_honest(desk_api, tmp_path, monk
     desk_api["broker"].submit_order.assert_not_called()
 
 
+def test_api_journal_failure_after_accept_is_not_200(desk_api, monkeypatch):
+    def _boom(*_a, **_k):
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr("backend.trading.engine.desk_orders.record_from_order", _boom)
+    client = desk_api["client"]
+    res = client.post(
+        "/api/orders",
+        json={"symbol": "AAPL", "side": "buy", "quantity": 1, "limit_price": 150, "order_type": "limit"},
+    )
+    assert res.status_code != 200
+    assert res.status_code == 502
+    detail = res.json()["detail"]
+    assert isinstance(detail, dict)
+    assert detail["journaled"] is False
+    assert detail["broker_submitted"] is True
+    assert "not journaled" in detail["message"].lower()
+    desk_api["broker"].submit_order.assert_called_once()
+
+
+def test_api_reject_journal_failure_is_not_success(desk_api, monkeypatch):
+    def _boom(*_a, **_k):
+        raise RuntimeError("journal down")
+
+    monkeypatch.setattr("backend.trading.engine.desk_orders.record_from_order", _boom)
+    client = desk_api["client"]
+    res = client.post(
+        "/api/orders",
+        json={"symbol": "GME", "side": "buy", "quantity": 1, "limit_price": 20},
+    )
+    assert res.status_code != 200
+    assert res.status_code == 500
+    detail = res.json()["detail"]
+    assert detail["journaled"] is False
+    assert detail["broker_submitted"] is False
+    assert "durable audit" in detail["message"].lower()
+    desk_api["broker"].submit_order.assert_not_called()
+
+
 def test_api_kill_buy_409(desk_api):
     kill_switch.engage("api test")
     client = desk_api["client"]
