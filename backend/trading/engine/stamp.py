@@ -29,8 +29,10 @@ What must NOT be stamped ``RISK_APPROVED``
 - Intent / M8 — remains OPEN; this module does not write IntentStore.
   R1-PATH Desk write-point is the trade journal (``place_desk_order`` →
   ``record_from_order``), not a ``RISK_APPROVED`` stamp.
-- Worker flatten-through-kill — remains OPEN; Desk POST kill-on-sell
-  is ``place_desk_order``, not this module.
+- Worker flatten-through-kill / exit-while-halted: worker SELL exits
+  still require Mandate + Risk evaluate before this stamp; kill does
+  not skip those evaluates and does not block the worker sell. Desk
+  POST sell remains 409 via ``place_desk_order`` (D-sell-kill).
 
 Failure is ``REJECTED`` (or never submitted). Never invent ``FILLED``,
 verified, or live from a skipped evaluate.
