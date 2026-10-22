@@ -50,6 +50,8 @@ Keep ADR-003; revise docs before build. Risk if skip: Python rule kernel + docs 
 
 **Draft (not a Confirmed remediation item):** [`docs/ACCOUNT_MANAGEMENT_DESIGN.md`](ACCOUNT_MANAGEMENT_DESIGN.md) — plan-15 管戶設計頁 path；**not** Accepted；does not expand 2026-10-21 Confirmed scope. Issue #10 stays OPEN.
 
+**Draft (not a Confirmed remediation item):** [`docs/LAB_PRODUCT_M7_BINDING.md`](LAB_PRODUCT_M7_BINDING.md) — plan-16 lab≠product M7 binding path；**not** Accepted；does not expand 2026-10-21 Confirmed scope；**not** Confirmed item 6. Issue #10 stays OPEN.
+
 ---
 
 ## Explicit non-goals this cycle

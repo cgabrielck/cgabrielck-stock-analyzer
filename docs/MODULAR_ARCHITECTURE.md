@@ -698,6 +698,7 @@ flowchart LR
 - [`AUDIT_REMEDIATION_PLAN_2026-10-21.md`](AUDIT_REMEDIATION_PLAN_2026-10-21.md) — **Confirmed** 2026-10-21  
 - [`BOUNDED_INTELLIGENCE_ACCEPTANCE.md`](BOUNDED_INTELLIGENCE_ACCEPTANCE.md) — **Draft** AUDIT item 5 / plan-14（pending Owner/PM; not Accepted）  
 - [`ACCOUNT_MANAGEMENT_DESIGN.md`](ACCOUNT_MANAGEMENT_DESIGN.md) — **Draft** plan-15 管戶設計頁（Desk vs worker；pending Owner/PM; **not** Accepted; does not expand 2026-10-21 Confirmed scope）。Issue #10 stays OPEN.  
+- [`LAB_PRODUCT_M7_BINDING.md`](LAB_PRODUCT_M7_BINDING.md) — **Draft** plan-16 lab≠product M7 binding（lab advisory debate 禁止接到 `OrderManager`；pending Owner/PM; **not** Accepted; Merge ≠ Accepted）。Issue #10 stays OPEN.  
 - [`PAPER_VALIDATION_RUNBOOK.md`](PAPER_VALIDATION_RUNBOOK.md) — **frozen**；紙倉／晉升操作參考  
 - [`AUTO_TRADING_ROADMAP.md`](AUTO_TRADING_ROADMAP.md) — **frozen**；衝突以 ADR-003 為準  
 - [`PAID_DATA_PIT_PLAN.md`](PAID_DATA_PIT_PLAN.md) — 付費數據  
@@ -715,3 +716,4 @@ flowchart LR
 - **2026-10-21 (IntentStore CR):** `consumed` = handed to M8, not a fill; risk rejects stay `consumed` and show as journal `risk_rejected` + `intent_id`. No new Intent status.
 - **2026-10-23 (R1-PATH):** Desk money path write-point = journal `record_from_order` (`desk_manual` + `intent_id`); not IntentStore / H1 / M8. See §4.4.
 - **2026-10-23 (plan-15):** Related docs 加 Draft [`ACCOUNT_MANAGEMENT_DESIGN.md`](ACCOUNT_MANAGEMENT_DESIGN.md)（管戶範圍）。Issue #10 stays OPEN.
+- **2026-10-23 (plan-16):** Related docs 加 Draft [`LAB_PRODUCT_M7_BINDING.md`](LAB_PRODUCT_M7_BINDING.md)（lab≠product M7）。Issue #10 stays OPEN.
