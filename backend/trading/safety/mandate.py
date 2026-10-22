@@ -192,11 +192,31 @@ class DailyOrderCountError(Exception):
     """Daily-count file unreadable. Evaluate fail-closes when a cap is set."""
 
 
+def _parse_stored_date(value: object) -> date:
+    """Accept only a calendar ISO date (YYYY-MM-DD). Anything else is corrupt."""
+    if not isinstance(value, str):
+        raise DailyOrderCountError("daily order count date is not a string")
+    try:
+        parsed = date.fromisoformat(value)
+    except ValueError as exc:
+        raise DailyOrderCountError(
+            f"daily order count date is not ISO ({value!r})"
+        ) from exc
+    if value != parsed.isoformat():
+        raise DailyOrderCountError(
+            f"daily order count date is not ISO ({value!r})"
+        )
+    return parsed
+
+
 class DailyOrderCounter:
     """Process-shared UTC-day order count (flock + atomic replace).
 
     Desk and worker each construct a MandateGate; this file is the shared
     source of truth so a restart cannot reset the day's count.
+
+    ``try_reserve(limit)`` is the atomic check-and-increment used before a
+    broker submit so concurrent evaluate-then-record cannot exceed the cap.
     """
 
     def __init__(self, path: Optional[Path] = None):
@@ -208,6 +228,18 @@ class DailyOrderCounter:
         if self._path_override is not None:
             return self._path_override
         return Path(DAILY_ORDERS_FILE)
+
+    def _fail_marker(self) -> Path:
+        return Path(str(self.path) + ".fail")
+
+    def _mark_unusable(self, exc: BaseException) -> None:
+        """Durable fail-closed: next read must not treat the counter as 0."""
+        marker = self._fail_marker()
+        try:
+            marker.parent.mkdir(parents=True, exist_ok=True)
+            marker.write_text(f"{type(exc).__name__}: {exc}", encoding="utf-8")
+        except OSError:
+            logger.error("Could not persist daily-count failure marker: %s", exc)
 
     @contextmanager
     def _exclusive(self) -> Iterator[None]:
@@ -225,6 +257,8 @@ class DailyOrderCounter:
                 os.close(fd)
 
     def _read_unlocked(self, today: date) -> int:
+        if self._fail_marker().exists():
+            raise DailyOrderCountError("daily order counter write previously failed")
         target = self.path
         if not target.exists():
             return 0
@@ -235,9 +269,13 @@ class DailyOrderCounter:
             raise DailyOrderCountError(str(exc)) from exc
         if not isinstance(data, dict):
             raise DailyOrderCountError("daily order count file is not an object")
-        stored_date = data.get("date")
-        if stored_date != today.isoformat():
+        if "date" not in data:
+            raise DailyOrderCountError("daily order count missing date")
+        stored = _parse_stored_date(data.get("date"))
+        if stored != today:
             return 0
+        if "count" not in data:
+            raise DailyOrderCountError("daily order count missing count")
         raw = data.get("count")
         if isinstance(raw, bool) or not isinstance(raw, int):
             raise DailyOrderCountError("daily order count is not an integer")
@@ -256,17 +294,46 @@ class DailyOrderCounter:
             os.fsync(fh.fileno())
         os.replace(tmp, target)
 
+    def _locked_write(self, today: date, mutator) -> int:
+        with self._exclusive():
+            try:
+                result = mutator(self._read_unlocked(today))
+                self._write_unlocked(today, result)
+                return result
+            except DailyOrderCountError:
+                raise
+            except OSError as exc:
+                self._mark_unusable(exc)
+                raise DailyOrderCountError(str(exc)) from exc
+
     def get_today(self) -> int:
         today = _utc_today()
         with self._exclusive():
             return self._read_unlocked(today)
 
     def increment(self) -> int:
+        return self._locked_write(_utc_today(), lambda used: used + 1)
+
+    def try_reserve(self, limit: int) -> tuple[bool, int]:
+        """Under one flock: increment only if used < limit. Returns (ok, used)."""
         today = _utc_today()
         with self._exclusive():
-            count = self._read_unlocked(today) + 1
-            self._write_unlocked(today, count)
-            return count
+            try:
+                used = self._read_unlocked(today)
+                if used >= limit:
+                    return False, used
+                new = used + 1
+                self._write_unlocked(today, new)
+                return True, new
+            except DailyOrderCountError:
+                raise
+            except OSError as exc:
+                self._mark_unusable(exc)
+                raise DailyOrderCountError(str(exc)) from exc
+
+    def release(self) -> int:
+        """Give back a reserved slot (risk/broker reject after reserve)."""
+        return self._locked_write(_utc_today(), lambda used: max(0, used - 1))
 
 
 class MandateGate:
@@ -288,13 +355,55 @@ class MandateGate:
         self._counter = DailyOrderCounter(daily_count_path)
 
     def record_order(self) -> None:
-        """Count an accepted BUY order toward the daily limit (durable)."""
+        """Count an accepted BUY order toward the daily limit (durable).
+
+        Prefer ``try_reserve`` before a broker submit when a cap is set —
+        that path is atomic. When a cap is set this will not increment
+        past it (so evaluate-then-record races cannot write count=cap+1).
+        A write failure poisons the store so the next capped evaluate
+        fail-closes instead of under-counting.
+        """
+        cap = self.mandate.max_daily_orders
         try:
-            self._counter.increment()
+            if cap is not None:
+                self._counter.try_reserve(cap)
+            else:
+                self._counter.increment()
         except DailyOrderCountError as exc:
-            # Order may already be accepted; next evaluate fail-closes if
-            # the file is unreadable. Do not crash Desk/worker after submit.
             logger.error("Failed to persist daily order count: %s", exc)
+
+    def try_reserve(self) -> MandateDecision:
+        """Atomic check-and-increment when ``max_daily_orders`` is set.
+
+        Call this after mandate/risk peek-approve and **before** broker
+        submit so two processes cannot both pass evaluate then both record.
+        No cap → approved without increment (caller may ``record_order``).
+        """
+        cap = self.mandate.max_daily_orders
+        if cap is None:
+            return MandateDecision(approved=True)
+        try:
+            ok, used = self._counter.try_reserve(cap)
+        except DailyOrderCountError as exc:
+            return MandateDecision(
+                approved=False,
+                reason=f"Daily order counter unreadable — fail closed ({exc}).",
+            )
+        if not ok:
+            return MandateDecision(
+                approved=False,
+                reason=(f"Daily order limit reached ({used}/{cap})."),
+            )
+        return MandateDecision(approved=True)
+
+    def release_reservation(self) -> None:
+        """Return a slot if we reserved then did not accept the order."""
+        if self.mandate.max_daily_orders is None:
+            return
+        try:
+            self._counter.release()
+        except DailyOrderCountError as exc:
+            logger.error("Failed to release daily order slot: %s", exc)
 
     @property
     def orders_today(self) -> int:

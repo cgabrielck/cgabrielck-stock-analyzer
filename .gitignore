@@ -27,6 +27,7 @@ backend/data/trading_intents.json.tmp
 backend/data/mandate_daily_orders.json
 backend/data/mandate_daily_orders.json.lock
 backend/data/mandate_daily_orders.json.tmp
+backend/data/mandate_daily_orders.json.fail
 backend/data/audit/
 backend/trading/safety/KILL_SWITCH
 data/portfolio_state.json

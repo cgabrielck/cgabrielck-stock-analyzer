@@ -1,8 +1,14 @@
 """Tests for mandate.py — order authorization and daily limits."""
+import json
+import threading
 from datetime import date
 
 import pytest
-from backend.trading.safety.mandate import MandateGate, TradingMandate
+from backend.trading.safety.mandate import (
+    DailyOrderCounter,
+    MandateGate,
+    TradingMandate,
+)
 from backend.trading.models import Order, OrderSide, OrderType
 
 
@@ -269,3 +275,131 @@ def test_new_utc_day_resets_durable_count(tmp_path, monkeypatch):
     day2 = MandateGate(mandate=mandate, daily_count_path=store)
     assert day2.orders_today == 0
     assert day2.evaluate(make_order(), ref_price=100.0).approved
+
+
+def test_interleaved_evaluate_then_record_cannot_exceed_cap(tmp_path):
+    """R4 fail-case: both paths peek-approve, then only one slot is taken.
+
+    On HEAD 9fe0632, evaluate then record_order on two gates at cap=1
+    left count=2 and reason like Daily order limit reached (2/1).
+    """
+    store = tmp_path / "daily.json"
+    mandate = TradingMandate(max_daily_orders=1)
+    desk = MandateGate(mandate=mandate, daily_count_path=store)
+    worker = MandateGate(mandate=mandate, daily_count_path=store)
+    assert desk.evaluate(make_order(oid="d"), ref_price=100.0).approved
+    assert worker.evaluate(make_order(oid="w"), ref_price=100.0).approved
+    first = desk.try_reserve()
+    second = worker.try_reserve()
+    assert first.approved is True
+    assert second.approved is False
+    assert "daily order limit" in (second.reason or "").lower()
+    assert "(2/1)" not in (second.reason or "")
+    assert desk.orders_today == 1
+    assert worker.orders_today == 1
+    desk.record_order()
+    worker.record_order()
+    assert desk.orders_today == 1
+
+
+def test_concurrent_evaluate_then_reserve_cap_1(tmp_path):
+    store = tmp_path / "daily.json"
+    mandate = TradingMandate(max_daily_orders=1)
+    desk = MandateGate(mandate=mandate, daily_count_path=store)
+    worker = MandateGate(mandate=mandate, daily_count_path=store)
+    barrier = threading.Barrier(2, timeout=5)
+    slots = []
+
+    def run(gate, oid):
+        assert gate.evaluate(make_order(oid=oid), ref_price=100.0).approved
+        barrier.wait()
+        slots.append(gate.try_reserve().approved)
+
+    t1 = threading.Thread(target=run, args=(desk, "d"))
+    t2 = threading.Thread(target=run, args=(worker, "w"))
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
+    assert slots.count(True) == 1
+    assert slots.count(False) == 1
+    assert desk.orders_today == 1
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {},
+        {"count": 5},
+        {"date": "not-a-date", "count": 1},
+        {"date": "2026-13-40", "count": 1},
+        {"date": 20261022, "count": 1},
+    ],
+)
+def test_incomplete_or_bad_date_fail_closed_when_cap_set(tmp_path, payload):
+    """R4 fail-case: {}, missing date, bad date must not be treated as 0."""
+    store = tmp_path / "daily.json"
+    store.write_text(json.dumps(payload), encoding="utf-8")
+    gate = MandateGate(
+        mandate=TradingMandate(max_daily_orders=5),
+        daily_count_path=store,
+    )
+    decision = gate.evaluate(make_order(), ref_price=100.0)
+    assert not decision.approved
+    assert "fail closed" in (decision.reason or "").lower()
+
+
+def test_today_iso_date_missing_count_fail_closed(tmp_path, monkeypatch):
+    from backend.trading.safety import mandate as mandate_mod
+
+    store = tmp_path / "daily.json"
+    store.write_text(json.dumps({"date": "2026-10-22"}), encoding="utf-8")
+    monkeypatch.setattr(mandate_mod, "_utc_today", lambda: date(2026, 10, 22))
+    gate = MandateGate(
+        mandate=TradingMandate(max_daily_orders=5),
+        daily_count_path=store,
+    )
+    decision = gate.evaluate(make_order(), ref_price=100.0)
+    assert not decision.approved
+    assert "fail closed" in (decision.reason or "").lower()
+
+
+def test_prior_day_iso_date_resets_to_zero(tmp_path, monkeypatch):
+    from backend.trading.safety import mandate as mandate_mod
+
+    store = tmp_path / "daily.json"
+    store.write_text(
+        json.dumps({"date": "2026-10-21", "count": 9, "tz": "UTC"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(mandate_mod, "_utc_today", lambda: date(2026, 10, 22))
+    gate = MandateGate(
+        mandate=TradingMandate(max_daily_orders=1),
+        daily_count_path=store,
+    )
+    assert gate.orders_today == 0
+    assert gate.evaluate(make_order(), ref_price=100.0).approved
+
+
+def test_write_failure_after_increment_fail_closes_next_buy(tmp_path, monkeypatch):
+    """R4 fail-case: OSError on count write must not leave a hole under the cap.
+
+    Pre-fix: increment failed, count stayed 0, next evaluate still approved.
+    """
+    store = tmp_path / "daily.json"
+    gate = MandateGate(
+        mandate=TradingMandate(max_daily_orders=5),
+        daily_count_path=store,
+    )
+    gate.record_order()
+    assert gate.orders_today == 1
+
+    def boom(self, today, count):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(DailyOrderCounter, "_write_unlocked", boom)
+    gate.record_order()
+    denied = gate.evaluate(make_order(), ref_price=100.0)
+    assert not denied.approved
+    assert "fail closed" in (denied.reason or "").lower()
+    assert store.with_suffix(store.suffix + ".fail").exists() or (tmp_path / "daily.json.fail").exists()

@@ -578,6 +578,28 @@ def place_desk_order(
             mandate_path=snapshot.path,
         )
 
+    # R4: claim the daily slot under flock *before* broker so concurrent
+    # Desk+worker evaluate-then-record cannot both submit at cap=1.
+    reserved = False
+    if side == "buy" and mode != "shadow" and gate.mandate.max_daily_orders is not None:
+        slot = gate.try_reserve()
+        if not slot.approved:
+            detail = slot.reason or "Daily order limit reached."
+            audit_id = audit.log_mandate_decision(
+                order.symbol, side, False, detail, notional=notional, actor=DESK_ACTOR
+            )
+            return _block(
+                order,
+                store=store,
+                http_status=409,
+                detail=detail,
+                gate="mandate",
+                audit_id=audit_id,
+                mandate_status=snapshot.status,
+                mandate_path=snapshot.path,
+            )
+        reserved = True
+
     # 4. Stamp only after real Mandate + Risk evaluate, then paper or shadow.
     stamp_risk_approved(
         order,
@@ -628,6 +650,8 @@ def place_desk_order(
     blocked_accept = str(getattr(submitted.status, "value", submitted.status)).lower() == "rejected"
     if not journaled:
         if blocked_accept:
+            if reserved:
+                gate.release_reservation()
             detail = _reject_not_persisted_detail(
                 submitted.error_message or "Order rejected",
                 journal_err or "journal write failed",
@@ -668,6 +692,8 @@ def place_desk_order(
             journaled=False,
         )
     if blocked_accept:
+        if reserved:
+            gate.release_reservation()
         return DeskPlaceResult(
             order=submitted,
             blocked=True,
@@ -679,8 +705,8 @@ def place_desk_order(
             audit_id=submit_audit or risk_audit,
             journaled=True,
         )
-    # Count daily mandate only after broker accept + durable journal (not shadow / 502).
-    if side == "buy" and mode != "shadow":
+    # Cap path already reserved before broker. No-cap still persists the count.
+    if side == "buy" and mode != "shadow" and not reserved:
         gate.record_order()
     return DeskPlaceResult(
         order=submitted,
