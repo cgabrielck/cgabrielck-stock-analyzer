@@ -12,24 +12,66 @@ from backend.trading.fill_honesty import honest_order_row, recorded_fill_price
 from backend.trading.risk.gates import positive_price
 
 UNPRICED_FILL_LABEL = "unpriced — not a fill"
+KPI_EMPTY_CUE = "empty paper book — not backtest"
+LOCAL_ORDER_CUE = "local/unverified"
 _JOURNAL_FILL_STATUSES = frozenset({"filled", "partially_filled"})
 _FILL_ITEM_PRICE_KEYS = ("price", "filled_avg_price", "fill_price", "filled_price")
+_DEAD_PROCESS_EVIDENCE = frozenset({"", "none", "pid_dead", "heartbeat_unverified"})
+_OPEN_ORDER_STATUSES = frozenset(
+    {
+        "draft",
+        "risk_approved",
+        "submitted",
+        "accepted",
+        "partially_filled",
+        "acceptance_unknown",
+        "new",
+        "pending_new",
+        "pending_cancel",
+        "pending_replace",
+        "held",
+    }
+)
 
 
-def display_chips(status: Optional[Dict[str, Any]] = None, *, account_loaded: bool = False) -> Dict[str, Any]:
-    """D4: account presence and process evidence are separate chips.
+def worker_process_on(status: Optional[Dict[str, Any]] = None) -> bool:
+    """D4: AUTO / Worker chip ON only with live pid evidence that is not stale.
 
-    Never treat account-loaded or heartbeat_unverified as a green / linked-as-running signal.
+    ``worker_ctl.status`` may still report ``running=True`` for an alive-but-stale
+    pid (process exists, heartbeat expired). The chip must not read as linked/ON.
     """
     status = status or {}
     unverified = bool(
         status.get("unverified") or status.get("process_evidence") == "heartbeat_unverified"
     )
-    running = bool(status.get("running")) and not unverified
+    if unverified or status.get("stale"):
+        return False
+    evidence = str(status.get("process_evidence") or "").strip()
+    if evidence in _DEAD_PROCESS_EVIDENCE:
+        return False
+    alive = bool(status.get("alive")) or evidence == "pid_alive"
+    return bool(status.get("running")) and alive
+
+
+def display_chips(status: Optional[Dict[str, Any]] = None, *, account_loaded: bool = False) -> Dict[str, Any]:
+    """D4: account presence and process evidence are separate chips.
+
+    Never treat account-loaded, stale heartbeat, missing pid, or
+    heartbeat_unverified as a green / linked-as-running signal.
+    """
+    status = status or {}
+    unverified = bool(
+        status.get("unverified") or status.get("process_evidence") == "heartbeat_unverified"
+    )
+    stale = bool(status.get("stale"))
+    on = worker_process_on(status)
     if unverified:
         worker_label = "Worker unverified"
         worker_tone = "warn"
-    elif running:
+    elif stale:
+        worker_label = "Worker stale"
+        worker_tone = "warn"
+    elif on:
         worker_label = "Worker running"
         worker_tone = "on"
     else:
@@ -38,13 +80,44 @@ def display_chips(status: Optional[Dict[str, Any]] = None, *, account_loaded: bo
     return {
         "account_loaded": bool(account_loaded),
         "account_label": "Account loaded" if account_loaded else "Account —",
-        "worker_running": running,
+        "worker_running": on,
         "worker_label": worker_label,
         "worker_tone": worker_tone,
-        "auto_on": running,
+        "auto_on": on,
         "verified": False,
         "live": False,
     }
+
+
+def is_open_order_status(status: Any) -> bool:
+    return str(status or "").strip().lower() in _OPEN_ORDER_STATUSES
+
+
+def order_display_status(row: Optional[Dict[str, Any]]) -> str:
+    """Row status as shown on Desk. Local fallback must not read as a live broker fill."""
+    row = row or {}
+    st = str(row.get("status") or "—") or "—"
+    local = bool(row.get("degraded") or row.get("unverified") or row.get("source") == "local_store")
+    if local:
+        return LOCAL_ORDER_CUE if st in {"", "—"} else f"{st} · {LOCAL_ORDER_CUE}"
+    return st
+
+
+def _stamp_order_row(
+    row: Dict[str, Any],
+    *,
+    source: str,
+    degraded: bool,
+    unverified: bool,
+) -> Dict[str, Any]:
+    stamped = dict(row)
+    stamped["source"] = source
+    stamped["degraded"] = bool(degraded)
+    stamped["unverified"] = bool(unverified)
+    stamped["verified"] = False
+    stamped["live"] = False
+    stamped["display_status"] = order_display_status(stamped)
+    return stamped
 
 
 def orders_book(
@@ -53,16 +126,30 @@ def orders_book(
     source: str,
     degraded: bool,
     unverified: bool,
+    status: str = "all",
 ) -> Dict[str, Any]:
-    """D5: GET /api/orders envelope. Fallback must not look like a clean broker book."""
+    """D5: GET /api/orders envelope. Fallback must not look like a clean broker book.
+
+    ``status=open`` filters **local_store** rows only. A successful broker book
+    is returned as Alpaca sent it (including still-active statuses such as
+    ``done_for_day``).
+    """
     src = str(source or "unknown")
     local = src == "local_store"
     degraded_flag = bool(degraded) or local
     unverified_flag = bool(unverified) or local
     honest_rows = [honest_order_row(row) for row in (rows or [])]
+    # Open filter is local-store only. Broker OPEN already comes from Alpaca;
+    # re-allowlisting would drop still-active statuses such as done_for_day.
+    if local and str(status or "all").strip().lower() == "open":
+        honest_rows = [row for row in honest_rows if is_open_order_status(row.get("status"))]
+    stamped = [
+        _stamp_order_row(row, source=src, degraded=degraded_flag, unverified=unverified_flag)
+        for row in honest_rows
+    ]
     return {
-        "orders": honest_rows,
-        "count": len(honest_rows),
+        "orders": stamped,
+        "count": len(stamped),
         "source": src,
         "degraded": degraded_flag,
         "unverified": unverified_flag,
@@ -71,15 +158,30 @@ def orders_book(
     }
 
 
+def desk_kpi_source_label(*, kpi_source: Optional[str] = None, empty_book: bool = False) -> str:
+    """Desk KPI parenthetical. Empty paper must not read as backtest."""
+    if empty_book or kpi_source in (None, "", "none"):
+        return "empty"
+    src = str(kpi_source)
+    if src in {"paper", "backtest"}:
+        return src
+    return "—"
+
+
 def compose_performance_kpis(
     paper: Optional[Dict[str, Any]],
-    summary: Optional[Dict[str, Any]],
+    summary: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """D6: top-level KPI fields carry an honest source. Never mix paper under a backtest claim."""
-    summary = summary or {}
+    """D6: top-level KPI fields carry an honest source.
+
+    Paper fills drive top-level fields labeled paper. Empty paper book does
+    **not** copy stable backtest numbers into those fields — backtest stays
+    under ``backtest.*`` for the Strategies page. ``summary`` is accepted so
+    callers keep passing the nested backtest blob; it is not copied upward.
+    """
+    _ = summary
     empty = bool(paper.get("empty_book")) if paper else True
     use_paper = bool(paper) and not empty
-    has_backtest = bool(summary)
     if use_paper:
         kpi_source = "paper"
         trading = paper.get("trading") or {}
@@ -93,16 +195,7 @@ def compose_performance_kpis(
             "total_return_pct": pnl.get("total_return_pct"),
             "num_trades": trading.get("num_trades"),
         }
-    elif has_backtest:
-        kpi_source = "backtest"
-        kpis = {
-            "win_rate_pct": summary.get("win_rate_pct"),
-            "profit_factor": summary.get("profit_factor"),
-            "sharpe_ratio": summary.get("sharpe_ratio"),
-            "max_drawdown_pct": summary.get("max_drawdown_pct"),
-            "total_return_pct": summary.get("total_return_pct"),
-            "num_trades": summary.get("num_trades"),
-        }
+        cue = None
     else:
         kpi_source = "none"
         kpis = {
@@ -113,8 +206,12 @@ def compose_performance_kpis(
             "total_return_pct": None,
             "num_trades": None,
         }
+        cue = KPI_EMPTY_CUE
     return {
         "kpi_source": kpi_source,
+        "empty_book": empty,
+        "kpi_cue": cue,
+        "kpi_label": desk_kpi_source_label(kpi_source=kpi_source, empty_book=empty),
         **kpis,
         "verified": False,
         "live": False,
