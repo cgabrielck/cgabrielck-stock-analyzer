@@ -43,8 +43,9 @@ S3: ``account is None`` (or a failed/empty snapshot) is a reject. Never
 stamp ``RISK_APPROVED`` / ``FILLED`` / verified / live without evaluate.
 
 Kill on this path blocks sell as well as buy (409 + halt reason). Worker
-flatten-through-kill is a leftover implementation note, not a binding
-Desk product rule (ADR-003 / MODULAR / AUDIT do not require it).
+flatten-through-kill / exit-while-halted is a separate worker-only path
+(``kill_switch.worker_kill_blocks_side``); it is not a Desk product
+exception. Do not import that helper here — D-sell-kill stays 409.
 
 R4: max_daily_orders is a durable UTC-day counter under DATA_DIR, shared
 by Desk and worker MandateGate instances. Restart does not reset the day.

@@ -124,3 +124,21 @@ def test_resume_clears_writes_audit_event(isolated_switch):
 def test_resume_when_already_off_does_not_invent_cleared_event(isolated_switch):
     kill_switch.disengage(actor="desk_ops", source="POST /api/ops/resume")
     assert _audit_rows(isolated_switch) == []
+
+
+def test_worker_kill_blocks_buy_only_when_halted():
+    """Fail-case: inverting this helper to also block sell turns flatten tests red."""
+    from backend.trading.models import OrderSide
+
+    assert kill_switch.worker_kill_blocks_side("buy") is False
+    assert kill_switch.worker_kill_blocks_side("sell") is False
+    assert kill_switch.worker_kill_blocks_side(OrderSide.BUY) is False
+    assert kill_switch.worker_kill_blocks_side(OrderSide.SELL) is False
+
+    kill_switch.engage("halt for helper")
+    assert kill_switch.worker_kill_blocks_side("buy") is True
+    assert kill_switch.worker_kill_blocks_side("BUY") is True
+    assert kill_switch.worker_kill_blocks_side(OrderSide.BUY) is True
+    assert kill_switch.worker_kill_blocks_side("sell") is False
+    assert kill_switch.worker_kill_blocks_side("SELL") is False
+    assert kill_switch.worker_kill_blocks_side(OrderSide.SELL) is False

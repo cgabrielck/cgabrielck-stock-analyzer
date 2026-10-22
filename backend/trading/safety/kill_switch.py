@@ -4,7 +4,10 @@ Kill switch — manual emergency stop for all new BUY orders.
 Design:
   - File-based sentinel: existence of data/KILL_SWITCH triggers halt
   - Worker checks on every tick before processing signals
-  - Allows closing positions (SELL) even when halted
+  - Allows closing positions (SELL) even when halted — worker flatten /
+    exit-while-halted goes through Mandate + Risk + OrderManager
+  - Desk ``place_desk_order`` / POST sell is independently 409 (D-sell-kill);
+    do not import ``worker_kill_blocks_side`` on the Desk path
   - CLI helpers: --halt writes the file, --resume removes it
   - Engage/resume always write an audit event (D3) so the journal is not empty
 
@@ -21,6 +24,22 @@ KILL_SWITCH_FILE = Path(DATA_DIR) / "KILL_SWITCH"
 def is_halted() -> bool:
     """Return True if the kill switch is active (file exists)."""
     return KILL_SWITCH_FILE.exists()
+
+
+def worker_kill_blocks_side(side: object) -> bool:
+    """Kill ON blocks worker BUY entries only.
+
+    Flatten/exit SELL stays allowed so open risk can still close through
+    Mandate + Risk + OrderManager. Desk ``place_desk_order`` must not call
+    this helper — Desk sell remains HTTP 409 (D-sell-kill).
+    """
+    if not is_halted():
+        return False
+    if hasattr(side, "value"):
+        key = str(getattr(side, "value"))
+    else:
+        key = str(side)
+    return key.strip().lower() == "buy"
 
 
 def engage(

@@ -262,8 +262,9 @@ class TradingWorker:
                 skip_by_ticker[str(ticker).upper()] = code
 
         # 0. Kill switch — highest-priority manual override.
-        # When engaged, we still run EXITS (must be able to close positions)
-        # but block ALL new entries. This is the emergency brake.
+        # When engaged, we still run EXITS through _submit_sell (Mandate +
+        # Risk + OM) so open risk can flatten. New BUY entries are blocked
+        # by worker_kill_blocks_side("buy"). Desk POST sell stays 409.
         was_halted = self.is_halted
         self.is_halted = kill_switch.is_halted()
         halt_reason = kill_switch.get_reason() if self.is_halted else None
@@ -571,8 +572,9 @@ class TradingWorker:
                 ticker in top5,
             )
 
-            # Kill switch gate (blocks BUYs only; exits still work)
-            if self.is_halted:
+            # Kill switch gate (blocks BUYs only; flatten/exit sells already
+            # ran through _submit_sell → Mandate + Risk + OM).
+            if kill_switch.worker_kill_blocks_side("buy"):
                 logger.info("BLOCKED %s: kill switch engaged", ticker)
                 audit.log_mandate_decision(ticker, "buy", approved=False,
                                            reason="kill_switch_engaged")
@@ -1378,6 +1380,25 @@ class TradingWorker:
 
         eval_order = order.model_copy()
         eval_order.limit_price = approval_price
+
+        # Kill is not a worker-sell gate. Desk POST sell stays 409.
+        kill_blocks = kill_switch.worker_kill_blocks_side(OrderSide.SELL)
+        if kill_switch.is_halted():
+            audit.log_event(
+                "kill_switch_check",
+                {
+                    "halted": True,
+                    "reason": kill_switch.get_reason() or "kill_switch_engaged",
+                    "symbol": symbol,
+                    "side": "sell",
+                    "worker_flatten_allowed": not kill_blocks,
+                },
+                kind="kill",
+            )
+        if kill_blocks:
+            return self._fail_sell(
+                order, "Kill switch is on — worker exits blocked."
+            )
 
         mandate_decision = self.mandate_gate.evaluate(eval_order, approval_price)
         try:
