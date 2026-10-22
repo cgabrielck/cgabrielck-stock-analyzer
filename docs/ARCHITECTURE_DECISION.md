@@ -16,6 +16,7 @@ This file is the **index**. Canonical ADR-003 text lives in its own file. This f
    - **Draft** (pending Owner/PM; not yet Accepted; does not expand 2026-10-21 Confirmed scope): [`ACCOUNT_MANAGEMENT_DESIGN.md`](ACCOUNT_MANAGEMENT_DESIGN.md) — plan-15 account-management design page (Desk vs worker). Issue #10 stays OPEN.
    - **Draft** (pending Owner/PM; not yet Accepted; does not expand 2026-10-21 Confirmed scope): [`LAB_PRODUCT_M7_BINDING.md`](LAB_PRODUCT_M7_BINDING.md) — plan-16 lab≠product M7 binding (`lab/advisory_debate` must not wire to `OrderManager`). Issue #10 stays OPEN.
    - **Draft** (pending Owner/PM; not yet Accepted; does not expand 2026-10-21 Confirmed scope): [`CHARTS_INDICATORS_DESIGN.md`](CHARTS_INDICATORS_DESIGN.md) — ns-1 TradingView-style charts/indicators design page (Desk product vs Streamlit lab). Issue #10 stays OPEN.
+   - **Draft** (pending Owner/PM; not yet Accepted; does not expand 2026-10-21 Confirmed scope): [`REFERENCE_SIGNALS_DESIGN.md`](REFERENCE_SIGNALS_DESIGN.md) — ns-2 reference/advisory signals design page (Desk product vs Scan/worker/lab). Issue #10 stays OPEN.
 4. Older roadmaps — **frozen / superseded**, not authority:
    `AUTO_TRADING_ROADMAP`, `NEXT_PHASE_PLAN`, `QUALITY_ROADMAP`, `PAPER_VALIDATION_RUNBOOK`, `PROGRESS_LOG`, `CGAB_WORLD_CLASS_UPGRADE`.
 

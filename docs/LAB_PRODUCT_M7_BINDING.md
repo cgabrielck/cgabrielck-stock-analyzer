@@ -128,6 +128,7 @@ PR 若觸及 advisory／lab／M7／落單，審查員**必須**能勾：
 | Desk flatten product exception | **OPEN** | 唔升格 |
 | Fake verified／live | **OPEN** | 本頁只綁「唔准 stamp」 |
 | 圖表／指標設計頁 | Draft（ns-1） | Desk TV-style 圖表範圍；本頁唔取代 |
+| 參考訊號設計頁 | Draft（ns-2） | Desk 參考／advisory 訊號範圍；D7 schema 仍 planning；本頁唔取代 |
 | AUDIT Confirmed remediation | **1–5 only** | **唔**加 item 6 |
 | **Issue #10** | **OPEN** | Parent audit inventory remains OPEN |
 
@@ -157,7 +158,7 @@ PR 若觸及 advisory／lab／M7／落單，審查員**必須**能勾：
 6. **本頁**（lab≠M7 隔離硬閘；Owner 接受後）  
 7. 舊 roadmap／runbook（frozen；**ADR-002 is VOID**）
 
-相關 Draft（唔升格）：[`CHARTS_INDICATORS_DESIGN.md`](CHARTS_INDICATORS_DESIGN.md)（ns-1 圖表／指標）。Issue #10 stays OPEN.
+相關 Draft（唔升格）：[`CHARTS_INDICATORS_DESIGN.md`](CHARTS_INDICATORS_DESIGN.md)（ns-1 圖表／指標）；[`REFERENCE_SIGNALS_DESIGN.md`](REFERENCE_SIGNALS_DESIGN.md)（ns-2 參考訊號；D7 schema 仍 planning）。Issue #10 stays OPEN.
 
 本頁**不改變** live RiskEngine／Kelly／mandate／kill 設定或交易 runtime。
 
