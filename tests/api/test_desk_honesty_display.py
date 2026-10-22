@@ -590,6 +590,7 @@ def test_plan12e_journal_api_unpriced_fills_not_shown_filled(honesty_api, tmp_pa
     path = tmp_path / "trade_journal.json"
     path.write_text(json.dumps({"schema_version": "trade_log.v0", "entries": _unpriced_journal_rows()}), encoding="utf-8")
     monkeypatch.setattr(journal_store, "JOURNAL_PATH", path)
+    before = path.read_bytes()
     res = honesty_api["client"].get("/api/journal")
     assert res.status_code == 200, res.text
     body = res.json()
@@ -598,6 +599,11 @@ def test_plan12e_journal_api_unpriced_fills_not_shown_filled(honesty_api, tmp_pa
         row = by_id.get(raw["log_id"])
         assert row is not None, raw["log_id"]
         _assert_journal_row_not_priced_filled(row)
+    dumped = json.dumps(body).lower()
+    assert '"status": "filled"' not in dumped
+    assert '"status":"filled"' not in dumped
+    assert '"kind": "fill"' not in dumped
+    assert path.read_bytes() == before
 
 
 def test_plan12e_journal_entry_api_unpriced_fills_not_shown_filled(honesty_api, tmp_path, monkeypatch):
@@ -609,6 +615,7 @@ def test_plan12e_journal_entry_api_unpriced_fills_not_shown_filled(honesty_api, 
     path = tmp_path / "trade_journal.json"
     path.write_text(json.dumps({"schema_version": "trade_log.v0", "entries": _unpriced_journal_rows()}), encoding="utf-8")
     monkeypatch.setattr(journal_store, "JOURNAL_PATH", path)
+    before = path.read_bytes()
     for raw in _unpriced_journal_rows():
         res = honesty_api["client"].get(f"/api/journal/entry/{raw['log_id']}")
         assert res.status_code == 200, res.text
@@ -622,6 +629,7 @@ def test_plan12e_journal_entry_api_unpriced_fills_not_shown_filled(honesty_api, 
         assert '"status":"filled"' not in dumped
         assert "filled buy" not in dumped
         assert payload.get("verified") is not True
+    assert path.read_bytes() == before
 
 
 def test_plan12e_guide_api_desk_is_paper_book_not_live(honesty_api):
