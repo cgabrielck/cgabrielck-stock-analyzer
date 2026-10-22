@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from backend.trading.telegram_inbox import allowed_chat, handle_update, parse_command
+from backend.trading.telegram_inbox import allowed_chat, handle_command, handle_update, parse_command
 
 
 def test_parse_start_is_help_not_auto():
@@ -319,3 +319,23 @@ def test_cmd_digest_filled_vs_pending(monkeypatch):
     assert "未成交" in text
     assert "SPY" in text
     assert "不會從這裡下單" not in text or "紙上" in text
+
+
+def test_telegram_inbox_source_never_places_orders():
+    """Telegram is control-plane only — no broker / Desk / shadow money path."""
+    from pathlib import Path
+
+    src = (
+        Path(__file__).resolve().parents[2]
+        / "backend"
+        / "trading"
+        / "telegram_inbox.py"
+    ).read_text(encoding="utf-8")
+    assert "submit_order" not in src
+    assert "place_desk_order" not in src
+    assert "place_lab_manual_order" not in src
+    assert "process_signal" not in src
+    assert "simulate_submission" not in src
+    assert handle_command("reject_order", "buy") == (
+        "不會從 Telegram 下單。請用工作台或等紙上自動交易通過風控後再買。"
+    )
