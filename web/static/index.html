@@ -702,7 +702,13 @@ async function api(path, opt={}) {
   const headers = operatorHeaders(opt.headers||{});
   const res = await fetch(path, { credentials:"include", ...opt, headers });
   const data = await res.json().catch(()=>({}));
-  if (!res.ok) throw new Error(typeof data.detail==="string"?data.detail:JSON.stringify(data.detail||res.statusText));
+  if (!res.ok) {
+    const detail = data.detail;
+    const msg = detail && typeof detail==="object" && detail.message
+      ? detail.message
+      : (typeof detail==="string" ? detail : JSON.stringify(detail||res.statusText));
+    throw new Error(msg);
+  }
   return data;
 }
 async function loadAccount(){

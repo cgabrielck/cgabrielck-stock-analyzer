@@ -34,9 +34,9 @@ def _account(**kwargs):
     return AccountSummary(**payload)
 
 
-def _build_worker(execution_mode="paper", mandate=None, account=None):
+def _build_worker(execution_mode="paper", mandate=None, account=None, store=None):
     broker = MagicMock()
-    store = InMemoryOrderStore()
+    store = store if store is not None else InMemoryOrderStore()
     manager = OrderManager(broker=broker, store=store)
     shadow = ShadowTradingEngine(manager) if execution_mode == "shadow" else None
     worker = TradingWorker(
@@ -71,6 +71,188 @@ def _isolate(tmp_path, monkeypatch):
     monkeypatch.setattr(audit, "AUDIT_DIR", audit_dir)
     monkeypatch.setattr(journal_store, "JOURNAL_PATH", journal)
     yield {"audit_dir": audit_dir, "journal": journal}
+
+
+def test_sell_502_then_later_call_does_not_mint_a_second_broker_key():
+    """Pre-fix _submit_sell minted sell-SYMBOL-timestamp, so a later exit resubmitted."""
+    worker, broker, store = _build_worker()
+    keys = []
+
+    def _submit(order):
+        keys.append(order.idempotency_key)
+        err = RuntimeError("504 Gateway Timeout")
+        err.status_code = 504
+        raise err
+
+    broker.submit_order.side_effect = _submit
+    first = worker._submit_sell("AAPL", 1.0, 100.0, "stop")
+    assert first is not None
+    assert first.status == OrderStatus.ACCEPTANCE_UNKNOWN
+    assert first.status != OrderStatus.FILLED
+    assert first.idempotency_sticky is True
+    second = worker._submit_sell("AAPL", 1.0, 100.0, "stop")
+    assert second is not None
+    assert len(set(keys)) == 1
+    assert second.idempotency_key == first.idempotency_key
+    assert second.status == OrderStatus.ACCEPTANCE_UNKNOWN
+    assert "do not blind-retry" in (second.error_message or "").lower()
+
+
+def test_sell_504_then_422_unique_does_not_let_a_new_key_hit_broker():
+    """5f21c71 marked the same-key 422 rejected, then sell-AAPL-<ts> hit the broker."""
+    worker, broker, store = _build_worker()
+    keys = []
+
+    def _submit(order):
+        keys.append(order.idempotency_key)
+        if keys.count(order.idempotency_key) == 1:
+            err = RuntimeError("504 Gateway Timeout")
+            err.status_code = 504
+            raise err
+        err = RuntimeError('{"code":42210000,"message":"client_order_id must be unique"}')
+        err.status_code = 422
+        raise err
+
+    broker.submit_order.side_effect = _submit
+    first = worker._submit_sell("AAPL", 1.0, 100.0, "stop")
+    assert first.status == OrderStatus.ACCEPTANCE_UNKNOWN
+    assert first.idempotency_sticky is True
+    second = worker._submit_sell("AAPL", 1.0, 100.0, "stop")
+    assert second.status == OrderStatus.ACCEPTANCE_UNKNOWN
+    assert second.status != OrderStatus.REJECTED
+    assert second.idempotency_sticky is True
+    assert second.idempotency_key == first.idempotency_key
+    assert second.filled_avg_price is None
+    assert "do not blind-retry" in (second.error_message or "").lower()
+
+    from backend.trading.models import Order, OrderType
+
+    before = broker.submit_order.call_count
+    fresh = worker.manager.submit_new_order(
+        Order(
+            id="sell-fresh",
+            symbol="AAPL",
+            side=OrderSide.SELL,
+            order_type=OrderType.LIMIT,
+            quantity=1,
+            limit_price=100.0,
+            status=OrderStatus.RISK_APPROVED,
+            idempotency_key="sell-AAPL-fresh",
+        )
+    )
+    assert broker.submit_order.call_count == before
+    assert fresh.idempotency_key == first.idempotency_key
+    assert "sell-AAPL-fresh" not in keys
+    assert set(keys) == {first.idempotency_key}
+    saved = store.get_order_by_idempotency_key(first.idempotency_key)
+    assert saved is not None
+    assert saved.idempotency_sticky is True
+    assert saved.status == OrderStatus.ACCEPTANCE_UNKNOWN
+
+
+def test_postgres_422_id_remap_pins_sticky_and_blocks_new_sell_key(postgres_store):
+    """Conflict-on-id used to drop the pin when 422 lookup rewrote the local id.
+
+    The next worker sell then minted sell-AAPL-<ts> and hit the broker, and
+    the failed save could be stored as rejected.
+    """
+    worker, broker, store = _build_worker(store=postgres_store)
+    keys = []
+
+    def _submit(order):
+        keys.append(order.idempotency_key)
+        order.id = "broker-sell-landed"
+        order.status = OrderStatus.ACCEPTANCE_UNKNOWN
+        order.idempotency_sticky = True
+        order.error_message = '{"code":42210000,"message":"client_order_id must be unique"}'
+        order.filled_avg_price = None
+        order.filled_at = None
+        return order
+
+    broker.submit_order.side_effect = _submit
+    first = worker._submit_sell("AAPL", 1.0, 100.0, "stop")
+    assert first is not None
+    assert first.status == OrderStatus.ACCEPTANCE_UNKNOWN
+    assert first.status != OrderStatus.REJECTED
+    assert first.status != OrderStatus.FILLED
+    assert first.idempotency_sticky is True
+    assert first.id == "broker-sell-landed"
+    assert first.filled_avg_price is None
+    saved = store.get_order_by_idempotency_key(first.idempotency_key)
+    assert saved is not None
+    assert saved.id == "broker-sell-landed"
+    assert saved.idempotency_sticky is True
+    assert saved.status == OrderStatus.ACCEPTANCE_UNKNOWN
+    rows = store.iter_all_orders()
+    assert len(rows) == 1
+    assert rows[0].id == "broker-sell-landed"
+
+    second = worker._submit_sell("AAPL", 1.0, 100.0, "stop")
+    assert second.idempotency_key == first.idempotency_key
+    assert second.status == OrderStatus.ACCEPTANCE_UNKNOWN
+    assert second.status != OrderStatus.REJECTED
+    assert second.idempotency_sticky is True
+    assert set(keys) == {first.idempotency_key}
+
+    from backend.trading.models import Order, OrderType
+
+    before = broker.submit_order.call_count
+    fresh = worker.manager.submit_new_order(
+        Order(
+            id="sell-AAPL-later",
+            symbol="AAPL",
+            side=OrderSide.SELL,
+            order_type=OrderType.LIMIT,
+            quantity=1,
+            limit_price=100.0,
+            status=OrderStatus.RISK_APPROVED,
+            idempotency_key="sell-AAPL-later",
+        )
+    )
+    assert broker.submit_order.call_count == before
+    assert "sell-AAPL-later" not in keys
+    assert fresh.idempotency_key == first.idempotency_key
+    assert fresh.status == OrderStatus.ACCEPTANCE_UNKNOWN
+    assert fresh.status != OrderStatus.FILLED
+    assert fresh.idempotency_sticky is True
+
+
+def test_sell_journal_late_success_still_blocks_a_second_broker_submit(monkeypatch):
+    calls = {"n": 0}
+
+    def _journal(*_a, **_k):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("disk full")
+        return {"id": "journal-ok"}
+
+    monkeypatch.setattr("backend.utils.provenance.journal_store.record_from_order", _journal)
+    worker, broker, _store = _build_worker()
+    with pytest.raises(Exception):
+        worker._submit_sell("AAPL", 1.0, 100.0, "stop")
+    assert broker.submit_order.call_count == 1
+    caught_up = worker._submit_sell("AAPL", 1.0, 100.0, "stop")
+    assert caught_up is not None
+    assert caught_up.idempotency_sticky is True
+    assert broker.submit_order.call_count == 1
+    later = worker._submit_sell("AAPL", 1.0, 100.0, "stop")
+    assert later.idempotency_key == caught_up.idempotency_key
+    assert broker.submit_order.call_count == 1
+
+
+def test_sell_journal_502_then_later_call_does_not_second_submit(monkeypatch):
+    worker, broker, store = _build_worker()
+
+    def _boom(*_a, **_k):
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr("backend.utils.provenance.journal_store.record_from_order", _boom)
+    with pytest.raises(Exception):
+        worker._submit_sell("AAPL", 1.0, 100.0, "stop")
+    assert broker.submit_order.call_count == 1
+    with pytest.raises(Exception):
+        worker._submit_sell("AAPL", 1.0, 100.0, "stop")
+    assert broker.submit_order.call_count == 1
 
 
 def test_paper_sell_honest_notional_over_cap_does_not_hit_broker():

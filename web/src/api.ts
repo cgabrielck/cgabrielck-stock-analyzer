@@ -11,8 +11,14 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
     data = { detail: text };
   }
   if (!res.ok) {
-    const detail = data?.detail || res.statusText;
-    throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
+    const detail = data?.detail ?? res.statusText;
+    const msg =
+      detail && typeof detail === "object" && detail.message
+        ? String(detail.message)
+        : typeof detail === "string"
+          ? detail
+          : JSON.stringify(detail);
+    throw new Error(msg);
   }
   return data as T;
 }

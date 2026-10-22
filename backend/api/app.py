@@ -145,6 +145,9 @@ class OrderIn(BaseModel):
     quantity: float = Field(gt=0)
     order_type: str = "market"
     limit_price: Optional[float] = None
+    # Optional. Omit on a first place. After HTTP 502, a safe retry must send
+    # the same key; a missing or different key is a blind retry and is refused.
+    idempotency_key: Optional[str] = None
 
 
 class AiModeIn(BaseModel):
@@ -288,7 +291,7 @@ def submit_order(body: OrderIn, _auth: None = Depends(_require_paper_operator)) 
         order_type=otype,
         quantity=float(body.quantity),
         limit_price=body.limit_price,
-        idempotency_key=f"cgab-{uuid.uuid4()}",
+        idempotency_key=(body.idempotency_key or "").strip() or f"cgab-{uuid.uuid4()}",
     )
     result = place_desk_order(order, broker=_broker, store=_store)
     if result.http_status != 200:

@@ -13,7 +13,12 @@ from typing import Any, Dict, Optional
 from backend.trading.broker import BrokerAdapter
 from backend.trading.engine.order_manager import OrderManager
 from backend.trading.engine.shadow import ShadowTradingEngine
-from backend.trading.engine.stamp import stamp_risk_approved
+from backend.trading.engine.stamp import VENUE_STATUSES, stamp_risk_approved
+from backend.trading.engine.sticky_idempotency import (
+    clear_sticky,
+    detach_if_would_clobber_sticky,
+    pin_sticky,
+)
 from backend.trading.models import Order, OrderSide, OrderStatus, OrderType
 from backend.trading.risk.gates import RiskEngine
 
@@ -107,6 +112,7 @@ class SignalProcessor:
             logger.warning("Signal rejected by Risk Engine: %s", risk_decision.reason)
             draft_order.status = OrderStatus.REJECTED
             draft_order.error_message = f"Risk Gate Rejected: {risk_decision.reason}"
+            detach_if_would_clobber_sticky(self.order_manager.store, draft_order)
             self.order_manager.store.save_order(draft_order)
             audit_id = None
             try:
@@ -147,8 +153,35 @@ class SignalProcessor:
 
         logger.info("Signal Risk-Approved. Forwarding to Order Manager.")
         # Keep RISK_APPROVED from the evaluate above. OrderManager must not invent it.
+        prior = None
+        getter = getattr(self.order_manager.store, "get_order_by_idempotency_key", None)
+        if callable(getter):
+            try:
+                prior = getter(draft_order.idempotency_key)
+            except Exception:
+                logger.exception(
+                    "Sticky prior lookup failed for %s", draft_order.idempotency_key
+                )
+                prior = None
+        replay_landed = (
+            prior is not None
+            and bool(getattr(prior, "idempotency_sticky", False))
+            and prior.status in VENUE_STATUSES
+        )
         result = self.order_manager.submit_new_order(draft_order)
-        self._record_journal(result, signal)
+        try:
+            self._record_journal(result, signal)
+        except JournalWriteError:
+            # Broker may already have the order. Pin the key before the
+            # exception leaves this call so the next cycle cannot mint a new one.
+            status_key = str(getattr(result.status, "value", result.status)).lower()
+            if status_key != "rejected":
+                pin_sticky(self.order_manager.store, result)
+            raise
+        if result.status in VENUE_STATUSES and not replay_landed:
+            # Journal catching up on an already-landed sticky order must not
+            # clear the pin. A fresh venue accept on this call still may.
+            clear_sticky(self.order_manager.store, result)
         return result
 
     @staticmethod

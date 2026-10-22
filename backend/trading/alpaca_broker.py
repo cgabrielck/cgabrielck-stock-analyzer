@@ -1,5 +1,6 @@
+import logging
 import os
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from alpaca.common.exceptions import APIError
 from alpaca.trading.client import TradingClient
@@ -16,6 +17,29 @@ from alpaca.trading.requests import (
 )
 
 from backend.trading.broker import BrokerAdapter
+from backend.trading.engine.sticky_idempotency import (
+    is_acceptance_unknown_exception,
+    is_client_order_id_conflict,
+    mark_acceptance_unknown,
+)
+
+logger = logging.getLogger(__name__)
+
+
+def disable_unsafe_place_retries(client: Any) -> None:
+    """Stop alpaca-py from auto-POSTing a place again after HTTP 504.
+
+    ``TradingClient`` retries ``DEFAULT_RETRY_EXCEPTION_CODES`` (429 and 504)
+    up to ``DEFAULT_RETRY_ATTEMPTS`` (3). ``retry_attempts=0`` is falsy, so
+    the constructor cannot disable that. A 504 POST may already have landed;
+    the retry then returns 422 ``client_order_id must be unique`` before our
+    code ever sees the timeout, and sticky never pins. 429 stays so
+    rate-limit retries still work.
+    """
+    codes = getattr(client, "_retry_codes", None)
+    if not isinstance(codes, list):
+        return
+    client._retry_codes = [code for code in codes if int(code) != 504]
 from backend.trading.models import AccountSummary, Order, OrderSide, OrderStatus, OrderType, Position
 
 # Alpaca's public status strings -> our internal OrderStatus enum.
@@ -78,6 +102,8 @@ class AlpacaBroker(BrokerAdapter):
                 secret_key=self.api_secret_key,
                 paper=self.is_paper,
             )
+        # Before any place: a 504 retry can turn into 422 unique and skip the pin.
+        disable_unsafe_place_retries(self._api)
 
         account = self._api.get_account()
         if account.trading_blocked:
@@ -214,9 +240,56 @@ class AlpacaBroker(BrokerAdapter):
             # Store the broker's order ID for future reference
             order.id = str(alpaca_order.id)
         except APIError as e:
+            if is_client_order_id_conflict(e):
+                # Includes a 422 that alpaca-py surfaced after its own 504 retry.
+                return self._pin_unique_client_order(order, e)
+            if is_acceptance_unknown_exception(e):
+                # 502/504/timeout: do not pretend the broker rejected it.
+                mark_acceptance_unknown(order, e)
+                return order
             order.status = OrderStatus.REJECTED
+            order.idempotency_sticky = False
             order.error_message = str(e)
+        except Exception as e:
+            if is_client_order_id_conflict(e) or is_acceptance_unknown_exception(e):
+                if is_client_order_id_conflict(e):
+                    return self._pin_unique_client_order(order, e)
+                mark_acceptance_unknown(order, e)
+                return order
+            raise
         return order
+
+    def _pin_unique_client_order(self, order: Order, exc: BaseException) -> Order:
+        """422 unique: the client_order_id landed. Do not clear sticky.
+
+        Lookup may copy the broker id for later sync. Status stays
+        acceptance_unknown — copying FILLED would let a desk 200 path
+        clear the pin and allow a fresh-key second submit.
+        """
+        mark_acceptance_unknown(order, exc)
+        found = self._lookup_order_by_client_id(order.idempotency_key)
+        broker_id = getattr(found, "id", None) if found is not None else None
+        if broker_id:
+            order.id = str(broker_id)
+        order.status = OrderStatus.ACCEPTANCE_UNKNOWN
+        order.idempotency_sticky = True
+        order.filled_at = None
+        order.filled_avg_price = None
+        return order
+
+    def _lookup_order_by_client_id(self, client_order_id: str):
+        client = self._api
+        lookup = getattr(client, "get_order_by_client_id", None) if client is not None else None
+        if not callable(lookup):
+            return None
+        try:
+            return lookup(client_order_id)
+        except Exception:
+            logger.exception(
+                "Could not recover Alpaca order for client_order_id=%s",
+                client_order_id,
+            )
+            return None
 
     def get_order(self, order_id: str) -> Optional[Order]:
         """Retrieves a specific order by its broker-assigned ID."""

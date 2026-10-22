@@ -155,6 +155,58 @@ def test_api_missing_mandate_fail_closed_and_ops_honest(desk_api, tmp_path, monk
     desk_api["broker"].submit_order.assert_not_called()
 
 
+def test_api_broker_502_retry_new_key_does_not_second_submit(desk_api):
+    """Pre-fix main minted cgab-<uuid> per POST, so a 502 retry submitted twice."""
+    keys = []
+
+    def _submit(order):
+        keys.append(order.idempotency_key)
+        err = RuntimeError("502 Bad Gateway")
+        err.status_code = 502
+        raise err
+
+    desk_api["broker"].submit_order.side_effect = _submit
+    client = desk_api["client"]
+    body = {"symbol": "AAPL", "side": "buy", "quantity": 1, "limit_price": 150, "order_type": "limit"}
+    first = client.post("/api/orders", json=body)
+    assert first.status_code == 502, first.text
+    detail = first.json()["detail"]
+    assert detail["retry"] == "do_not_blind_retry"
+    assert detail["acceptance"] == "unknown"
+    assert detail["broker_submitted"] is None
+    sticky_key = detail["idempotency_key"]
+    assert sticky_key
+
+    second = client.post("/api/orders", json=body)
+    assert second.status_code == 502, second.text
+    assert second.status_code != 200
+    assert desk_api["broker"].submit_order.call_count == 1
+    assert keys == [sticky_key]
+    again = second.json()["detail"]
+    assert again["idempotency_key"] == sticky_key
+    assert again["retry"] == "do_not_blind_retry"
+    assert "do not blind-retry" in again["message"].lower()
+
+
+def test_api_journal_502_retry_new_key_does_not_second_submit(desk_api, monkeypatch):
+    def _boom(*_a, **_k):
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr("backend.trading.engine.desk_orders.record_from_order", _boom)
+    client = desk_api["client"]
+    body = {"symbol": "AAPL", "side": "buy", "quantity": 1, "limit_price": 150, "order_type": "limit"}
+    first = client.post("/api/orders", json=body)
+    assert first.status_code == 502, first.text
+    sticky_key = first.json()["detail"]["idempotency_key"]
+    second = client.post("/api/orders", json=body)
+    assert second.status_code == 502, second.text
+    assert second.status_code != 200
+    assert desk_api["broker"].submit_order.call_count == 1
+    assert second.json()["detail"]["idempotency_key"] == sticky_key
+    assert second.json()["detail"]["retry"] == "do_not_blind_retry"
+    assert second.json()["detail"]["broker_submitted"] is True
+
+
 def test_api_journal_failure_after_accept_is_not_200(desk_api, monkeypatch):
     def _boom(*_a, **_k):
         raise RuntimeError("disk full")

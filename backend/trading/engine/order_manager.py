@@ -4,6 +4,17 @@ from datetime import datetime, timezone
 
 from backend.trading.models import Order, OrderStatus
 from backend.trading.broker import BrokerAdapter
+from backend.trading.engine.stamp import VENUE_STATUSES
+from backend.trading.engine.sticky_idempotency import (
+    StickyLookupUnproven,
+    find_sticky_order,
+    is_acceptance_unknown_exception,
+    is_client_order_id_conflict,
+    is_sticky_open,
+    mark_acceptance_unknown,
+    message_is_client_order_id_conflict,
+    order_side_value,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +47,10 @@ class InMemoryOrderStore:
         all_orders.sort(key=lambda o: o.updated_at or o.created_at, reverse=True)
         return all_orders[:limit]
 
+    def iter_all_orders(self) -> List[Order]:
+        """Full ledger. Sticky lookup must not use the recent-N window."""
+        return list(self._orders_by_id.values())
+
 
 class OrderManager:
     """
@@ -58,34 +73,123 @@ class OrderManager:
                 f"Can only submit DRAFT or RISK_APPROVED orders. Current status: {draft_order.status}"
             )
 
-        # 1. Idempotency Check
+        # 1. Blind new key while a 502-class place is still open: do not submit.
+        try:
+            sticky = find_sticky_order(
+                self.store, symbol=draft_order.symbol, side=order_side_value(draft_order)
+            )
+        except StickyLookupUnproven as exc:
+            existing = self.store.get_order_by_idempotency_key(draft_order.idempotency_key)
+            if existing is not None and is_sticky_open(existing):
+                sticky = existing
+            else:
+                logger.error(
+                    "Sticky lookup unproven for %s %s; refusing broker submit of %s.",
+                    draft_order.symbol,
+                    order_side_value(draft_order),
+                    draft_order.idempotency_key,
+                )
+                mark_acceptance_unknown(draft_order, exc)
+                self.store.save_order(draft_order)
+                return draft_order
+        if sticky is not None and sticky.idempotency_key != draft_order.idempotency_key:
+            logger.warning(
+                "Blind retry blocked for %s %s. Reuse idempotency_key=%s (refused %s).",
+                draft_order.symbol,
+                order_side_value(draft_order),
+                sticky.idempotency_key,
+                draft_order.idempotency_key,
+            )
+            return sticky
+
+        # 2. Same-key idempotency. Unknown-accept may safe-retry with that key.
         existing_order = self.store.get_order_by_idempotency_key(draft_order.idempotency_key)
-        if existing_order:
-            logger.info(f"Order with idempotency key {draft_order.idempotency_key} already exists. Skipping submission.")
+        safe_resubmit = (
+            existing_order is not None
+            and existing_order.idempotency_sticky
+            and existing_order.status == OrderStatus.ACCEPTANCE_UNKNOWN
+        )
+        if existing_order is not None and not safe_resubmit:
+            logger.info(
+                "Order with idempotency key %s already exists. Skipping submission.",
+                draft_order.idempotency_key,
+            )
             return existing_order
 
-        # 2. Persist caller status as-is (no invented RISK_APPROVED).
-        self.store.save_order(draft_order)
+        if safe_resubmit and existing_order is not None:
+            draft_order.id = existing_order.id
+            draft_order.idempotency_key = existing_order.idempotency_key
+            draft_order.idempotency_sticky = True
+        else:
+            # Persist caller status as-is (no invented RISK_APPROVED).
+            self.store.save_order(draft_order)
 
-        logger.info(f"Submitting order to broker: {draft_order.symbol} {draft_order.side} {draft_order.quantity}")
+        logger.info(
+            "Submitting order to broker: %s %s %s key=%s",
+            draft_order.symbol,
+            draft_order.side,
+            draft_order.quantity,
+            draft_order.idempotency_key,
+        )
 
         # 3. Broker Submission
         try:
             submitted_order = self.broker.submit_order(draft_order)
         except Exception as e:
-            # Handle unexpected broker adapter errors
+            # 422 client_order_id unique means the id already landed. A safe
+            # retry that fails any other way also keeps the pin: the first
+            # request may have been accepted. Only a non-retry definite
+            # failure may clear the way for a new key.
+            if (
+                safe_resubmit
+                or is_acceptance_unknown_exception(e)
+                or is_client_order_id_conflict(e)
+            ):
+                logger.error(
+                    "Broker acceptance unknown for %s key=%s: %s",
+                    draft_order.symbol,
+                    draft_order.idempotency_key,
+                    e,
+                )
+                mark_acceptance_unknown(draft_order, e)
+                self.store.save_order(draft_order)
+                return draft_order
             logger.error(f"Failed to submit order to broker: {str(e)}")
             draft_order.status = OrderStatus.REJECTED
+            draft_order.idempotency_sticky = False
             draft_order.error_message = f"Broker Adapter Error: {str(e)}"
             draft_order.failed_at = datetime.now(timezone.utc)
             self.store.save_order(draft_order)
             return draft_order
 
-        # 4. Post-submission update
-        # submitted_order should now have an updated status (e.g. SUBMITTED or REJECTED)
-        # and a broker-assigned ID.
+        # 4. Post-submission update. 502 mapped by the adapter is not a reject
+        # and not a fill. A 422 unique mapped as REJECTED is the same hole.
+        if submitted_order.status == OrderStatus.ACCEPTANCE_UNKNOWN:
+            if not submitted_order.error_message:
+                mark_acceptance_unknown(submitted_order)
+            else:
+                submitted_order.idempotency_sticky = True
+                submitted_order.filled_at = None
+                submitted_order.filled_avg_price = None
+            self.store.save_order(submitted_order)
+            return submitted_order
+        if submitted_order.status in VENUE_STATUSES:
+            self.store.save_order(submitted_order)
+            return submitted_order
+        if safe_resubmit or message_is_client_order_id_conflict(submitted_order.error_message):
+            logger.error(
+                "Safe retry for %s key=%s did not confirm a venue accept (%s). Keeping sticky.",
+                submitted_order.symbol,
+                submitted_order.idempotency_key,
+                submitted_order.status,
+            )
+            mark_acceptance_unknown(submitted_order)
+            self.store.save_order(submitted_order)
+            return submitted_order
+        if submitted_order.status == OrderStatus.REJECTED:
+            submitted_order.idempotency_sticky = False
         self.store.save_order(submitted_order)
-        
+
         return submitted_order
 
     def sync_order_status(self, internal_order_id: str) -> Optional[Order]:

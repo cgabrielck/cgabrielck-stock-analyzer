@@ -82,6 +82,10 @@ class JSONOrderStore:
             sorted_orders = sorted(self._orders_by_id.values(), key=lambda o: o.created_at, reverse=True)
             return sorted_orders[:limit]
 
+    def iter_all_orders(self) -> List[Order]:
+        with self._lock:
+            return list(self._orders_by_id.values())
+
     def export_dicts(self) -> List[dict]:
         with self._lock:
             return [o.model_dump(mode="json") for o in self._orders_by_id.values()]
@@ -165,6 +169,12 @@ class SQLiteOrderStore:
             ).fetchall()
         return [Order.model_validate(json.loads(r["payload"])) for r in rows]
 
+    def iter_all_orders(self) -> List[Order]:
+        """Full ledger scan. Sticky lookup must not stop at the recent-N window."""
+        with self._lock:
+            rows = self._conn.execute("SELECT payload FROM orders").fetchall()
+        return [Order.model_validate(json.loads(r["payload"])) for r in rows]
+
     def export_dicts(self) -> List[dict]:
         with self._lock:
             rows = self._conn.execute("SELECT payload FROM orders").fetchall()
@@ -215,16 +225,50 @@ class PostgresOrderStore:
                 conn.commit()
 
     def save_order(self, order: Order) -> None:
+        """Upsert by idempotency key, then by id.
+
+        A 422 ``client_order_id`` lookup replaces the local id with the
+        broker id and keeps the same key. ``ON CONFLICT (id)`` does not
+        see that row, so the insert hits ``UNIQUE(idempotency_key)`` and
+        the sticky pin never lands. Match the key first and move the id.
+        A same-id rewrite (key changed, id unchanged) still updates that row.
+        """
         payload = json.dumps(order.model_dump(mode="json"))
         with self._lock:
             with self._connect() as conn:
                 with conn.cursor() as cur:
                     cur.execute(
                         """
+                        UPDATE trading_orders
+                        SET id = %s,
+                            payload = %s::jsonb,
+                            updated_at = NOW()
+                        WHERE idempotency_key = %s
+                        """,
+                        (order.id, payload, order.idempotency_key),
+                    )
+                    if cur.rowcount and cur.rowcount > 0:
+                        conn.commit()
+                        return
+                    cur.execute(
+                        """
+                        UPDATE trading_orders
+                        SET idempotency_key = %s,
+                            payload = %s::jsonb,
+                            updated_at = NOW()
+                        WHERE id = %s
+                        """,
+                        (order.idempotency_key, payload, order.id),
+                    )
+                    if cur.rowcount and cur.rowcount > 0:
+                        conn.commit()
+                        return
+                    cur.execute(
+                        """
                         INSERT INTO trading_orders (id, idempotency_key, payload, updated_at)
                         VALUES (%s, %s, %s::jsonb, NOW())
-                        ON CONFLICT (id) DO UPDATE SET
-                            idempotency_key = EXCLUDED.idempotency_key,
+                        ON CONFLICT (idempotency_key) DO UPDATE SET
+                            id = EXCLUDED.id,
                             payload = EXCLUDED.payload,
                             updated_at = NOW()
                         """,
@@ -265,6 +309,15 @@ class PostgresOrderStore:
                         """,
                         (int(limit),),
                     )
+                    rows = cur.fetchall()
+        return [Order.model_validate(r[0]) for r in rows]
+
+    def iter_all_orders(self) -> List[Order]:
+        """Full ledger scan. Sticky lookup must not stop at the recent-N window."""
+        with self._lock:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT payload FROM trading_orders")
                     rows = cur.fetchall()
         return [Order.model_validate(r[0]) for r in rows]
 
