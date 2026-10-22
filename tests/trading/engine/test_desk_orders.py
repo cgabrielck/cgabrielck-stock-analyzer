@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from unittest.mock import MagicMock
 
 import pytest
@@ -779,3 +780,175 @@ def test_desk_orders_module_does_not_import_intent_or_signal_processor():
     assert "IntentStore" not in joined
     assert "signal_processor" not in joined
     assert "process_signal" not in joined
+
+
+def test_desk_buy_counts_toward_daily_limit(tmp_path):
+    """Successful Desk buy increments the shared counter (R4)."""
+    from backend.trading.safety.mandate import MandateGate, TradingMandate
+
+    path = _mandate_file(tmp_path, {**TIGHT, "max_daily_orders": 2})
+    store = InMemoryOrderStore()
+    broker = _broker()
+    first = place_desk_order(
+        _order(id="day-1", idempotency_key="day-1"),
+        broker=broker,
+        store=store,
+        mandate_path=path,
+    )
+    assert first.http_status == 200
+    assert first.blocked is False
+    second = place_desk_order(
+        _order(id="day-2", idempotency_key="day-2"),
+        broker=broker,
+        store=store,
+        mandate_path=path,
+    )
+    assert second.http_status == 200
+    worker = MandateGate(mandate=TradingMandate(max_daily_orders=2))
+    assert worker.orders_today == 2
+    blocked = place_desk_order(
+        _order(id="day-3", idempotency_key="day-3"),
+        broker=broker,
+        store=store,
+        mandate_path=path,
+    )
+    assert blocked.blocked is True
+    assert blocked.http_status == 409
+    assert blocked.gate == "mandate"
+    assert "daily order limit" in (blocked.detail or "").lower()
+    assert broker.submit_order.call_count == 2
+    rows = journal_store.load_raw_entries()
+    assert any("daily order limit" in str(row).lower() for row in rows)
+
+
+def test_restart_does_not_reset_desk_daily_limit(tmp_path):
+    """R4 fail-case: dropping the in-process gate (restart) must not free quota.
+
+    Pre-fix main: reset_desk_mandate_gate() zeroed orders_today.
+    """
+    path = _mandate_file(tmp_path, {**TIGHT, "max_daily_orders": 1})
+    first = place_desk_order(
+        _order(id="r4-1", idempotency_key="r4-1"),
+        broker=_broker(),
+        store=InMemoryOrderStore(),
+        mandate_path=path,
+    )
+    assert first.http_status == 200
+    reset_desk_mandate_gate()
+    blocked = place_desk_order(
+        _order(id="r4-2", idempotency_key="r4-2"),
+        broker=_broker(),
+        store=InMemoryOrderStore(),
+        mandate_path=path,
+    )
+    assert blocked.blocked is True
+    assert blocked.http_status == 409
+    assert blocked.gate == "mandate"
+    assert "daily order limit" in (blocked.detail or "").lower()
+
+
+def test_worker_record_blocks_desk_buy_same_day(tmp_path):
+    """R4 fail-case: worker count is visible to Desk place-order.
+
+    Pre-fix main: Desk never read the worker counter.
+    """
+    from backend.trading.safety.mandate import MandateGate, TradingMandate
+
+    path = _mandate_file(tmp_path, {**TIGHT, "max_daily_orders": 1})
+    worker = MandateGate(mandate=TradingMandate(max_daily_orders=1))
+    worker.record_order()
+    broker = _broker()
+    result = place_desk_order(
+        _order(id="r4-desk", idempotency_key="r4-desk"),
+        broker=broker,
+        store=InMemoryOrderStore(),
+        mandate_path=path,
+    )
+    assert result.blocked is True
+    assert result.http_status == 409
+    assert result.gate == "mandate"
+    assert "daily order limit" in (result.detail or "").lower()
+    broker.submit_order.assert_not_called()
+    assert journal_store.load_raw_entries()
+
+
+def test_concurrent_desk_buys_at_cap_only_one_submits(tmp_path, monkeypatch):
+    """R4 fail-case: two Desk buys both peek-approve; only one may submit at cap=1.
+
+    On 9fe0632 both evaluate then both record_order after broker, count=2.
+    """
+    from backend.trading.safety.mandate import MandateGate
+
+    path = _mandate_file(tmp_path, {**TIGHT, "max_daily_orders": 1})
+    broker = _broker()
+    store = InMemoryOrderStore()
+    barrier = threading.Barrier(2, timeout=5)
+    orig = MandateGate.evaluate
+
+    def _eval(self, order, ref_price=None):
+        decision = orig(self, order, ref_price)
+        if decision.approved:
+            barrier.wait()
+        return decision
+
+    monkeypatch.setattr(MandateGate, "evaluate", _eval)
+    results = []
+
+    def run(oid):
+        results.append(
+            place_desk_order(
+                _order(id=oid, idempotency_key=oid),
+                broker=broker,
+                store=store,
+                mandate_path=path,
+            )
+        )
+
+    t1 = threading.Thread(target=run, args=("c1",))
+    t2 = threading.Thread(target=run, args=("c2",))
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
+    statuses = sorted(r.http_status for r in results)
+    assert statuses == [200, 409]
+    assert broker.submit_order.call_count == 1
+    blocked = next(r for r in results if r.blocked)
+    assert blocked.gate == "mandate"
+    assert "daily order limit" in (blocked.detail or "").lower()
+    assert "(2/1)" not in (blocked.detail or "")
+
+
+def test_desk_write_failure_does_not_submit_and_fail_closes(tmp_path, monkeypatch):
+    """R4 fail-case: count write OSError must not submit, next buy fail-closed."""
+    from backend.trading.safety.mandate import DailyOrderCounter
+
+    path = _mandate_file(tmp_path, {**TIGHT, "max_daily_orders": 5})
+    broker = _broker()
+
+    def boom(self, today, count):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(DailyOrderCounter, "_write_unlocked", boom)
+    first = place_desk_order(
+        _order(id="w1", idempotency_key="w1"),
+        broker=broker,
+        store=InMemoryOrderStore(),
+        mandate_path=path,
+    )
+    assert first.blocked is True
+    assert first.http_status == 409
+    assert first.gate == "mandate"
+    assert "fail closed" in (first.detail or "").lower()
+    broker.submit_order.assert_not_called()
+
+    second = place_desk_order(
+        _order(id="w2", idempotency_key="w2"),
+        broker=broker,
+        store=InMemoryOrderStore(),
+        mandate_path=path,
+    )
+    assert second.blocked is True
+    assert second.http_status == 409
+    assert "fail closed" in (second.detail or "").lower()
+    broker.submit_order.assert_not_called()

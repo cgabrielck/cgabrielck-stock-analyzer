@@ -415,6 +415,20 @@ def _consume_one_intent(
             reason=blocked,
         )
 
+    reserved = False
+    cap = getattr(getattr(mandate_gate, "mandate", None), "max_daily_orders", None)
+    try_reserve = getattr(mandate_gate, "try_reserve", None)
+    if intent.side == IntentSide.BUY and cap is not None and callable(try_reserve):
+        slot = try_reserve()
+        if not bool(getattr(slot, "approved", False)):
+            return ConsumeResult(
+                intent_id=intent.intent_id,
+                action="skipped_mandate",
+                symbol=intent.symbol,
+                reason=str(getattr(slot, "reason", None) or "daily order limit reached"),
+            )
+        reserved = True
+
     stop_px = stop_price_from_intent(intent, px)
     signal = {
         "id": f"intent-{intent.intent_id}",
@@ -435,6 +449,10 @@ def _consume_one_intent(
     # and cannot race a submit. Cancel-first makes claim return None (no order).
     claimed = store.claim_for_consume(intent.intent_id)
     if claimed is None:
+        if reserved:
+            release = getattr(mandate_gate, "release_reservation", None)
+            if callable(release):
+                release()
         return ConsumeResult(
             intent_id=intent.intent_id,
             action="skipped_claim_lost",
@@ -497,10 +515,13 @@ def _consume_one_intent(
             _order_field(order, "id") or _order_field(order, "order_id") or ""
         ) or None
     action = consume_action_for_order(order)
-    # Strategy scan counts a buy only after process_signal returns without a
-    # risk reject. Without this, every active buy in the tick sees the same
-    # orders_today and max_daily_orders does not hold.
-    if action == "consumed" and intent.side == IntentSide.BUY:
+    # Cap path reserved before process_signal (atomic vs Desk). Risk reject
+    # gives the slot back. No-cap still counts via record_order after accept.
+    if action == "consumed_risk_rejected" and reserved:
+        release = getattr(mandate_gate, "release_reservation", None)
+        if callable(release):
+            release()
+    elif action == "consumed" and intent.side == IntentSide.BUY and not reserved:
         record_order = getattr(mandate_gate, "record_order", None)
         if callable(record_order):
             record_order()

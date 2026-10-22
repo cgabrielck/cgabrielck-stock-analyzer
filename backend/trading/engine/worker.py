@@ -631,6 +631,21 @@ class TradingWorker:
                 if self.execution_mode == "shadow"
                 else None
             )
+            reserved = False
+            if self.mandate_gate.mandate.max_daily_orders is not None:
+                slot = self.mandate_gate.try_reserve()
+                if not slot.approved:
+                    logger.info("BLOCKED %s: %s", ticker, slot.reason)
+                    audit.log_mandate_decision(
+                        ticker, "buy", False, slot.reason, notional=signal.entry_price,
+                    )
+                    summary_rows.append({
+                        "ticker": ticker, "action": "BLOCKED",
+                        "reason": slot.reason,
+                    })
+                    note(ticker, "mandate")
+                    continue
+                reserved = True
             result = self.signal_processor.process_signal(
                 signal_dict,
                 account_summary=account_refresh,
@@ -645,6 +660,8 @@ class TradingWorker:
             # Audit the risk / submission outcome
             if (result.error_message or "").startswith("Risk Gate Rejected"):
                 # SignalProcessor already wrote AuditEvent + TradeLogEntry.
+                if reserved:
+                    self.mandate_gate.release_reservation()
                 logger.info("BLOCKED %s: %s", ticker, result.error_message)
                 summary_rows.append({
                     "ticker": ticker, "action": "BLOCKED",
@@ -654,7 +671,8 @@ class TradingWorker:
                 continue
 
             audit.log_risk_decision(ticker, "buy", qty, True, "approved_via_signal_processor")
-            self.mandate_gate.record_order()
+            if not reserved:
+                self.mandate_gate.record_order()
             audit.log_order_submission(
                 ticker, "buy", qty, signal.entry_price,
                 result.id, result.status.value,

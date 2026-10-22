@@ -18,8 +18,8 @@ Kill on this path blocks sell as well as buy (409 + halt reason). Worker
 flatten-through-kill is a leftover implementation note, not a binding
 Desk product rule (ADR-003 / MODULAR / AUDIT do not require it).
 
-TODO(R4): max_daily_orders is process-local on this gate. Desk and worker do
-not yet share a durable daily counter.
+R4: max_daily_orders is a durable UTC-day counter under DATA_DIR, shared
+by Desk and worker MandateGate instances. Restart does not reset the day.
 """
 from __future__ import annotations
 
@@ -191,9 +191,11 @@ def ops_mandate_payload(snapshot: Optional[MandateSnapshot] = None) -> dict:
 
 
 def _gate_for_snapshot(snapshot: MandateSnapshot) -> MandateGate:
-    """Reuse one process-local gate so Desk daily counts accumulate.
+    """MandateGate backed by the durable Desk+worker daily counter (R4).
 
-    TODO(R4): persist and share this counter with the worker.
+    The gate object may be reused in-process; the count itself lives on
+    disk so a worker restart or a sibling Desk process sees the same
+    UTC-day total.
     """
     global _desk_gate
     mandate = snapshot.mandate
@@ -208,7 +210,7 @@ def _gate_for_snapshot(snapshot: MandateSnapshot) -> MandateGate:
 
 
 def reset_desk_mandate_gate() -> None:
-    """Test helper — drop the process-local daily counter."""
+    """Test helper — drop the process-local gate cache (count stays on disk)."""
     global _desk_gate
     with _gate_lock:
         _desk_gate = None
@@ -576,6 +578,28 @@ def place_desk_order(
             mandate_path=snapshot.path,
         )
 
+    # R4: claim the daily slot under flock *before* broker so concurrent
+    # Desk+worker evaluate-then-record cannot both submit at cap=1.
+    reserved = False
+    if side == "buy" and mode != "shadow" and gate.mandate.max_daily_orders is not None:
+        slot = gate.try_reserve()
+        if not slot.approved:
+            detail = slot.reason or "Daily order limit reached."
+            audit_id = audit.log_mandate_decision(
+                order.symbol, side, False, detail, notional=notional, actor=DESK_ACTOR
+            )
+            return _block(
+                order,
+                store=store,
+                http_status=409,
+                detail=detail,
+                gate="mandate",
+                audit_id=audit_id,
+                mandate_status=snapshot.status,
+                mandate_path=snapshot.path,
+            )
+        reserved = True
+
     # 4. Stamp only after real Mandate + Risk evaluate, then paper or shadow.
     stamp_risk_approved(
         order,
@@ -626,6 +650,8 @@ def place_desk_order(
     blocked_accept = str(getattr(submitted.status, "value", submitted.status)).lower() == "rejected"
     if not journaled:
         if blocked_accept:
+            if reserved:
+                gate.release_reservation()
             detail = _reject_not_persisted_detail(
                 submitted.error_message or "Order rejected",
                 journal_err or "journal write failed",
@@ -666,6 +692,8 @@ def place_desk_order(
             journaled=False,
         )
     if blocked_accept:
+        if reserved:
+            gate.release_reservation()
         return DeskPlaceResult(
             order=submitted,
             blocked=True,
@@ -677,8 +705,8 @@ def place_desk_order(
             audit_id=submit_audit or risk_audit,
             journaled=True,
         )
-    # Count daily mandate only after broker accept + durable journal (not shadow / 502).
-    if side == "buy" and mode != "shadow":
+    # Cap path already reserved before broker. No-cap still persists the count.
+    if side == "buy" and mode != "shadow" and not reserved:
         gate.record_order()
     return DeskPlaceResult(
         order=submitted,

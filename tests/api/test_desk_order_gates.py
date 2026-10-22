@@ -424,3 +424,30 @@ def test_api_kill_market_sell_409_d_sell_kill(desk_api):
     assert res.status_code != 200
     assert res.json()["detail"] == KILL_SELL_DETAIL
     desk_api["broker"].submit_order.assert_not_called()
+
+
+def test_api_daily_limit_survives_gate_reset(desk_api):
+    """R4 fail-case: FastAPI Desk POST shares the durable counter across gate reset.
+
+    Pre-fix main: reset_desk_mandate_gate() let a second buy through the same day.
+    """
+    desk_api["mandate_path"].write_text(
+        json.dumps({**TIGHT, "max_daily_orders": 1}), encoding="utf-8"
+    )
+    client = desk_api["client"]
+    first = client.post(
+        "/api/orders",
+        json={"symbol": "AAPL", "side": "buy", "quantity": 1, "limit_price": 150, "order_type": "limit"},
+    )
+    assert first.status_code == 200, first.text
+    reset_desk_mandate_gate()
+    second = client.post(
+        "/api/orders",
+        json={"symbol": "MSFT", "side": "buy", "quantity": 1, "limit_price": 150, "order_type": "limit"},
+    )
+    assert second.status_code == 409, second.text
+    detail = second.json()["detail"]
+    assert "daily order limit" in str(detail).lower()
+    desk_api["broker"].submit_order.assert_called_once()
+    rows = journal_store.load_raw_entries()
+    assert any("daily order limit" in str(row).lower() for row in rows)
