@@ -8,8 +8,15 @@ import pytest
 from fastapi.testclient import TestClient
 
 from backend.api.desk_display import (
+    UNPRICED_FILL_LABEL,
     compose_performance_kpis,
     display_chips,
+    is_priced_fill,
+    journal_display_audit,
+    journal_display_row,
+    journal_status_class,
+    journal_status_label,
+    journal_summary_label,
     orders_book,
     paper_vs_spy_risk,
     strategy_fallback_row,
@@ -375,3 +382,670 @@ def test_d4_user_guide_matches_live_pid_chip():
     assert "心跳正常" not in text
     assert "live pid" in text.lower()
     assert "未驗證心跳" in text
+
+
+# --- plan-12e: live UI copy index.html vs App.tsx ---------------------------
+
+HOLDINGS_HINT = "Alpaca Paper real book (not a model portfolio)"
+EMPTY_POSITIONS = "No positions yet — paper auto only fills when a signal passes every gate."
+OPEN_ORDERS_HINT = "new / accepted = sent to the broker, not filled yet. The limit must trade before shares hit the book."
+UNPRICED_FILL = "unpriced — not a fill"
+PAPER_GATE = "Do not set APCA_PAPER=false until the paper runbook is signed."
+JOURNAL_LEAD = (
+    "Orders, risk rejects, and operator notes from the local ledger. "
+    "Empty means nothing was recorded — not a live fill. "
+    "Fills appear only with a recorded fill price. Streamlit journal is lab/legacy."
+)
+ALERTS_BODY = (
+    "New rules attach to saved research plans. Telegram worker stays the delivery path. "
+    "Not a live fill feed."
+)
+AIMODE_LEAD = (
+    "Only place to tune the agent and start paper auto trading. "
+    "LLM cannot bypass RiskEngine / kill / mandate."
+)
+MANDATE_GAP = "Desk and paper worker fail-closed until mandate.json loads."
+
+
+def test_plan12e_no_unverified_live_or_filled_claims():
+    html = INDEX.read_text(encoding="utf-8")
+    tsx = APP_TSX.read_text(encoding="utf-8")
+    assert "live paper book" not in html.lower()
+    assert "live paper book" not in tsx.lower()
+    assert "Worker linked" not in tsx
+    assert "delivery live" not in tsx.lower()
+    assert "Details also live in" not in html
+    assert "worker still fail-open" not in html.lower()
+    assert "paper worker still fail-open" not in html.lower()
+    assert '"verified": true' not in tsx.lower()
+    assert "verified: true" not in tsx.lower()
+
+
+def test_plan12e_copy_aligned_between_product_html_and_app_tsx():
+    html = INDEX.read_text(encoding="utf-8")
+    tsx = APP_TSX.read_text(encoding="utf-8")
+    for phrase in (
+        HOLDINGS_HINT,
+        EMPTY_POSITIONS,
+        OPEN_ORDERS_HINT,
+        UNPRICED_FILL,
+        PAPER_GATE,
+        JOURNAL_LEAD,
+        ALERTS_BODY,
+        AIMODE_LEAD,
+        MANDATE_GAP,
+        "positiveFillPrice",
+        "orderStatusLabel",
+        "journalStatusLabel",
+        "journalSummaryLabel",
+    ):
+        assert phrase in html, phrase
+        assert phrase in tsx, phrase
+
+
+def test_plan12e_unpriced_fill_is_not_shown_as_filled_in_ui():
+    html = INDEX.read_text(encoding="utf-8")
+    tsx = APP_TSX.read_text(encoding="utf-8")
+    html_priced = html[html.index("function isPricedFill") : html.index("function orderStatusLabel")]
+    tsx_priced = tsx[tsx.index("function isPricedFill") : tsx.index("function orderStatusLabel")]
+    assert "fills.length" not in html_priced
+    assert "fills.length" not in tsx_priced
+    assert "positiveFillPrice" in html_priced
+    assert "positiveFillPrice" in tsx_priced
+    assert "journalSummaryLabel" in html
+    assert "journalSummaryLabel" in tsx
+
+
+def _unpriced_journal_rows():
+    return [
+        {
+            "schema_version": "trade_log.v0",
+            "log_id": "tl-zero-price",
+            "symbol": "AAPL",
+            "ts": "2026-10-22T12:00:00+00:00",
+            "status": "filled",
+            "kind": "fill",
+            "side": "buy",
+            "qty": 1,
+            "fills": [{"price": 0, "qty": 1}],
+            "user_visible_summary": "filled buy 1 AAPL",
+        },
+        {
+            "schema_version": "trade_log.v0",
+            "log_id": "tl-qty-only",
+            "symbol": "MSFT",
+            "ts": "2026-10-22T12:01:00+00:00",
+            "status": "filled",
+            "kind": "fill",
+            "side": "buy",
+            "qty": 1,
+            "fills": [{"qty": 1}],
+            "user_visible_summary": "filled buy 1 MSFT",
+        },
+        {
+            "schema_version": "trade_log.v0",
+            "log_id": "tl-limit-only",
+            "symbol": "NVDA",
+            "ts": "2026-10-22T12:02:00+00:00",
+            "status": "filled",
+            "kind": "fill",
+            "side": "buy",
+            "qty": 2,
+            "fills": [{"limit_price": 100, "qty": 2}],
+            "user_visible_summary": "filled buy 2 NVDA",
+        },
+        {
+            "schema_version": "trade_log.v0",
+            "log_id": "tl-empty-fills",
+            "symbol": "GOOG",
+            "ts": "2026-10-22T12:03:00+00:00",
+            "status": "filled",
+            "kind": "fill",
+            "side": "buy",
+            "qty": 1,
+            "fills": [],
+            "user_visible_summary": "filled buy 1 GOOG",
+        },
+        {
+            "schema_version": "trade_log.v0",
+            "log_id": "tl-top-zero",
+            "symbol": "META",
+            "ts": "2026-10-22T12:04:00+00:00",
+            "status": "filled",
+            "kind": "fill",
+            "side": "buy",
+            "qty": 1,
+            "fills": [],
+            "filled_avg_price": 0,
+            "user_visible_summary": "filled buy 1 META",
+        },
+    ]
+
+
+def test_plan12e_unpriced_fills_array_is_not_journal_filled():
+    """Fail-case: zero / missing / limit-only fills[] must not render as filled."""
+    for raw in _unpriced_journal_rows():
+        assert is_priced_fill(raw) is False
+        shown = journal_display_row(raw)
+        assert journal_status_label(raw) == UNPRICED_FILL_LABEL
+        assert shown["display_status"] == UNPRICED_FILL_LABEL
+        assert shown["display_status"] != "filled"
+        assert journal_status_class(raw) == "submitted"
+        assert shown["display_status_class"] == "submitted"
+        assert shown["display_status_class"] != "filled"
+        assert "filled" not in shown["user_visible_summary"].lower()
+        assert UNPRICED_FILL_LABEL in shown["user_visible_summary"]
+        assert shown.get("kind") != "fill"
+        assert shown.get("status") != "filled"
+        assert shown.get("status") != "partially_filled"
+        assert shown["status"] == UNPRICED_FILL_LABEL
+        assert journal_summary_label(raw) == UNPRICED_FILL_LABEL
+        dumped = __import__("json").dumps(shown).lower()
+        assert '"status": "filled"' not in dumped
+        assert '"status":"filled"' not in dumped
+
+
+def test_plan12e_mixed_unpriced_filled_buy_summary_is_demoted():
+    raw = {
+        "status": "filled",
+        "kind": "fill",
+        "fills": [{"price": 0, "qty": 1}],
+        "user_visible_summary": "unpriced but filled buy 1 ORCL",
+    }
+    shown = journal_display_row(raw)
+    assert shown["status"] == UNPRICED_FILL_LABEL
+    assert shown["user_visible_summary"] == UNPRICED_FILL_LABEL
+    assert "filled buy" not in shown["user_visible_summary"].lower()
+    assert journal_summary_label(raw) == UNPRICED_FILL_LABEL
+
+
+def test_plan12e_priced_fills_array_still_shows_filled():
+    raw = {
+        "status": "filled",
+        "kind": "fill",
+        "fills": [{"price": 12.5, "qty": 1}],
+        "user_visible_summary": "filled buy 1 AAPL",
+    }
+    shown = journal_display_row(raw)
+    assert is_priced_fill(raw) is True
+    assert shown["display_status"] == "filled"
+    assert shown["display_status_class"] == "filled"
+    assert shown["user_visible_summary"] == "filled buy 1 AAPL"
+    assert shown.get("kind") == "fill"
+
+
+def _assert_journal_row_not_priced_filled(row: dict) -> None:
+    import json
+
+    st = str(row.get("status") or "")
+    assert st.lower() != "filled"
+    assert st.lower() != "partially_filled"
+    assert "filled" not in st.lower()
+    assert st == UNPRICED_FILL_LABEL
+    assert row["display_status"] == UNPRICED_FILL_LABEL
+    assert row["display_status"] != "filled"
+    assert row["display_status_class"] == "submitted"
+    assert row["display_status_class"] != "filled"
+    assert "filled" not in str(row.get("user_visible_summary") or "").lower()
+    assert UNPRICED_FILL_LABEL in str(row.get("user_visible_summary") or "")
+    assert row.get("kind") != "fill"
+    assert row.get("verified") is not True
+    assert (row.get("provenance") or {}).get("live") is not True
+    dumped = json.dumps(row).lower()
+    assert '"status": "filled"' not in dumped
+    assert '"status":"filled"' not in dumped
+    assert '"kind": "fill"' not in dumped
+
+
+def test_plan12e_journal_api_unpriced_fills_not_shown_filled(honesty_api, tmp_path, monkeypatch):
+    import json
+
+    from backend.utils.provenance import journal_store
+
+    path = tmp_path / "trade_journal.json"
+    path.write_text(json.dumps({"schema_version": "trade_log.v0", "entries": _unpriced_journal_rows()}), encoding="utf-8")
+    monkeypatch.setattr(journal_store, "JOURNAL_PATH", path)
+    before = path.read_bytes()
+    res = honesty_api["client"].get("/api/journal")
+    assert res.status_code == 200, res.text
+    body = res.json()
+    by_id = {row.get("log_id"): row for row in body["entries"]}
+    for raw in _unpriced_journal_rows():
+        row = by_id.get(raw["log_id"])
+        assert row is not None, raw["log_id"]
+        _assert_journal_row_not_priced_filled(row)
+    dumped = json.dumps(body).lower()
+    assert '"status": "filled"' not in dumped
+    assert '"status":"filled"' not in dumped
+    assert '"kind": "fill"' not in dumped
+    assert path.read_bytes() == before
+
+
+def test_plan12e_journal_entry_api_unpriced_fills_not_shown_filled(honesty_api, tmp_path, monkeypatch):
+    """Fail-case: click-through GET /api/journal/entry/{log_id} must use the list overlay."""
+    import json
+
+    from backend.utils.provenance import journal_store
+
+    path = tmp_path / "trade_journal.json"
+    path.write_text(json.dumps({"schema_version": "trade_log.v0", "entries": _unpriced_journal_rows()}), encoding="utf-8")
+    monkeypatch.setattr(journal_store, "JOURNAL_PATH", path)
+    before = path.read_bytes()
+    for raw in _unpriced_journal_rows():
+        res = honesty_api["client"].get(f"/api/journal/entry/{raw['log_id']}")
+        assert res.status_code == 200, res.text
+        payload = res.json()
+        entry = payload.get("entry") or {}
+        assert entry.get("log_id") == raw["log_id"]
+        _assert_journal_row_not_priced_filled(entry)
+        dumped = json.dumps(payload).lower()
+        assert '"kind": "fill"' not in dumped
+        assert '"status": "filled"' not in dumped
+        assert '"status":"filled"' not in dumped
+        assert "filled buy" not in dumped
+        assert payload.get("verified") is not True
+    assert path.read_bytes() == before
+
+
+def _audit_dir_bytes(audit_dir: Path) -> bytes:
+    parts = []
+    for path in sorted(audit_dir.glob("audit_*.jsonl")):
+        parts.append(path.name.encode("utf-8") + b"\n" + path.read_bytes())
+    return b"".join(parts)
+
+
+def _assert_no_dishonest_fill_status(blob) -> None:
+    import json
+
+    dumped = blob.lower() if isinstance(blob, str) else json.dumps(blob).lower()
+    assert '"status": "filled"' not in dumped
+    assert '"status":"filled"' not in dumped
+    assert '"status": "partially_filled"' not in dumped
+    assert '"status":"partially_filled"' not in dumped
+
+
+def test_plan12e_journal_display_audit_demotes_unpriced_payload_status():
+    entry = journal_display_row(
+        {
+            "status": "filled",
+            "kind": "fill",
+            "fills": [{"price": 0, "qty": 1}],
+            "user_visible_summary": "filled buy 1 AAPL",
+        }
+    )
+    raw_audit = {
+        "event_id": "aud-unpriced",
+        "event_type": "order_submission",
+        "status": "filled",
+        "limit_price": 100,
+        "payload": {"status": "filled", "limit_price": 100, "order_id": "ord-1"},
+    }
+    shown = journal_display_audit(raw_audit, entry=entry)
+    assert shown is not None
+    assert shown["status"] == UNPRICED_FILL_LABEL
+    assert shown["payload"]["status"] == UNPRICED_FILL_LABEL
+    _assert_no_dishonest_fill_status(shown)
+    assert raw_audit["status"] == "filled"
+    assert raw_audit["payload"]["status"] == "filled"
+
+
+def test_plan12e_journal_display_audit_demotes_submitted_and_proposed_entries():
+    """from_order / normalize often leave submitted or proposed, not unpriced."""
+    filled_audit = {
+        "event_id": "aud-sub",
+        "status": "filled",
+        "limit_price": 100,
+        "payload": {"status": "filled", "limit_price": 100},
+    }
+    submitted = journal_display_audit(
+        filled_audit,
+        entry={"status": "submitted", "kind": "order", "fills": [], "limit_price": 100},
+    )
+    assert submitted is not None
+    assert submitted["status"] == UNPRICED_FILL_LABEL
+    assert submitted["payload"]["status"] == UNPRICED_FILL_LABEL
+    _assert_no_dishonest_fill_status(submitted)
+
+    partial_audit = {
+        "event_id": "aud-prop",
+        "status": "partially_filled",
+        "limit_price": 50,
+        "payload": {"status": "partially_filled", "limit_price": 50},
+    }
+    proposed = journal_display_audit(
+        partial_audit,
+        entry={"status": "proposed", "kind": "note", "fills": []},
+    )
+    assert proposed is not None
+    assert proposed["status"] == UNPRICED_FILL_LABEL
+    assert proposed["payload"]["status"] == UNPRICED_FILL_LABEL
+    _assert_no_dishonest_fill_status(proposed)
+    assert filled_audit["status"] == "filled"
+    assert partial_audit["status"] == "partially_filled"
+
+
+def test_plan12e_journal_entry_unpriced_linked_audit_not_shown_filled(
+    honesty_api, tmp_path, monkeypatch
+):
+    """Fail-case: Entry+audit must not leak audit.status=filled for an unpriced fill."""
+    import json
+
+    from backend.trading.safety import audit
+    from backend.utils.provenance import journal_store
+
+    journal = tmp_path / "trade_journal.json"
+    audit_dir = tmp_path / "audit"
+    audit_dir.mkdir()
+    monkeypatch.setattr(journal_store, "JOURNAL_PATH", journal)
+    monkeypatch.setattr(audit, "AUDIT_DIR", audit_dir)
+
+    event_id = audit.log_order_submission(
+        symbol="AAPL",
+        side="buy",
+        quantity=1.0,
+        limit_price=100.0,
+        order_id="ord-unpriced",
+        status="filled",
+    )
+    assert event_id
+    row = {
+        "schema_version": "trade_log.v0",
+        "log_id": "tl-unpriced-audit",
+        "symbol": "AAPL",
+        "ts": "2026-10-22T12:00:00+00:00",
+        "status": "filled",
+        "kind": "fill",
+        "side": "buy",
+        "qty": 1,
+        "fills": [{"price": 0, "qty": 1}],
+        "user_visible_summary": "filled buy 1 AAPL",
+        "risk_decision_id": event_id,
+    }
+    journal.write_text(
+        json.dumps({"schema_version": "trade_log.v0", "entries": [row]}),
+        encoding="utf-8",
+    )
+    before_journal = journal.read_bytes()
+    before_audit = _audit_dir_bytes(audit_dir)
+
+    res = honesty_api["client"].get("/api/journal/entry/tl-unpriced-audit")
+    assert res.status_code == 200, res.text
+    _assert_no_dishonest_fill_status(res.text)
+    payload = res.json()
+    entry = payload.get("entry") or {}
+    linked = payload.get("audit") or {}
+    assert entry.get("log_id") == "tl-unpriced-audit"
+    _assert_journal_row_not_priced_filled(entry)
+    assert linked.get("event_id") == event_id
+    assert linked.get("status") == UNPRICED_FILL_LABEL
+    assert (linked.get("payload") or {}).get("status") == UNPRICED_FILL_LABEL
+    _assert_no_dishonest_fill_status(payload)
+    assert "filled buy" not in json.dumps(payload).lower()
+    assert journal.read_bytes() == before_journal
+    assert _audit_dir_bytes(audit_dir) == before_audit
+
+
+def test_plan12e_journal_entry_priced_linked_audit_keeps_filled(
+    honesty_api, tmp_path, monkeypatch
+):
+    """Control: a priced fill may still show status=filled on entry and audit."""
+    import json
+
+    from backend.trading.safety import audit
+    from backend.utils.provenance import journal_store
+
+    journal = tmp_path / "trade_journal.json"
+    audit_dir = tmp_path / "audit"
+    audit_dir.mkdir()
+    monkeypatch.setattr(journal_store, "JOURNAL_PATH", journal)
+    monkeypatch.setattr(audit, "AUDIT_DIR", audit_dir)
+
+    event_id = audit.log_event(
+        "order_submission",
+        {
+            "symbol": "AAPL",
+            "side": "buy",
+            "quantity": 1.0,
+            "limit_price": 100.0,
+            "order_id": "ord-priced",
+            "status": "filled",
+            "filled_avg_price": 12.5,
+        },
+        actor="worker",
+        kind="order_submit",
+    )
+    assert event_id
+    row = {
+        "schema_version": "trade_log.v0",
+        "log_id": "tl-priced-audit",
+        "symbol": "AAPL",
+        "ts": "2026-10-22T12:05:00+00:00",
+        "status": "filled",
+        "kind": "fill",
+        "side": "buy",
+        "qty": 1,
+        "fills": [{"price": 12.5, "qty": 1}],
+        "user_visible_summary": "filled buy 1 AAPL",
+        "risk_decision_id": event_id,
+    }
+    journal.write_text(
+        json.dumps({"schema_version": "trade_log.v0", "entries": [row]}),
+        encoding="utf-8",
+    )
+    before_journal = journal.read_bytes()
+    before_audit = _audit_dir_bytes(audit_dir)
+
+    res = honesty_api["client"].get("/api/journal/entry/tl-priced-audit")
+    assert res.status_code == 200, res.text
+    payload = res.json()
+    entry = payload.get("entry") or {}
+    linked = payload.get("audit") or {}
+    assert entry.get("status") == "filled"
+    assert entry.get("kind") == "fill"
+    assert entry.get("user_visible_summary") == "filled buy 1 AAPL"
+    assert linked.get("event_id") == event_id
+    assert linked.get("status") == "filled"
+    assert (linked.get("payload") or {}).get("status") == "filled"
+    dumped = json.dumps(payload).lower()
+    assert '"status": "filled"' in dumped
+    assert journal.read_bytes() == before_journal
+    assert _audit_dir_bytes(audit_dir) == before_audit
+
+
+def test_plan12e_journal_entry_from_order_unpriced_audit_not_shown_filled(
+    honesty_api, tmp_path, monkeypatch
+):
+    """Product path: from_order(FILLED, no fill price) stays submitted; audit must not say filled."""
+    from backend.trading.safety import audit
+    from backend.utils.provenance import journal_store
+    from backend.utils.provenance.journal_store import record_from_order
+
+    journal = tmp_path / "trade_journal.json"
+    audit_dir = tmp_path / "audit"
+    audit_dir.mkdir()
+    monkeypatch.setattr(journal_store, "JOURNAL_PATH", journal)
+    monkeypatch.setattr(audit, "AUDIT_DIR", audit_dir)
+
+    event_id = audit.log_order_submission(
+        symbol="AAPL",
+        side="buy",
+        quantity=1.0,
+        limit_price=100.0,
+        order_id="ord-from-order-unpriced",
+        status="filled",
+    )
+    assert event_id
+    stored = record_from_order(
+        Order(
+            id="ord-from-order-unpriced",
+            symbol="AAPL",
+            side=OrderSide.BUY,
+            order_type=OrderType.LIMIT,
+            quantity=1,
+            limit_price=100.0,
+            status=OrderStatus.FILLED,
+            filled_avg_price=None,
+            idempotency_key="idem-from-order-unpriced",
+        ),
+        audit_id=event_id,
+    )
+    assert stored is not None
+    assert stored["status"] == "submitted"
+    assert stored["fills"] == []
+    log_id = stored["log_id"]
+    before_journal = journal.read_bytes()
+    before_audit = _audit_dir_bytes(audit_dir)
+
+    res = honesty_api["client"].get(f"/api/journal/entry/{log_id}")
+    assert res.status_code == 200, res.text
+    _assert_no_dishonest_fill_status(res.text)
+    payload = res.json()
+    entry = payload.get("entry") or {}
+    linked = payload.get("audit") or {}
+    assert entry.get("log_id") == log_id
+    assert entry.get("status") == "submitted"
+    assert is_priced_fill(entry) is False
+    assert linked.get("event_id") == event_id
+    assert linked.get("status") == UNPRICED_FILL_LABEL
+    assert (linked.get("payload") or {}).get("status") == UNPRICED_FILL_LABEL
+    _assert_no_dishonest_fill_status(payload)
+    assert journal.read_bytes() == before_journal
+    assert _audit_dir_bytes(audit_dir) == before_audit
+
+
+def test_plan12e_journal_entry_audit_only_unpriced_not_shown_filled(
+    honesty_api, tmp_path, monkeypatch
+):
+    """Product path: audit-jsonl-only row is submitted; Entry+audit must not say filled."""
+    from backend.trading.safety import audit
+    from backend.utils.provenance import journal_store
+
+    journal = tmp_path / "trade_journal.json"
+    audit_dir = tmp_path / "audit"
+    audit_dir.mkdir()
+    monkeypatch.setattr(journal_store, "JOURNAL_PATH", journal)
+    monkeypatch.setattr(audit, "AUDIT_DIR", audit_dir)
+
+    event_id = audit.log_order_submission(
+        symbol="NVDA",
+        side="buy",
+        quantity=1.0,
+        limit_price=200.0,
+        order_id="ord-audit-only",
+        status="filled",
+    )
+    assert event_id
+    before_audit = _audit_dir_bytes(audit_dir)
+    assert not journal.exists()
+
+    listed = honesty_api["client"].get("/api/journal")
+    assert listed.status_code == 200, listed.text
+    row = next(
+        e for e in listed.json()["entries"] if e.get("risk_decision_id") == event_id
+    )
+    assert row.get("status") == "submitted"
+    assert is_priced_fill(row) is False
+    log_id = row["log_id"]
+    assert not journal.exists()
+
+    res = honesty_api["client"].get(f"/api/journal/entry/{log_id}")
+    assert res.status_code == 200, res.text
+    _assert_no_dishonest_fill_status(res.text)
+    payload = res.json()
+    entry = payload.get("entry") or {}
+    linked = payload.get("audit") or {}
+    assert entry.get("log_id") == log_id
+    assert entry.get("status") == "submitted"
+    assert linked.get("event_id") == event_id
+    assert linked.get("status") == UNPRICED_FILL_LABEL
+    assert (linked.get("payload") or {}).get("status") == UNPRICED_FILL_LABEL
+    _assert_no_dishonest_fill_status(payload)
+    assert not journal.exists()
+    assert _audit_dir_bytes(audit_dir) == before_audit
+
+
+def test_plan12e_journal_entry_stored_partially_filled_audit_not_shown_filled(
+    honesty_api, tmp_path, monkeypatch
+):
+    """Stored partially_filled normalizes to proposed; linked audit must not stay partially_filled."""
+    import json
+
+    from backend.trading.safety import audit
+    from backend.utils.provenance import journal_store
+
+    journal = tmp_path / "trade_journal.json"
+    audit_dir = tmp_path / "audit"
+    audit_dir.mkdir()
+    monkeypatch.setattr(journal_store, "JOURNAL_PATH", journal)
+    monkeypatch.setattr(audit, "AUDIT_DIR", audit_dir)
+
+    event_id = audit.log_event(
+        "order_submission",
+        {
+            "symbol": "IBM",
+            "side": "buy",
+            "quantity": 1.0,
+            "limit_price": 100.0,
+            "order_id": "ord-partial",
+            "status": "partially_filled",
+        },
+        actor="worker",
+        kind="order_submit",
+    )
+    assert event_id
+    row = {
+        "schema_version": "trade_log.v0",
+        "log_id": "tl-partial-stored",
+        "symbol": "IBM",
+        "ts": "2026-10-22T12:06:00+00:00",
+        "status": "partially_filled",
+        "kind": "fill",
+        "side": "buy",
+        "qty": 1,
+        "fills": [{"price": 0, "qty": 1}],
+        "user_visible_summary": "filled buy 1 IBM",
+        "risk_decision_id": event_id,
+    }
+    journal.write_text(
+        json.dumps({"schema_version": "trade_log.v0", "entries": [row]}),
+        encoding="utf-8",
+    )
+    before_journal = journal.read_bytes()
+    before_audit = _audit_dir_bytes(audit_dir)
+
+    res = honesty_api["client"].get("/api/journal/entry/tl-partial-stored")
+    assert res.status_code == 200, res.text
+    _assert_no_dishonest_fill_status(res.text)
+    payload = res.json()
+    entry = payload.get("entry") or {}
+    linked = payload.get("audit") or {}
+    assert entry.get("log_id") == "tl-partial-stored"
+    assert entry.get("status") == "proposed"
+    assert is_priced_fill(entry) is False
+    assert linked.get("event_id") == event_id
+    assert linked.get("status") == UNPRICED_FILL_LABEL
+    assert (linked.get("payload") or {}).get("status") == UNPRICED_FILL_LABEL
+    _assert_no_dishonest_fill_status(payload)
+    assert journal.read_bytes() == before_journal
+    assert _audit_dir_bytes(audit_dir) == before_audit
+
+
+def test_plan12e_guide_api_desk_is_paper_book_not_live(honesty_api):
+    res = honesty_api["client"].get("/api/guide")
+    assert res.status_code == 200, res.text
+    desk = next(step for step in res.json()["steps"] if step["id"] == "desk")
+    title = desk["en"]["title"].lower()
+    assert "live paper" not in title
+    assert "paper book" in title
+    assert desk["en"]["title"] == "Desk is the paper book"
+
+
+def test_plan12e_journal_disclaimer_matches_ui_lead(honesty_api):
+    res = honesty_api["client"].get("/api/journal")
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["disclaimer"] == JOURNAL_LEAD
+    assert "not a live fill" in body["disclaimer"].lower()
+    assert "recorded fill price" in body["disclaimer"].lower()
+    assert body.get("verified") is not True
+    assert body.get("live") is not True

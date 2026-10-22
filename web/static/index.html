@@ -259,7 +259,7 @@ const I18N = {
     "page.calendar":"Calendar",
     "page.guide":"Guide",
     "page.journal":"Trade journal",
-    "journal.lead":"Orders, risk rejects, and operator notes from the local ledger. Empty means nothing was recorded — not a live fill. Streamlit journal is lab/legacy.",
+    "journal.lead":"Orders, risk rejects, and operator notes from the local ledger. Empty means nothing was recorded — not a live fill. Fills appear only with a recorded fill price. Streamlit journal is lab/legacy.",
     "journal.add":"Add note",
     "journal.note_ph":"Note (not a fill)",
     "journal.empty":"No recorded orders, rejects, or notes yet. This is not a live book.",
@@ -355,7 +355,7 @@ const I18N = {
     "desk.digest.filled_today":"Filled today",
     "desk.digest.pending":"Working (not filled)",
     "desk.digest.skips":"Why no buy",
-    "desk.digest.not_seal":"Unfilled limits (new/accepted) are not a seal. Only filled shares count.",
+    "desk.digest.not_seal":"Unfilled limits (new/accepted) are not a seal. Only priced fills count.",
     "desk.tear":"Tear sheet",
     "desk.tear.hint":"QuantStats-style stats for the paper book or one ticker. Stub if lab extras are off.",
     "desk.tear.paper":"Paper book",
@@ -380,6 +380,10 @@ const I18N = {
     "desk.open":"Open orders",
     "desk.open.hint":"new / accepted = sent to the broker, not filled yet. The limit must trade before shares hit the book.",
     "orders.degraded":"Orders source={source} · degraded · unverified — not a clean broker book.",
+    "orders.unpriced":"unpriced — not a fill",
+    "orders.fill":"Fill",
+    "desk.mandate.gap":"Mandate {status} — Desk and paper worker fail-closed until mandate.json loads.",
+    "settings.paper_gate":"Do not set APCA_PAPER=false until the paper runbook is signed.",
     "desk.pending":"Working buys: {list}",
     "desk.none":"None",
     "aimode.pending":"Working buys",
@@ -410,7 +414,7 @@ const I18N = {
     "aimode.need_restart":"Worker is still on {live}. Press Apply & restart to run {want}.",
     "aimode.restart":"Apply & restart",
     "settings.lang":"Language",
-    "alerts.body":"New rules attach to saved research plans. Telegram worker stays the delivery path.",
+    "alerts.body":"New rules attach to saved research plans. Telegram worker stays the delivery path. Not a live fill feed.",
     "alerts.new":"New rule",
     "tour.next":"Next",
     "tour.back":"Back",
@@ -421,16 +425,16 @@ const I18N = {
     "t0.b":"This desk researches US stocks and can auto-trade on Alpaca paper. The PAPER badge means no live cash.",
     "t1.t":"Three sidebar groups",
     "t1.b":"Navigation is the daily workspace. Apps is where you start the AI worker. More has the trade journal and written guide.",
-    "t2.t":"Desk is the live paper book",
+    "t2.t":"Desk is the paper book",
     "t2.b":"Equity and holdings come from Alpaca paper. An empty table means no fills yet — not a broken screen.",
     "t3.t":"Start paper auto in AI Mode",
-    "t3.b":"Saving sliders does not start the bot. Press Start paper auto. The top bar turns AUTO ON when the worker process is running.",
+    "t3.b":"Saving sliders does not start the bot. Press Start paper auto. AUTO ON means the worker process is running (live pid) — not an unverified heartbeat.",
     "t4.t":"Why you may see no trades",
     "t4.b":"Run Scan so fund scores feed the AI (≥65). Then signals must still pass RSI/BB, Kelly, and risk gates.",
     "t5.t":"English and 繁體中文",
     "t5.b":"Switch anytime with EN / 繁. Replay this tour from Guide or the ? button.",
     "guide.title":"New user guide",
-    "guide.lead":"A short map of Cgab. Details also live in docs/CGAB_USER_GUIDE.md."
+    "guide.lead":"A short map of Cgab. Details are also in docs/CGAB_USER_GUIDE.md."
   },
   "zh-TW": {
     "brand.tag":"美股 AI 工作台",
@@ -452,7 +456,7 @@ const I18N = {
     "page.calendar":"行事曆",
     "page.guide":"教學",
     "page.journal":"交易日誌",
-    "journal.lead":"本機帳本中的訂單、風控拒絕與操作筆記。空白代表尚未入帳，不是即時成交。Streamlit 日誌只是實驗室／舊介面。",
+    "journal.lead":"本機帳本中的訂單、風控拒絕與操作筆記。空白代表尚未入帳，不是即時成交。只有已記錄成交價才會顯示 fill。Streamlit 日誌只是實驗室／舊介面。",
     "journal.add":"新增筆記",
     "journal.note_ph":"筆記（不是成交）",
     "journal.empty":"尚無訂單、拒絕或筆記。這不是即時帳本。",
@@ -548,7 +552,7 @@ const I18N = {
     "desk.digest.filled_today":"今日已成交",
     "desk.digest.pending":"待成交（未成交）",
     "desk.digest.skips":"為何沒買",
-    "desk.digest.not_seal":"未成交限價單（new／accepted）不算封印。只有 filled 才入帳。",
+    "desk.digest.not_seal":"未成交限價單（new／accepted）不算封印。只有已記錄成交價的 fill 才入帳。",
     "desk.tear":"報酬分析",
     "desk.tear.hint":"紙上組合或單票的 QuantStats 風格指標。沒裝 lab 套件時顯示 JSON 摘要。",
     "desk.tear.paper":"紙上組合",
@@ -573,6 +577,10 @@ const I18N = {
     "desk.open":"未成交訂單",
     "desk.open.hint":"new／accepted = 已送券商，還沒成交。限價碰到才會入帳。",
     "orders.degraded":"訂單來源={source} · 降級 · 未驗證 — 不是乾淨的券商帳本。",
+    "orders.unpriced":"無成交價 — 不是成交",
+    "orders.fill":"成交價",
+    "desk.mandate.gap":"授權 {status} — 工作台與紙上 worker 都 fail-closed，直到 mandate.json 載入。",
+    "settings.paper_gate":"在紙上 runbook 簽署前，不要把 APCA_PAPER 設成 false。",
     "desk.pending":"待成交買單：{list}",
     "desk.none":"無",
     "aimode.pending":"待成交買單",
@@ -603,7 +611,7 @@ const I18N = {
     "aimode.need_restart":"工作行程仍是 {live}。按「套用並重啟」才會改成 {want}。",
     "aimode.restart":"套用並重啟",
     "settings.lang":"語言",
-    "alerts.body":"新規則會綁在已儲存的研究計畫。Telegram 仍是通知通道。",
+    "alerts.body":"新規則會綁在已儲存的研究計畫。Telegram 仍是通知通道。不是即時成交來源。",
     "alerts.new":"新增規則",
     "tour.next":"下一步",
     "tour.back":"上一步",
@@ -617,7 +625,7 @@ const I18N = {
     "t2.t":"工作台是模擬帳本",
     "t2.b":"權益與持倉來自 Alpaca 模擬帳戶。表格空白代表還沒成交，不是畫面壞掉。",
     "t3.t":"在 AI 模式啟動自動交易",
-    "t3.b":"只儲存參數不會啟動機器人。請按「啟動紙上自動交易」。工作行程進程在跑時頂欄會變成 AUTO ON。",
+    "t3.b":"只儲存參數不會啟動機器人。請按「啟動紙上自動交易」。AUTO ON 代表工作行程進程在跑（有活 PID），不是未驗證心跳。",
     "t4.t":"為什麼可能沒有成交",
     "t4.b":"先跑掃描讓基本面分數餵給 AI（≥65）。訊號還要通過 RSI/布林、凱利倉位與風控。",
     "t5.t":"英文與繁體中文",
@@ -680,6 +688,69 @@ function workerProcessOn(w){
   if(w.unverified || w.process_evidence==="heartbeat_unverified") return false;
   if(w.display && w.display.auto_on===false) return false;
   return !!w.running;
+}
+function fillItemPrice(item){
+  if(!item || typeof item!=="object") return null;
+  const raw = item.price ?? item.filled_avg_price ?? item.fill_price ?? item.filled_price;
+  if(typeof raw==="boolean") return null;
+  const n = Number(raw);
+  return (raw!=null && raw!=="" && !isNaN(n) && n>0) ? n : null;
+}
+function positiveFillPrice(o){
+  if(!o) return null;
+  const raw = o.filled_avg_price ?? o.fill_price ?? o.filled_price;
+  if(typeof raw!=="boolean"){
+    const n = Number(raw);
+    if(raw!=null && raw!=="" && !isNaN(n) && n>0) return n;
+  }
+  const fills = (o.fills)||[];
+  for(const item of fills){
+    const px = fillItemPrice(item);
+    if(px!=null) return px;
+  }
+  return null;
+}
+function isPricedFill(e){
+  return positiveFillPrice(e)!=null;
+}
+function orderStatusLabel(o){
+  const st = String(o && o.status || "").toLowerCase();
+  if((st==="filled" || st==="partially_filled") && !isPricedFill(o)){
+    return t("orders.unpriced");
+  }
+  return (o && o.status) ? String(o.status) : "—";
+}
+function fillPriceLabel(o){
+  const px = positiveFillPrice(o);
+  return px==null ? "—" : ("$"+px.toFixed(2));
+}
+function journalStatusLabel(e){
+  const st = String(e && e.status || "").toLowerCase();
+  if((st==="filled" || st==="partially_filled") && !isPricedFill(e)){
+    return t("orders.unpriced");
+  }
+  return (e && e.status) ? String(e.status) : "—";
+}
+function journalStatusClass(e){
+  const st = String(e && e.status || "").toLowerCase();
+  if((st==="filled" || st==="partially_filled") && !isPricedFill(e)) return "jnl-status submitted";
+  return "jnl-status "+String(e && e.status || "");
+}
+function journalSummaryLabel(e){
+  const summary = String((e && (e.user_visible_summary||e.note)) || "").trim();
+  const st = String(e && e.status || "").toLowerCase();
+  const claiming = st==="filled" || st==="partially_filled" || st.indexOf("unpriced")>=0;
+  if(!claiming || isPricedFill(e)) return summary || "—";
+  if(!summary) return t("orders.unpriced");
+  const low = summary.toLowerCase();
+  if(low.indexOf("filled")>=0) return t("orders.unpriced");
+  if(low.indexOf("unpriced")>=0) return summary;
+  return summary+" · "+t("orders.unpriced");
+}
+function mandateGap(ops){
+  const st = ops && ops.mandate_status;
+  if(!st || st==="loaded") return "";
+  return t("desk.mandate.gap",{status: st});
 }
 function applyChrome(){
   document.documentElement.lang = lang === "zh-TW" ? "zh-Hant" : "en";
@@ -931,11 +1002,12 @@ async function desk(){
           ${ordersDirty?`<p class="muted" style="color:#e8b86d">${t("orders.degraded",{source: orderBook.source||"local_store"})}</p>`:""}
           ${orders.length?orders.slice(0,8).map(o=>{
             const px = o.limit_price!=null && o.limit_price!=="" ? ` @ $${Number(o.limit_price).toFixed(2)}` : "";
-            const st = o.status ? ` · ${o.status}` : "";
-            return `<div class="row" style="justify-content:space-between"><span>${o.symbol} ${o.side} ${o.qty||o.quantity||""}${px}${st}</span><button class="btn ghost cancel" data-id="${o.id}">Cancel</button></div>`;
+            const st = ` · ${esc(orderStatusLabel(o))}`;
+            const fill = positiveFillPrice(o)!=null ? ` · fill ${fillPriceLabel(o)}` : "";
+            return `<div class="row" style="justify-content:space-between"><span>${o.symbol} ${o.side} ${o.qty||o.quantity||""}${px}${st}${fill}</span><button class="btn ghost cancel" data-id="${o.id}">Cancel</button></div>`;
           }).join(""):`<p class="muted">${t("desk.none")}</p>`}</div>
         <div class="card"><h3>${t("desk.risk")}</h3><p class="muted">Kill switch ${ops.kill_switch?"ON":"OFF"}</p>
-          <p class="muted">Desk mandate ${esc(ops.mandate_status||"unknown")}${ops.mandate_status==="loaded"?"":" — Desk ticket fail-closed (paper worker still fail-open if mandate.json missing)"}</p>
+          <p class="muted">Desk mandate ${esc(ops.mandate_status||"unknown")}${mandateGap(ops)?` — ${esc(mandateGap(ops))}`:""}</p>
           <div class="row"><button class="btn danger" id="halt">${t("btn.halt")}</button><button class="btn ghost" id="resume">${t("btn.resume")}</button></div>
           <p class="muted" style="margin-top:8px">${t("desk.llm")}</p>
         </div>
@@ -999,8 +1071,8 @@ async function orders(){
   root.innerHTML = `<div class="card"><h3>${t("page.orders")}</h3>
     <p class="muted">${t("desk.open.hint")}</p>
     ${dirty?`<p class="muted" style="color:#e8b86d">${t("orders.degraded",{source: d.source||"local_store"})}</p>`:""}
-    <table><thead><tr><th>Symbol</th><th>Side</th><th>Qty</th><th>Limit</th><th>Type</th><th>Status</th></tr></thead>
-    <tbody>${rows.map(o=>`<tr><td>${o.symbol}</td><td>${o.side}</td><td>${o.qty||o.quantity||""}</td><td>${o.limit_price!=null?("$"+Number(o.limit_price).toFixed(2)):"—"}</td><td>${o.type||o.order_type||""}</td><td>${o.status||""}</td></tr>`).join("")||`<tr><td class="muted">${t("desk.none")}</td></tr>`}</tbody></table></div>`;
+    <table><thead><tr><th>Symbol</th><th>Side</th><th>Qty</th><th>Limit</th><th>${t("orders.fill")}</th><th>Type</th><th>Status</th></tr></thead>
+    <tbody>${rows.map(o=>`<tr><td>${o.symbol}</td><td>${o.side}</td><td>${o.qty||o.quantity||""}</td><td>${o.limit_price!=null?("$"+Number(o.limit_price).toFixed(2)):"—"}</td><td>${fillPriceLabel(o)}</td><td>${o.type||o.order_type||""}</td><td>${esc(orderStatusLabel(o))}</td></tr>`).join("")||`<tr><td class="muted">${t("desk.none")}</td></tr>`}</tbody></table></div>`;
 }
 
 let deepSelected = [];
@@ -1771,9 +1843,9 @@ async function journal(kind){
         <td>${esc(e.symbol||"—")}</td>
         <td>${esc(e.side||"—")}</td>
         <td>${e.qty?esc(String(e.qty)): "—"}</td>
-        <td class="jnl-status ${esc(e.status||"")}">${esc(e.status||"—")}</td>
+        <td class="${esc(journalStatusClass(e))}">${esc(journalStatusLabel(e))}</td>
         <td><div class="jnl-codes">${(e.reason_codes||[]).map(c=>`<span class="jnl-code">${esc(c)}</span>`).join("")||"—"}</div></td>
-        <td>${esc(e.user_visible_summary||e.note||"—")}</td>
+        <td>${esc(journalSummaryLabel(e))}</td>
         <td>${journalProvChip(e.provenance)}</td>
         <td>${journalAuditLink(e)}</td>
       </tr>`).join("");
@@ -1802,7 +1874,7 @@ async function journal(kind){
       const path = id ? "/api/journal/entry/"+encodeURIComponent(id) : ref;
       const payload = await api(path);
       detail.classList.remove("hidden");
-      detail.textContent = t("journal.detail")+"\n"+JSON.stringify(payload, null, 2);
+      detail.textContent = t("journal.detail")+"\n"+JSON.stringify({entry: payload.entry, audit: payload.audit}, null, 2);
     } catch(err){
       detail.classList.remove("hidden");
       detail.textContent = err.message || t("journal.no_audit");
@@ -1838,13 +1910,14 @@ async function settings(){
   if(paperControls){
     try {
       const o = await api("/api/ops");
-      killLine = `<p class="muted">Kill switch ${o.kill_switch?"ON":"OFF"} · Desk mandate ${esc(o.mandate_status||"unknown")}${o.mandate_status==="loaded"?"":" (Desk ticket fail-closed; worker still fail-open if file missing)"}</p>`;
+      killLine = `<p class="muted">Kill switch ${o.kill_switch?"ON":"OFF"} · Desk mandate ${esc(o.mandate_status||"unknown")}${mandateGap(o)?` — ${esc(mandateGap(o))}`:""}</p>`;
     } catch(e){ killLine = `<p class="muted">${esc(e.message)}</p>`; }
   }
   root.innerHTML = `<div class="card"><h3>${t("page.settings")}</h3>
     <p>App: <strong>Cgab</strong></p>
     <p>${t("settings.lang")}: ${lang==="zh-TW"?"繁體中文":"English"}</p>
     <p>Paper: ${m.paper}</p>
+    <p class="muted">${t("settings.paper_gate")}</p>
     <p>Role: ${m.role|| (paperControls?"operator":"guest")}</p>
     <p>Ignore market hours: ${m.ignore_market_hours}</p>
     <p>LLM: ${m.llm?.configured?"ON":"OFF"} · chat=${m.llm?.chat_model||"—"} · reasoner=${m.llm?.reasoning_model||"—"}</p>
