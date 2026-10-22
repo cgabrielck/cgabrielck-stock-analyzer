@@ -225,16 +225,50 @@ class PostgresOrderStore:
                 conn.commit()
 
     def save_order(self, order: Order) -> None:
+        """Upsert by idempotency key, then by id.
+
+        A 422 ``client_order_id`` lookup replaces the local id with the
+        broker id and keeps the same key. ``ON CONFLICT (id)`` does not
+        see that row, so the insert hits ``UNIQUE(idempotency_key)`` and
+        the sticky pin never lands. Match the key first and move the id.
+        A same-id rewrite (key changed, id unchanged) still updates that row.
+        """
         payload = json.dumps(order.model_dump(mode="json"))
         with self._lock:
             with self._connect() as conn:
                 with conn.cursor() as cur:
                     cur.execute(
                         """
+                        UPDATE trading_orders
+                        SET id = %s,
+                            payload = %s::jsonb,
+                            updated_at = NOW()
+                        WHERE idempotency_key = %s
+                        """,
+                        (order.id, payload, order.idempotency_key),
+                    )
+                    if cur.rowcount and cur.rowcount > 0:
+                        conn.commit()
+                        return
+                    cur.execute(
+                        """
+                        UPDATE trading_orders
+                        SET idempotency_key = %s,
+                            payload = %s::jsonb,
+                            updated_at = NOW()
+                        WHERE id = %s
+                        """,
+                        (order.idempotency_key, payload, order.id),
+                    )
+                    if cur.rowcount and cur.rowcount > 0:
+                        conn.commit()
+                        return
+                    cur.execute(
+                        """
                         INSERT INTO trading_orders (id, idempotency_key, payload, updated_at)
                         VALUES (%s, %s, %s::jsonb, NOW())
-                        ON CONFLICT (id) DO UPDATE SET
-                            idempotency_key = EXCLUDED.idempotency_key,
+                        ON CONFLICT (idempotency_key) DO UPDATE SET
+                            id = EXCLUDED.id,
                             payload = EXCLUDED.payload,
                             updated_at = NOW()
                         """,

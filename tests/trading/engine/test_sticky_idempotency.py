@@ -622,3 +622,96 @@ def test_alpaca_py_retries_504_into_422_until_place_retry_is_disabled(monkeypatc
         client.submit_order(order_data=req)
     assert posts["n"] == 1
     assert once.value.status_code == 504
+
+
+def _pin_with_broker_id(order):
+    """What Alpaca's 422 lookup does: keep the key, replace the local id."""
+    order.id = "broker-desk-landed"
+    order.status = OrderStatus.ACCEPTANCE_UNKNOWN
+    order.idempotency_sticky = True
+    order.error_message = '{"code":42210000,"message":"client_order_id must be unique"}'
+    order.filled_avg_price = None
+    order.filled_at = None
+    return order
+
+
+def test_postgres_save_order_keeps_sticky_when_id_is_remapped(postgres_store):
+    """ON CONFLICT (id) misses the row after the local id becomes the broker id."""
+    local_id = "local-desk-1"
+    draft = _order(id=local_id, idempotency_key="fresh-1", status=OrderStatus.RISK_APPROVED)
+    postgres_store.save_order(draft)
+    pinned = draft.model_copy(
+        update={
+            "id": "broker-desk-landed",
+            "status": OrderStatus.ACCEPTANCE_UNKNOWN,
+            "idempotency_sticky": True,
+            "error_message": "client_order_id must be unique",
+            "filled_avg_price": None,
+        }
+    )
+    postgres_store.save_order(pinned)
+    saved = postgres_store.get_order_by_idempotency_key("fresh-1")
+    assert saved is not None
+    assert saved.id == "broker-desk-landed"
+    assert saved.idempotency_sticky is True
+    assert saved.status == OrderStatus.ACCEPTANCE_UNKNOWN
+    assert saved.filled_avg_price is None
+    assert postgres_store.get_order(local_id) is None
+    assert postgres_store.get_order("broker-desk-landed").idempotency_key == "fresh-1"
+    assert len(postgres_store.iter_all_orders()) == 1
+
+
+def test_postgres_save_order_still_updates_the_same_id(postgres_store):
+    original = _order(id="same-id", idempotency_key="key-a", status=OrderStatus.DRAFT)
+    postgres_store.save_order(original)
+    rewritten = original.model_copy(
+        update={"idempotency_key": "key-b", "status": OrderStatus.SUBMITTED}
+    )
+    postgres_store.save_order(rewritten)
+    by_id = postgres_store.get_order("same-id")
+    assert by_id is not None
+    assert by_id.idempotency_key == "key-b"
+    assert by_id.status == OrderStatus.SUBMITTED
+    assert postgres_store.get_order_by_idempotency_key("key-a") is None
+    assert postgres_store.get_order_by_idempotency_key("key-b").id == "same-id"
+    assert len(postgres_store.iter_all_orders()) == 1
+
+
+def test_desk_postgres_422_id_remap_blocks_the_next_new_key(isolated, postgres_store):
+    """First-sight 422 on Postgres: the pin must survive the id rewrite."""
+    keys = []
+
+    def _submit(order):
+        keys.append(order.idempotency_key)
+        return _pin_with_broker_id(order)
+
+    broker = MagicMock()
+    broker.get_account_summary.return_value = _account()
+    broker.submit_order.side_effect = _submit
+    path = isolated["mandate"]
+
+    first = _place(postgres_store, broker, path)
+    assert first.http_status == 502
+    assert first.order.status == OrderStatus.ACCEPTANCE_UNKNOWN
+    assert first.order.status != OrderStatus.REJECTED
+    assert first.order.status != OrderStatus.FILLED
+    assert first.order.idempotency_sticky is True
+    assert first.order.id == "broker-desk-landed"
+    assert first.order.filled_avg_price is None
+    assert first.detail["retry"] == DO_NOT_BLIND_RETRY
+    saved = postgres_store.get_order_by_idempotency_key("fresh-1")
+    assert saved is not None
+    assert saved.id == "broker-desk-landed"
+    assert saved.idempotency_sticky is True
+    assert postgres_store.get_order("id-fresh-1") is None
+
+    second = _place(postgres_store, broker, path, id="id-fresh-2", idempotency_key="fresh-2")
+    assert broker.submit_order.call_count == 1
+    assert keys == ["fresh-1"]
+    assert second.http_status == 502
+    assert second.http_status != 200
+    assert second.order.idempotency_key == "fresh-1"
+    assert second.order.status == OrderStatus.ACCEPTANCE_UNKNOWN
+    assert second.order.status != OrderStatus.REJECTED
+    assert second.order.idempotency_sticky is True
+    assert second.detail["retry"] == DO_NOT_BLIND_RETRY
