@@ -25,6 +25,7 @@ ensure_backend_on_path()
 from backend.api import intents as intents_api
 from backend.api import research_jobs, worker_ctl
 from backend.api.desk_auth import is_operator, require_operator
+from backend.api.desk_display import compose_performance_kpis, orders_book
 from backend.trading import telegram_inbox
 from backend.trading.alpaca_broker import AlpacaBroker
 from backend.trading.engine.cadence import normalize_cadence
@@ -265,10 +266,11 @@ def orders(status: str = "all", limit: int = 50, _auth: None = Depends(_require_
                     "submitted_at": str(o.submitted_at) if o.submitted_at else None,
                 }
             )
+        return orders_book(out, source="broker", degraded=False, unverified=False)
     except Exception:
         recent = _store.get_recent_orders(limit=limit)
         out = [o.model_dump(mode="json") for o in recent]
-    return {"orders": out}
+        return orders_book(out, source="local_store", degraded=True, unverified=True)
 
 
 @app.post("/api/orders")
@@ -477,11 +479,11 @@ def guide() -> Dict[str, Any]:
                 "id": "auto",
                 "en": {
                     "title": "How paper auto trading works",
-                    "body": "Open AI Mode → pick a strategy → Start paper auto. The top bar shows AUTO ON only when the worker heartbeat is fresh. The worker scans during US regular hours unless IGNORE_MARKET_HOURS=true.",
+                    "body": "Open AI Mode → pick a strategy → Start paper auto. The top bar shows AUTO ON only when the worker process is running (live pid) — not when the account is loaded and not from an unverified heartbeat. The worker scans during US regular hours unless IGNORE_MARKET_HOURS=true.",
                 },
                 "zh": {
                     "title": "如何開啟紙上自動交易",
-                    "body": "打開 AI 模式 → 選擇策略 → 按「啟動紙上自動交易」。只有工作行程心跳正常時，頂欄才會顯示 AUTO ON。預設只在美股正規交易時段掃描，除非 .env 設 IGNORE_MARKET_HOURS=true。",
+                    "body": "打開 AI 模式 → 選擇策略 → 按「啟動紙上自動交易」。只有工作行程進程在跑（有活 PID）時，頂欄才會顯示 AUTO ON。不是帳戶已載入，也不是未驗證心跳。預設只在美股正規交易時段掃描，除非 .env 設 IGNORE_MARKET_HOURS=true。",
                 },
             },
             {
@@ -799,27 +801,17 @@ def performance(refresh: bool = False, _auth: None = Depends(require_operator)) 
     summary_path = Path(DATA_DIR) / "strategy_backtest_stable_summary.json"
     summary = _read_json(summary_path, {})
     empty = bool(paper.get("empty_book")) if paper else True
+    kpis = compose_performance_kpis(paper, summary)
     return {
         "paper": paper,
         "source": paper.get("source") if paper else "none",
-        "win_rate_pct": (paper.get("trading") or {}).get("win_rate_pct")
-        if paper and not empty
-        else summary.get("win_rate_pct"),
-        "profit_factor": (paper.get("trading") or {}).get("profit_factor")
-        if paper and not empty
-        else summary.get("profit_factor"),
-        "sharpe_ratio": (paper.get("risk") or {}).get("sharpe_ratio")
-        if paper and not empty
-        else summary.get("sharpe_ratio"),
-        "max_drawdown_pct": (paper.get("risk") or {}).get("max_drawdown_pct")
-        if paper and not empty
-        else summary.get("max_drawdown_pct"),
-        "total_return_pct": (paper.get("pnl") or {}).get("total_return_pct")
-        if paper and not empty
-        else summary.get("total_return_pct"),
-        "num_trades": (paper.get("trading") or {}).get("num_trades")
-        if paper
-        else summary.get("num_trades"),
+        "kpi_source": kpis["kpi_source"],
+        "win_rate_pct": kpis["win_rate_pct"],
+        "profit_factor": kpis["profit_factor"],
+        "sharpe_ratio": kpis["sharpe_ratio"],
+        "max_drawdown_pct": kpis["max_drawdown_pct"],
+        "total_return_pct": kpis["total_return_pct"],
+        "num_trades": kpis["num_trades"],
         "spy_return_pct": None if empty else (paper.get("benchmark") or {}).get("spy_return_pct"),
         "alpha_net_of_costs_pct": None if empty else (paper.get("benchmark") or {}).get("alpha_net_of_costs_pct"),
         "beats_spy_net": None if empty else (paper.get("benchmark") or {}).get("beats_spy_net"),
@@ -832,6 +824,8 @@ def performance(refresh: bool = False, _auth: None = Depends(require_operator)) 
             "total_return_pct": summary.get("total_return_pct"),
             "num_trades": summary.get("num_trades"),
         },
+        "verified": False,
+        "live": False,
     }
 
 

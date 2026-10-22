@@ -49,11 +49,29 @@ function cls(n?: number | null) {
   if (n == null) return "";
   return n >= 0 ? "pos" : "neg";
 }
+function accountChipLabel(account: any) {
+  return account ? "Account loaded" : "Account —";
+}
+function workerChip(worker: any) {
+  const unverified = !!(worker?.unverified || worker?.process_evidence === "heartbeat_unverified");
+  if (unverified) return { label: "Worker unverified", klass: "chip warn" };
+  if (worker?.running) return { label: "Worker running", klass: "chip on" };
+  return { label: "Worker not running", klass: "chip" };
+}
+function kpiSourceLabel(perf: any) {
+  const src = perf?.kpi_source;
+  if (src === "paper" || src === "backtest") return src;
+  return "—";
+}
+function ordersBookDirty(book: any) {
+  return !!(book?.degraded || book?.unverified || book?.source === "local_store");
+}
 
 export default function App() {
   const [page, setPage] = useState<Page>("desk");
   const [symbol, setSymbol] = useState("AAPL");
   const [account, setAccount] = useState<any>(null);
+  const [worker, setWorker] = useState<any>(null);
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
 
@@ -63,9 +81,16 @@ export default function App() {
       setAccount(await api.account());
     } catch (e: any) {
       setError(e.message);
+      setAccount(null);
+    }
+    try {
+      setWorker(await api.workerStatus());
+    } catch {
+      setWorker({ running: false, unverified: false });
     }
   }
   useEffect(() => { refreshAccount(); }, []);
+  const workerUi = workerChip(worker);
 
   function goSymbol(next: string) {
     const s = next.toUpperCase().trim();
@@ -106,7 +131,8 @@ export default function App() {
           <form onSubmit={(e) => { e.preventDefault(); goSymbol(search); }}>
             <input className="search" placeholder="Search symbol…" value={search} onChange={(e) => setSearch(e.target.value)} />
           </form>
-          <span className="chip">Worker {account ? "linked" : "…"}</span>
+          <span className="chip">{accountChipLabel(account)}</span>
+          <span className={workerUi.klass}>{workerUi.label}</span>
           <span className="chip">{money(account?.equity || account?.portfolio_value)}</span>
           <button className="btn ghost" onClick={refreshAccount}>Refresh</button>
         </header>
@@ -133,15 +159,17 @@ export default function App() {
 function Desk({ account, onTrade, onRefresh }: { account: any; onTrade: (s: string) => void; onRefresh: () => void }) {
   const [ops, setOps] = useState<any>(null);
   const [perf, setPerf] = useState<any>(null);
-  const [orders, setOrders] = useState<any[]>([]);
+  const [orderBook, setOrderBook] = useState<any>({ orders: [] });
   const [ticket, setTicket] = useState({ symbol: "AAPL", side: "buy", quantity: 1, order_type: "market" });
   const [msg, setMsg] = useState("");
 
   useEffect(() => {
     api.ops().then(setOps).catch(() => {});
     api.performance().then(setPerf).catch(() => {});
-    api.orders("open").then((d) => setOrders(d.orders || [])).catch(() => {});
+    api.orders("open").then(setOrderBook).catch(() => {});
   }, [account]);
+  const orders = orderBook.orders || [];
+  const ordersDirty = ordersBookDirty(orderBook);
 
   const positions = account?.positions || [];
   const day = account?.day_pnl || 0;
@@ -154,7 +182,7 @@ function Desk({ account, onTrade, onRefresh }: { account: any; onTrade: (s: stri
       await api.submitOrder(ticket);
       setMsg("Order submitted (paper).");
       onRefresh();
-      setOrders((await api.orders("open")).orders || []);
+      setOrderBook(await api.orders("open"));
     } catch (err: any) {
       setMsg(err.message);
     }
@@ -171,9 +199,9 @@ function Desk({ account, onTrade, onRefresh }: { account: any; onTrade: (s: stri
         <div className="card kpi"><div className="lbl">Buying power</div><div className="val">{money(account?.buying_power)}</div></div>
       </div>
       <div className="grid3" style={{ marginBottom: 14 }}>
-        <div className="card kpi"><div className="lbl">Win rate (backtest)</div><div className="val">{perf?.win_rate_pct ?? "—"}%</div></div>
-        <div className="card kpi"><div className="lbl">Profit factor</div><div className="val">{perf?.profit_factor ?? "—"}</div></div>
-        <div className="card kpi"><div className="lbl">Max DD</div><div className="val">{perf?.max_drawdown_pct ?? "—"}%</div></div>
+        <div className="card kpi"><div className="lbl">Win rate ({kpiSourceLabel(perf)})</div><div className="val">{perf?.win_rate_pct ?? "—"}%</div></div>
+        <div className="card kpi"><div className="lbl">Profit factor ({kpiSourceLabel(perf)})</div><div className="val">{perf?.profit_factor ?? "—"}</div></div>
+        <div className="card kpi"><div className="lbl">Max DD ({kpiSourceLabel(perf)})</div><div className="val">{perf?.max_drawdown_pct ?? "—"}</div></div>
       </div>
       <div className="layout">
         <div className="card">
@@ -224,11 +252,12 @@ function Desk({ account, onTrade, onRefresh }: { account: any; onTrade: (s: stri
           </div>
           <div className="card" style={{ marginBottom: 12 }}>
             <h3>Open orders</h3>
+            {ordersDirty && <p className="muted">Orders source={orderBook.source || "local_store"} · degraded · unverified — not a clean broker book.</p>}
             {orders.length === 0 && <p className="muted">None</p>}
             {orders.slice(0, 6).map((o) => (
               <div key={o.id} className="row" style={{ justifyContent: "space-between", marginBottom: 6 }}>
                 <span>{o.side} {o.qty} {o.symbol}</span>
-                <button className="btn ghost" onClick={() => api.cancelOrder(o.id).then(() => api.orders("open").then((d) => setOrders(d.orders)))}>Cancel</button>
+                <button className="btn ghost" onClick={() => api.cancelOrder(o.id).then(() => api.orders("open").then(setOrderBook))}>Cancel</button>
               </div>
             ))}
           </div>
@@ -248,9 +277,11 @@ function Desk({ account, onTrade, onRefresh }: { account: any; onTrade: (s: stri
 }
 
 function Orders() {
-  const [rows, setRows] = useState<any[]>([]);
+  const [book, setBook] = useState<any>({ orders: [] });
   const [filter, setFilter] = useState("all");
-  useEffect(() => { api.orders(filter === "open" ? "open" : "all").then((d) => setRows(d.orders || [])).catch(() => {}); }, [filter]);
+  useEffect(() => { api.orders(filter === "open" ? "open" : "all").then(setBook).catch(() => {}); }, [filter]);
+  const rows = book.orders || [];
+  const dirty = ordersBookDirty(book);
   return (
     <div className="card">
       <div className="row" style={{ justifyContent: "space-between" }}>
@@ -260,6 +291,7 @@ function Orders() {
           <button className={`tab ${filter === "open" ? "on" : ""}`} onClick={() => setFilter("open")}>Open</button>
         </div>
       </div>
+      {dirty && <p className="muted">Orders source={book.source || "local_store"} · degraded · unverified — not a clean broker book.</p>}
       <table className="table">
         <thead><tr><th>Symbol</th><th>Side</th><th>Qty</th><th>Type</th><th>Status</th><th>Time</th></tr></thead>
         <tbody>
@@ -448,14 +480,16 @@ function AiMode() {
 function Strategies() {
   const [perf, setPerf] = useState<any>(null);
   useEffect(() => { api.performance().then(setPerf); }, []);
+  const bt = perf?.backtest;
+  const hasBt = !!(bt && bt.source && bt.source !== "none");
   return (
     <div className="card">
       <h3>Strategies</h3>
-      <p className="muted">Last stable strategy backtest (next-bar open + slippage + 10 bps).</p>
+      <p className="muted">{hasBt ? "Last stable strategy backtest (next-bar open + slippage + 10 bps)." : "No stable backtest summary."}</p>
       <div className="grid3">
-        <div className="kpi"><div className="lbl">Return</div><div className="val">{perf?.total_return_pct ?? "—"}%</div></div>
-        <div className="kpi"><div className="lbl">Sharpe</div><div className="val">{perf?.sharpe_ratio ?? "—"}</div></div>
-        <div className="kpi"><div className="lbl">Trades</div><div className="val">{perf?.num_trades ?? "—"}</div></div>
+        <div className="kpi"><div className="lbl">Return (backtest)</div><div className="val">{hasBt ? (bt.total_return_pct ?? "—") : "—"}%</div></div>
+        <div className="kpi"><div className="lbl">Sharpe (backtest)</div><div className="val">{hasBt ? (bt.sharpe_ratio ?? "—") : "—"}</div></div>
+        <div className="kpi"><div className="lbl">Trades (backtest)</div><div className="val">{hasBt ? (bt.num_trades ?? "—") : "—"}</div></div>
       </div>
       <p className="muted">Re-run: python scripts/run_strategy_backtest_stable.py</p>
     </div>

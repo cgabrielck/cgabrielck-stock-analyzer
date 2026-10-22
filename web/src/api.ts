@@ -42,5 +42,6 @@ export const api = {
   journalEntry: (logId: string) => req<any>("/api/journal/entry/" + encodeURIComponent(logId)),
   journalAudit: (eventId: string) => req<any>("/api/journal/audit/" + encodeURIComponent(eventId)),
   performance: () => req<any>("/api/performance"),
+  workerStatus: () => req<any>("/api/worker/status"),
   universe: () => req<{ universe: any[] }>("/api/universe"),
 };

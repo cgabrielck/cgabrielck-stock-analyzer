@@ -152,6 +152,10 @@ def test_status_fresh_heartbeat_without_pid_is_not_running(monkeypatch, tmp_path
     assert out["explain"]["code"] == "unverified"
     assert out.get("verified") is not True
     assert out.get("live") is not True
+    assert out["display"]["auto_on"] is False
+    assert out["display"]["worker_running"] is False
+    assert "linked" not in out["display"]["worker_label"].lower()
+    assert out["display"]["worker_tone"] != "on"
 
 
 def test_status_alive_pid_is_running(monkeypatch, tmp_path):

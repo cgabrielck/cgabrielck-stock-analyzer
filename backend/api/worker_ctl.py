@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from backend.api.desk_display import display_chips
 from backend.trading.strategies.registry import KNOWN_STRATEGIES
 from backend.utils.constants import DATA_DIR
 
@@ -383,6 +384,7 @@ def status(position_count: int = 0, halted: bool = False) -> Dict[str, Any]:
         except Exception:
             payload["signal_max_age_hours"] = None
     payload["explain"] = explain({**payload, "halted": payload["halted"] or halted}, position_count)
+    payload["display"] = display_chips(payload)
     return payload
 
 
