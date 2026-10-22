@@ -27,6 +27,12 @@ from backend.trading.engine.order_manager import OrderManager, OrderStore
 from backend.trading.engine.shadow import ShadowTradingEngine
 from backend.trading.engine.signal_processor import JournalWriteError, SignalProcessor
 from backend.trading.engine.stamp import sell_reached_venue, stamp_risk_approved
+from backend.trading.engine.sticky_idempotency import (
+    clear_sticky,
+    detach_if_would_clobber_sticky,
+    find_sticky_order,
+    pin_sticky,
+)
 from backend.trading.models import Order, OrderSide, OrderStatus, OrderType
 from backend.trading.reconciliation.service import ReconciliationService
 from backend.trading.risk.gates import RiskEngine, RiskLimits, positive_price
@@ -633,8 +639,23 @@ class TradingWorker:
                 and signal.stop_loss_price is not None
                 and signal.take_profit_price is not None
             )
+            sticky_buy = (
+                None
+                if self.execution_mode == "shadow"
+                else find_sticky_order(self.store, symbol=ticker, side="buy")
+            )
+            if sticky_buy is not None:
+                # Safe retry reuses the 502 key. A new minute-key would be a
+                # second independent submit.
+                buy_id = sticky_buy.id
+                buy_key = sticky_buy.idempotency_key
+                sticky_replay = True
+            else:
+                buy_id = f"{ticker}-{now.strftime('%Y%m%d%H%M')}"
+                buy_key = buy_id
+                sticky_replay = False
             signal_dict = {
-                "id": f"{ticker}-{now.strftime('%Y%m%d%H%M')}",
+                "id": buy_id,
                 "symbol": ticker,
                 "side": "buy",
                 "quantity": qty,
@@ -643,7 +664,7 @@ class TradingWorker:
                 "stop_loss_price": signal.stop_loss_price,
                 "take_profit_price": signal.take_profit_price,
                 "order_class": "bracket" if use_bracket else "simple",
-                "idempotency_key": f"{ticker}-{now.strftime('%Y%m%d%H%M')}",
+                "idempotency_key": buy_key,
                 "strategy_id": signal.strategy_id,
             }
 
@@ -654,7 +675,12 @@ class TradingWorker:
             )
             reserved = False
             loaded_mandate = self.mandate_gate.mandate
-            if loaded_mandate is not None and loaded_mandate.max_daily_orders is not None:
+            # The unknown/502 place already holds the daily slot. Do not reserve again.
+            if (
+                not sticky_replay
+                and loaded_mandate is not None
+                and loaded_mandate.max_daily_orders is not None
+            ):
                 slot = self.mandate_gate.try_reserve()
                 if not slot.approved:
                     logger.info("BLOCKED %s: %s", ticker, slot.reason)
@@ -692,8 +718,22 @@ class TradingWorker:
                 note(ticker, "risk_rejected")
                 continue
 
+            if result.status == OrderStatus.ACCEPTANCE_UNKNOWN:
+                logger.warning(
+                    "BUY %s acceptance unknown; sticky key %s; do not blind-retry",
+                    ticker,
+                    result.idempotency_key,
+                )
+                summary_rows.append({
+                    "ticker": ticker,
+                    "action": "ACCEPTANCE_UNKNOWN",
+                    "reason": result.error_message,
+                })
+                note(ticker, "acceptance_unknown")
+                continue
+
             audit.log_risk_decision(ticker, "buy", qty, True, "approved_via_signal_processor")
-            if not reserved:
+            if not reserved and not sticky_replay:
                 self.mandate_gate.record_order()
             audit.log_order_submission(
                 ticker, "buy", qty, signal.entry_price,
@@ -1197,6 +1237,7 @@ class TradingWorker:
         order.status = OrderStatus.REJECTED
         order.error_message = detail
         order.failed_at = datetime.now(timezone.utc)
+        detach_if_would_clobber_sticky(self.store, order)
         try:
             self.store.save_order(order)
         except Exception:
@@ -1224,9 +1265,19 @@ class TradingWorker:
         import uuid
 
         approval_price = positive_price(price)
-        idem = f"sell-{symbol}-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
+        sticky_sell = (
+            None
+            if self.execution_mode == "shadow"
+            else find_sticky_order(self.store, symbol=symbol, side="sell")
+        )
+        if sticky_sell is not None:
+            idem = sticky_sell.idempotency_key
+            sell_id = sticky_sell.id
+        else:
+            idem = f"sell-{symbol}-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
+            sell_id = str(uuid.uuid4())
         order = Order(
-            id=str(uuid.uuid4()),
+            id=sell_id,
             symbol=symbol,
             side=OrderSide.SELL,
             order_type=OrderType.LIMIT,
@@ -1312,10 +1363,21 @@ class TradingWorker:
                     order=result,
                 )
         except JournalWriteError:
+            if self.execution_mode != "shadow":
+                status_key = str(getattr(result.status, "value", result.status)).lower()
+                if status_key != "rejected":
+                    pin_sticky(self.store, result)
             raise
         except Exception as exc:
             logger.exception("Failed to persist journal for sell %s", symbol)
+            if self.execution_mode != "shadow":
+                status_key = str(getattr(result.status, "value", result.status)).lower()
+                if status_key != "rejected":
+                    pin_sticky(self.store, result)
             raise JournalWriteError(str(exc), order=result) from exc
+
+        if self.execution_mode != "shadow" and result.status != OrderStatus.ACCEPTANCE_UNKNOWN:
+            clear_sticky(self.store, result)
 
         audit.log_order_submission(
             symbol, "sell", float(quantity or 0), approval_price,

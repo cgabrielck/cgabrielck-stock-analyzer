@@ -32,7 +32,15 @@ from typing import Any, Callable, Dict, Optional, Tuple
 
 from backend.trading.broker import BrokerAdapter
 from backend.trading.engine.order_manager import OrderManager, OrderStore
-from backend.trading.engine.stamp import stamp_risk_approved
+from backend.trading.engine.stamp import VENUE_STATUSES, stamp_risk_approved
+from backend.trading.engine.sticky_idempotency import (
+    DO_NOT_BLIND_RETRY,
+    clear_sticky,
+    detach_if_would_clobber_sticky,
+    find_sticky_order,
+    pin_sticky,
+    unknown_accept_detail,
+)
 from backend.trading.models import AccountSummary, Order, OrderSide, OrderStatus, OrderType
 from backend.trading.risk.gates import RiskEngine, positive_price
 from backend.trading.safety import audit, kill_switch
@@ -242,6 +250,7 @@ def _persist_trace(
     """Persist reject/accept trace. Failures are returned, not swallowed."""
     errors = []
     if store is not None:
+        detach_if_would_clobber_sticky(store, order)
         try:
             store.save_order(order)
         except Exception as exc:
@@ -277,12 +286,17 @@ def _journal_failed_after_broker_detail(order: Order, persist_err: str) -> Dict[
         "message": (
             f"Order may exist at the broker but was not journaled"
             f"{f' (id={order_id})' if order_id else ''}. "
-            f"{persist_err}. Desk does not claim a durable audit trail."
+            f"{persist_err}. Desk does not claim a durable audit trail. "
+            "Do not blind-retry with a new idempotency key. "
+            f"Reuse idempotency_key={getattr(order, 'idempotency_key', '')}."
         ),
         "journaled": False,
         "broker_submitted": True,
         "order_id": order_id,
         "symbol": getattr(order, "symbol", None),
+        "idempotency_key": getattr(order, "idempotency_key", None),
+        "retry": DO_NOT_BLIND_RETRY,
+        "acceptance": "unknown",
     }
 
 
@@ -326,6 +340,70 @@ def _block(
     )
 
 
+def _sticky_replay_detail_suffix_ok(detail: Dict[str, Any], order: Order) -> Dict[str, Any]:
+    detail["retry"] = DO_NOT_BLIND_RETRY
+    detail["idempotency_key"] = order.idempotency_key
+    detail["acceptance"] = "unknown"
+    return detail
+
+
+def _replay_sticky_venue(
+    sticky: Order,
+    *,
+    store: OrderStore,
+    snapshot: MandateSnapshot,
+) -> DeskPlaceResult:
+    """Journal an already-accepted sticky order. Do not call the broker."""
+    journaled, journal_err = _journal_order(sticky, audit_id=None)
+    if journaled:
+        clear_sticky(store, sticky)
+        return DeskPlaceResult(
+            order=sticky,
+            blocked=False,
+            http_status=200,
+            gate=None,
+            mandate_status=snapshot.status,
+            mandate_path=snapshot.path,
+            journaled=True,
+        )
+    pin_sticky(store, sticky)
+    detail = _sticky_replay_detail_suffix_ok(
+        _journal_failed_after_broker_detail(sticky, journal_err or "journal write failed"),
+        sticky,
+    )
+    return DeskPlaceResult(
+        order=sticky,
+        blocked=False,
+        http_status=502,
+        detail=detail,
+        gate="journal",
+        mandate_status=snapshot.status,
+        mandate_path=snapshot.path,
+        journaled=False,
+    )
+
+
+def _sticky_blind_result(
+    sticky: Order,
+    *,
+    store: OrderStore,
+    snapshot: MandateSnapshot,
+) -> DeskPlaceResult:
+    """A new idempotency key must not become a second broker submit."""
+    if sticky.status == OrderStatus.ACCEPTANCE_UNKNOWN:
+        return DeskPlaceResult(
+            order=sticky,
+            blocked=False,
+            http_status=502,
+            detail=unknown_accept_detail(sticky),
+            gate="broker",
+            mandate_status=snapshot.status,
+            mandate_path=snapshot.path,
+            journaled=False,
+        )
+    return _replay_sticky_venue(sticky, store=store, snapshot=snapshot)
+
+
 def place_desk_order(
     order: Order,
     *,
@@ -350,6 +428,20 @@ def place_desk_order(
     side = _side_value(order)
     snapshot = inspect_mandate(mandate_path)
     mode = str(execution_mode or "paper").lower()
+
+    # 502 sticky: a fresh key must not submit again while acceptance is
+    # unknown or the broker order is not durably journaled. Checked before
+    # kill/mandate so the response stays "do not blind-retry", not a new reject.
+    safe_unknown_retry = False
+    if mode != "shadow":
+        sticky_hold = find_sticky_order(store, symbol=order.symbol, side=side)
+        if sticky_hold is not None and sticky_hold.idempotency_key != order.idempotency_key:
+            return _sticky_blind_result(sticky_hold, store=store, snapshot=snapshot)
+        if sticky_hold is not None and sticky_hold.idempotency_key == order.idempotency_key:
+            if sticky_hold.status in VENUE_STATUSES:
+                return _replay_sticky_venue(sticky_hold, store=store, snapshot=snapshot)
+            if sticky_hold.status == OrderStatus.ACCEPTANCE_UNKNOWN:
+                safe_unknown_retry = True
 
     # 1. Kill — Desk buy (R6) and sell (D-sell-kill). Same honesty: 409,
     # no broker submit, clear halt reason. Not flatten-through-kill.
@@ -581,7 +673,12 @@ def place_desk_order(
     # R4: claim the daily slot under flock *before* broker so concurrent
     # Desk+worker evaluate-then-record cannot both submit at cap=1.
     reserved = False
-    if side == "buy" and mode != "shadow" and gate.mandate.max_daily_orders is not None:
+    if (
+        side == "buy"
+        and mode != "shadow"
+        and gate.mandate.max_daily_orders is not None
+        and not safe_unknown_retry
+    ):
         slot = gate.try_reserve()
         if not slot.approved:
             detail = slot.reason or "Daily order limit reached."
@@ -647,6 +744,21 @@ def place_desk_order(
     journaled, journal_err = _journal_order(
         submitted, audit_id=submit_audit or risk_audit
     )
+    if submitted.status == OrderStatus.ACCEPTANCE_UNKNOWN:
+        # Not a fill and not a confirmed reject. Keep the key. Do not 200.
+        pin_sticky(store, submitted)
+        detail = unknown_accept_detail(submitted, journaled=journaled)
+        return DeskPlaceResult(
+            order=submitted,
+            blocked=False,
+            http_status=502,
+            detail=detail,
+            gate="broker",
+            mandate_status=snapshot.status,
+            mandate_path=snapshot.path,
+            audit_id=submit_audit or risk_audit,
+            journaled=journaled,
+        )
     blocked_accept = str(getattr(submitted.status, "value", submitted.status)).lower() == "rejected"
     if not journaled:
         if blocked_accept:
@@ -673,6 +785,9 @@ def place_desk_order(
         )
         if mode == "shadow":
             fail_detail["broker_submitted"] = False
+            fail_detail.pop("retry", None)
+            fail_detail.pop("acceptance", None)
+            fail_detail.pop("idempotency_key", None)
             shadow_id = getattr(submitted, "id", None)
             id_bit = f" (id={shadow_id})" if shadow_id else ""
             fail_detail["message"] = (
@@ -680,6 +795,8 @@ def place_desk_order(
                 f"{journal_err or 'journal write failed'}. "
                 "Lab does not claim a durable audit trail."
             )
+        else:
+            pin_sticky(store, submitted)
         return DeskPlaceResult(
             order=submitted,
             blocked=False,
@@ -692,7 +809,7 @@ def place_desk_order(
             journaled=False,
         )
     if blocked_accept:
-        if reserved:
+        if reserved or safe_unknown_retry:
             gate.release_reservation()
         return DeskPlaceResult(
             order=submitted,
@@ -706,8 +823,10 @@ def place_desk_order(
             journaled=True,
         )
     # Cap path already reserved before broker. No-cap still persists the count.
-    if side == "buy" and mode != "shadow" and not reserved:
+    if side == "buy" and mode != "shadow" and not reserved and not safe_unknown_retry:
         gate.record_order()
+    if journaled and submitted.status in VENUE_STATUSES:
+        clear_sticky(store, submitted)
     return DeskPlaceResult(
         order=submitted,
         blocked=False,

@@ -16,6 +16,10 @@ from alpaca.trading.requests import (
 )
 
 from backend.trading.broker import BrokerAdapter
+from backend.trading.engine.sticky_idempotency import (
+    is_acceptance_unknown_exception,
+    mark_acceptance_unknown,
+)
 from backend.trading.models import AccountSummary, Order, OrderSide, OrderStatus, OrderType, Position
 
 # Alpaca's public status strings -> our internal OrderStatus enum.
@@ -214,8 +218,18 @@ class AlpacaBroker(BrokerAdapter):
             # Store the broker's order ID for future reference
             order.id = str(alpaca_order.id)
         except APIError as e:
+            if is_acceptance_unknown_exception(e):
+                # 502/504/timeout: do not pretend the broker rejected it.
+                mark_acceptance_unknown(order, e)
+                return order
             order.status = OrderStatus.REJECTED
+            order.idempotency_sticky = False
             order.error_message = str(e)
+        except Exception as e:
+            if is_acceptance_unknown_exception(e):
+                mark_acceptance_unknown(order, e)
+                return order
+            raise
         return order
 
     def get_order(self, order_id: str) -> Optional[Order]:

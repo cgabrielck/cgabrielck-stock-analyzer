@@ -73,6 +73,46 @@ def _isolate(tmp_path, monkeypatch):
     yield {"audit_dir": audit_dir, "journal": journal}
 
 
+def test_sell_502_then_later_call_does_not_mint_a_second_broker_key():
+    """Pre-fix _submit_sell minted sell-SYMBOL-timestamp, so a later exit resubmitted."""
+    worker, broker, store = _build_worker()
+    keys = []
+
+    def _submit(order):
+        keys.append(order.idempotency_key)
+        err = RuntimeError("504 Gateway Timeout")
+        err.status_code = 504
+        raise err
+
+    broker.submit_order.side_effect = _submit
+    first = worker._submit_sell("AAPL", 1.0, 100.0, "stop")
+    assert first is not None
+    assert first.status == OrderStatus.ACCEPTANCE_UNKNOWN
+    assert first.status != OrderStatus.FILLED
+    assert first.idempotency_sticky is True
+    second = worker._submit_sell("AAPL", 1.0, 100.0, "stop")
+    assert second is not None
+    assert len(set(keys)) == 1
+    assert second.idempotency_key == first.idempotency_key
+    assert second.status == OrderStatus.ACCEPTANCE_UNKNOWN
+    assert "do not blind-retry" in (second.error_message or "").lower()
+
+
+def test_sell_journal_502_then_later_call_does_not_second_submit(monkeypatch):
+    worker, broker, store = _build_worker()
+
+    def _boom(*_a, **_k):
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr("backend.utils.provenance.journal_store.record_from_order", _boom)
+    with pytest.raises(Exception):
+        worker._submit_sell("AAPL", 1.0, 100.0, "stop")
+    assert broker.submit_order.call_count == 1
+    with pytest.raises(Exception):
+        worker._submit_sell("AAPL", 1.0, 100.0, "stop")
+    assert broker.submit_order.call_count == 1
+
+
 def test_paper_sell_honest_notional_over_cap_does_not_hit_broker():
     """qty=100 × $100.40 = $10,040. Haircut 0.995 would be $9,989.80 and sneak under $10k."""
     worker, broker, store = _build_worker()

@@ -15,6 +15,9 @@ class OrderStatus(str, Enum):
     REJECTED = "rejected"
     EXPIRED = "expired"
     RECONCILIATION_ERROR = "reconciliation_error"
+    # Broker/transport 502-class: the place may already have been accepted.
+    # Not a fill, not a confirmed reject. Retries must reuse idempotency_key.
+    ACCEPTANCE_UNKNOWN = "acceptance_unknown"
 
 class OrderSide(str, Enum):
     BUY = "buy"
@@ -49,6 +52,14 @@ class Order(AuditableModel):
     failed_at: Optional[datetime] = Field(None, description="Timestamp when the order failed")
     error_message: Optional[str] = Field(None, description="Error message if the order failed")
     idempotency_key: str = Field(..., description="Idempotency key to prevent duplicate orders")
+    idempotency_sticky: bool = Field(
+        False,
+        description=(
+            "True after a 502-class place (unknown accept, or journal failed "
+            "after the broker may have the order). A later place must reuse "
+            "this idempotency_key and must not submit a second independent order."
+        ),
+    )
     filled_avg_price: Optional[float] = Field(None, description="Average fill price (simulated or real)")
     slippage_pct: Optional[float] = Field(None, description="Simulated slippage as a fraction of reference price")
 

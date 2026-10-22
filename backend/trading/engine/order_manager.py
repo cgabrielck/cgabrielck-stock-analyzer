@@ -4,6 +4,12 @@ from datetime import datetime, timezone
 
 from backend.trading.models import Order, OrderStatus
 from backend.trading.broker import BrokerAdapter
+from backend.trading.engine.sticky_idempotency import (
+    find_sticky_order,
+    is_acceptance_unknown_exception,
+    mark_acceptance_unknown,
+    order_side_value,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -58,34 +64,88 @@ class OrderManager:
                 f"Can only submit DRAFT or RISK_APPROVED orders. Current status: {draft_order.status}"
             )
 
-        # 1. Idempotency Check
+        # 1. Blind new key while a 502-class place is still open: do not submit.
+        sticky = find_sticky_order(
+            self.store, symbol=draft_order.symbol, side=order_side_value(draft_order)
+        )
+        if sticky is not None and sticky.idempotency_key != draft_order.idempotency_key:
+            logger.warning(
+                "Blind retry blocked for %s %s. Reuse idempotency_key=%s (refused %s).",
+                draft_order.symbol,
+                order_side_value(draft_order),
+                sticky.idempotency_key,
+                draft_order.idempotency_key,
+            )
+            return sticky
+
+        # 2. Same-key idempotency. Unknown-accept may safe-retry with that key.
         existing_order = self.store.get_order_by_idempotency_key(draft_order.idempotency_key)
-        if existing_order:
-            logger.info(f"Order with idempotency key {draft_order.idempotency_key} already exists. Skipping submission.")
+        safe_resubmit = (
+            existing_order is not None
+            and existing_order.idempotency_sticky
+            and existing_order.status == OrderStatus.ACCEPTANCE_UNKNOWN
+        )
+        if existing_order is not None and not safe_resubmit:
+            logger.info(
+                "Order with idempotency key %s already exists. Skipping submission.",
+                draft_order.idempotency_key,
+            )
             return existing_order
 
-        # 2. Persist caller status as-is (no invented RISK_APPROVED).
-        self.store.save_order(draft_order)
+        if safe_resubmit and existing_order is not None:
+            draft_order.id = existing_order.id
+            draft_order.idempotency_key = existing_order.idempotency_key
+            draft_order.idempotency_sticky = True
+        else:
+            # Persist caller status as-is (no invented RISK_APPROVED).
+            self.store.save_order(draft_order)
 
-        logger.info(f"Submitting order to broker: {draft_order.symbol} {draft_order.side} {draft_order.quantity}")
+        logger.info(
+            "Submitting order to broker: %s %s %s key=%s",
+            draft_order.symbol,
+            draft_order.side,
+            draft_order.quantity,
+            draft_order.idempotency_key,
+        )
 
         # 3. Broker Submission
         try:
             submitted_order = self.broker.submit_order(draft_order)
         except Exception as e:
-            # Handle unexpected broker adapter errors
+            if is_acceptance_unknown_exception(e):
+                logger.error(
+                    "Broker acceptance unknown for %s key=%s: %s",
+                    draft_order.symbol,
+                    draft_order.idempotency_key,
+                    e,
+                )
+                mark_acceptance_unknown(draft_order, e)
+                self.store.save_order(draft_order)
+                return draft_order
+            # Definite adapter failure (request not accepted). A new key may retry.
             logger.error(f"Failed to submit order to broker: {str(e)}")
             draft_order.status = OrderStatus.REJECTED
+            draft_order.idempotency_sticky = False
             draft_order.error_message = f"Broker Adapter Error: {str(e)}"
             draft_order.failed_at = datetime.now(timezone.utc)
             self.store.save_order(draft_order)
             return draft_order
 
-        # 4. Post-submission update
-        # submitted_order should now have an updated status (e.g. SUBMITTED or REJECTED)
-        # and a broker-assigned ID.
+        # 4. Post-submission update. 502 mapped by the adapter is not a reject
+        # and not a fill.
+        if submitted_order.status == OrderStatus.ACCEPTANCE_UNKNOWN:
+            if not submitted_order.error_message:
+                mark_acceptance_unknown(submitted_order)
+            else:
+                submitted_order.idempotency_sticky = True
+                submitted_order.filled_at = None
+                submitted_order.filled_avg_price = None
+            self.store.save_order(submitted_order)
+            return submitted_order
+        if submitted_order.status == OrderStatus.REJECTED:
+            submitted_order.idempotency_sticky = False
         self.store.save_order(submitted_order)
-        
+
         return submitted_order
 
     def sync_order_status(self, internal_order_id: str) -> Optional[Order]:

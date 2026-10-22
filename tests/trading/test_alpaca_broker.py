@@ -148,6 +148,35 @@ class TestAlpacaBroker(unittest.TestCase):
         self.assertEqual(result_order.status, OrderStatus.REJECTED)
         self.assertIn("Insufficient funds", result_order.error_message)
 
+    def test_submit_order_502_is_acceptance_unknown_not_rejected(self):
+        """Gateway 502 must not be stored as a confirmed reject (that invites a new key)."""
+        order_to_submit = Order(
+            id="internal_id_502",
+            symbol="TSLA",
+            side=OrderSide.BUY,
+            order_type=OrderType.MARKET,
+            quantity=10,
+            idempotency_key="idem_502",
+        )
+
+        class _Resp:
+            status_code = 502
+
+        class _HTTP:
+            response = _Resp()
+
+        self.broker.api.submit_order.side_effect = APIError(
+            '{"message": "bad gateway"}', http_error=_HTTP()
+        )
+        result = self.broker.submit_order(order_to_submit)
+        self.assertEqual(result.status, OrderStatus.ACCEPTANCE_UNKNOWN)
+        self.assertNotEqual(result.status, OrderStatus.REJECTED)
+        self.assertNotEqual(result.status, OrderStatus.FILLED)
+        self.assertTrue(result.idempotency_sticky)
+        self.assertEqual(result.idempotency_key, "idem_502")
+        self.assertIsNone(result.filled_avg_price)
+        self.assertIn("do not blind-retry", (result.error_message or "").lower())
+
     def test_get_order_found(self):
         """Test retrieving an existing order."""
         now = datetime.now()
