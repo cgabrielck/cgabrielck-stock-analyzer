@@ -188,11 +188,18 @@ class RiskEngine:
         return 1.0
 
     def record_day_start(self, portfolio_value: float) -> None:
-        """Call this once at the start of each trading day."""
+        """Call this once at the start of each trading day.
+
+        First write of ``date.today()`` is durable and shared by Desk and
+        worker (O5). A later caller must not reset the start to the
+        already-dropped mark.
+        """
+        from backend.trading.risk.shared_state import record_day_start as persist_day_start
+
         today = date.today()
-        if self._day_start_date != today:
-            self._day_start_value = portfolio_value
-            self._day_start_date  = today
+        day, value = persist_day_start(float(portfolio_value), today=today)
+        self._day_start_value = value
+        self._day_start_date = day
 
     # ------------------------------------------------------------------
     # Private helpers

@@ -5,9 +5,10 @@ SignalProcessor. It does **not** call ``upsert_active_intent``, H1
 ``claim_for_consume``, or the M8 sizer — operator qty is kept, then
 Mandate + RiskEngine still have to approve. O5 is that dual-path:
 Desk POST cannot broker-succeed when the shared Mandate / Risk /
-kill / size kernel would refuse, and a success is not journal/audit
-silent (``actor=desk``). Worker still owns Kelly/M8 extras
-(cooldown map, correlation bars, in-process day-start).
+kill / size kernel would refuse (including worker-buy cooldown,
+correlation, and daily-loss bookkeeping), and a success is not
+journal/audit silent (``actor=desk``). Kelly / M8 sizer remains
+worker-only (Intent→M8 OPEN).
 
 R1-PATH write-point (journal, not IntentStore)
 ---------------------------------------------
@@ -73,6 +74,7 @@ from backend.trading.engine.sticky_idempotency import (
 )
 from backend.trading.models import AccountSummary, Order, OrderSide, OrderStatus, OrderType
 from backend.trading.risk.gates import RiskEngine, positive_price
+from backend.trading.risk.shared_state import active_cooldown_tickers, mark_cooldown
 from backend.trading.safety import audit, kill_switch
 from backend.trading.safety.mandate import (
     MANDATE_STATUS_CORRUPT,
@@ -124,6 +126,27 @@ class DeskPlaceResult:
     audit_id: Optional[str] = None
     journaled: bool = False
     intent_id: Optional[str] = None
+
+
+def default_price_history(symbols) -> Dict[str, Any]:
+    """OHLCV for correlation. Failures skip a symbol (same as worker fetch)."""
+    out: Dict[str, Any] = {}
+    try:
+        from backend.utils.equity_ohlcv import fetch_daily_ohlcv
+    except Exception:
+        return out
+    for raw in symbols or []:
+        token = str(raw or "").upper().strip()
+        if not token or token in out:
+            continue
+        try:
+            result = fetch_daily_ohlcv(token, period="1y", min_bars=30)
+            data = result.get("data") if isinstance(result, dict) else None
+            if result.get("ok") and data is not None and not getattr(data, "empty", True):
+                out[token] = data
+        except Exception:
+            logger.debug("desk price_history fetch failed for %s", token, exc_info=True)
+    return out
 
 
 def default_quote_price(symbol: str) -> Optional[float]:
@@ -505,6 +528,8 @@ def place_desk_order(
     mandate_path: Any = None,
     account: Any = _ACCOUNT_UNSET,
     execution_mode: str = "paper",
+    price_history: Any = _ACCOUNT_UNSET,
+    price_history_fn: Optional[Callable[[Any], Dict[str, Any]]] = None,
 ) -> DeskPlaceResult:
     """Evaluate a manual Desk/lab order, then paper-submit or shadow-simulate.
 
@@ -738,7 +763,34 @@ def place_desk_order(
         )
 
     # 3. RiskEngine — same kernel as the worker, not via SignalProcessor.
-    risk_decision = engine.evaluate_order(eval_order, account)
+    # O5: Desk must pass the extras worker buy uses (cooldown, correlation
+    # bars, daily-loss day-start). First-write-wins day-start is durable.
+    engine.record_day_start(float(getattr(account, "portfolio_value", 0) or 0))
+    cooldown_tickers = active_cooldown_tickers()
+    history = None
+    if side == "buy":
+        if price_history is not _ACCOUNT_UNSET:
+            history = price_history
+        else:
+            held = [
+                str(getattr(pos, "symbol", "") or "").upper()
+                for pos in (getattr(account, "positions", None) or [])
+            ]
+            held = [sym for sym in held if sym]
+            if held:
+                symbols = {str(order.symbol or "").upper(), *held}
+                fn = price_history_fn or default_price_history
+                try:
+                    history = fn(sorted(symbols))
+                except Exception:
+                    logger.debug("desk price_history_fn failed", exc_info=True)
+                    history = None
+    risk_decision = engine.evaluate_order(
+        eval_order,
+        account,
+        price_history=history,
+        cooldown_tickers=cooldown_tickers,
+    )
     if not risk_decision.approved:
         detail = f"Risk Gate Rejected: {risk_decision.reason}"
         audit_id = audit.log_risk_decision(
@@ -953,6 +1005,8 @@ def place_desk_order(
         gate.record_order()
     if journaled and submitted.status in VENUE_STATUSES:
         clear_sticky(store, submitted)
+        if side == "sell":
+            mark_cooldown(submitted.symbol)
     return DeskPlaceResult(
         order=submitted,
         blocked=False,

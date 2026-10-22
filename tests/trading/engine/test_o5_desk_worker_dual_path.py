@@ -35,7 +35,10 @@ from backend.trading.models import (
     OrderType,
     Position,
 )
+import pandas as pd
+
 from backend.trading.risk.gates import RiskEngine, RiskLimits
+from backend.trading.risk.shared_state import mark_cooldown
 from backend.trading.safety import audit, kill_switch
 from backend.trading.safety.mandate import MandateGate, TradingMandate
 from backend.utils.provenance import journal_store
@@ -152,6 +155,11 @@ def test_o5_place_desk_order_source_must_call_shared_gates():
     assert "log_mandate_decision" in called
     assert "log_risk_decision" in called
     assert "log_order_submission" in called
+    assert "record_day_start" in called
+    assert "active_cooldown_tickers" in called
+    place_src = ast.get_source_segment(src, place) or ast.unparse(place)
+    assert "cooldown_tickers" in place_src
+    assert "price_history" in place_src
 
     assert src.count("actor=DESK_ACTOR") >= 3
     extra_src = ast.get_source_segment(src, extra) or ast.unparse(extra)
@@ -349,3 +357,99 @@ def test_o5_removing_audit_actor_kw_is_visible_in_source():
     assert body.count("actor=DESK_ACTOR") >= 3
     defaults = audit.log_event.__kwdefaults__ or {}
     assert defaults.get("actor") == "worker"
+
+
+def _corr_history():
+    idx = pd.bdate_range("2024-01-02", periods=40)
+    base = pd.Series(range(100, 140), index=idx, dtype=float)
+    return {
+        "AAPL": pd.DataFrame({"Close": base}),
+        "MSFT": pd.DataFrame({"Close": base + 0.05}),
+    }
+
+
+def test_o5_cooldown_desk_cannot_succeed_when_worker_buy_refuses(tmp_path):
+    """Worker buy extras cooldown_tickers=AAPL refuse; Desk must 409."""
+    path = _mandate_file(tmp_path, TIGHT)
+    mark_cooldown("AAPL")
+    engine = RiskEngine()
+    order = _order()
+    account = _account()
+    worker = engine.evaluate_order(order, account, cooldown_tickers=["AAPL"])
+    assert worker.approved is False
+    assert "cool-down" in (worker.reason or "").lower()
+
+    broker = _broker()
+    result = place_desk_order(
+        order,
+        broker=broker,
+        store=InMemoryOrderStore(),
+        risk_engine=engine,
+        mandate_path=path,
+        account=account,
+    )
+    assert result.http_status == 409
+    assert result.http_status != 200
+    assert result.gate == "risk"
+    broker.submit_order.assert_not_called()
+
+
+def test_o5_correlation_desk_cannot_succeed_when_worker_buy_refuses(tmp_path):
+    """Same price_history: worker correlation refuse ⇒ Desk 409, no broker."""
+    path = _mandate_file(tmp_path, TIGHT)
+    history = _corr_history()
+    engine = RiskEngine()
+    account = _account(
+        positions=[Position(id="1", symbol="AAPL", quantity=10, average_entry_price=150.0)]
+    )
+    order = _order(symbol="MSFT", id="o5-corr", idempotency_key="o5-corr")
+    worker = engine.evaluate_order(order, account, price_history=history)
+    assert worker.approved is False
+    assert "correlat" in (worker.reason or "").lower()
+
+    broker = _broker(account)
+    result = place_desk_order(
+        order,
+        broker=broker,
+        store=InMemoryOrderStore(),
+        risk_engine=engine,
+        mandate_path=path,
+        account=account,
+        price_history=history,
+    )
+    assert result.http_status == 409
+    assert result.http_status != 200
+    assert result.gate == "risk"
+    broker.submit_order.assert_not_called()
+
+
+def test_o5_daily_loss_desk_cannot_succeed_when_worker_buy_refuses(tmp_path):
+    """Worker records day-start; a 4% drop refuses. Desk must not 200.
+
+    Pre-fix: Desk skipped record_day_start, so a fresh RiskEngine treated
+    daily-loss as off and submitted.
+    """
+    path = _mandate_file(tmp_path, TIGHT)
+    worker_engine = RiskEngine()
+    worker_engine.record_day_start(100_000.0)
+    down = _account(portfolio_value=96_000.0)
+    order = _order()
+    worker = worker_engine.evaluate_order(order, down)
+    assert worker.approved is False
+    assert "daily loss" in (worker.reason or "").lower()
+
+    desk_engine = RiskEngine()
+    broker = _broker(down)
+    result = place_desk_order(
+        order,
+        broker=broker,
+        store=InMemoryOrderStore(),
+        risk_engine=desk_engine,
+        mandate_path=path,
+        account=down,
+    )
+    assert result.http_status == 409
+    assert result.http_status != 200
+    assert result.gate == "risk"
+    broker.submit_order.assert_not_called()
+    assert desk_engine._day_start_value == 100_000.0
