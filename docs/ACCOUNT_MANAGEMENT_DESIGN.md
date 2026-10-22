@@ -234,6 +234,7 @@ v0 管戶敘事：**股票紙倉係帳本**；期權頁係**參考／研究**。
 | **Intent→M8／H1–H3／完整 M8 StrategyBase** | **OPEN** | Kelly sizer 仍 worker-only；唔由本頁完成 |
 | **Fake verified／live** | **OPEN** | 本頁只綁「唔准 stamp」；全面清假章唔當做完 |
 | **lab `advisory_debate`→OrderManager** | **OPEN（禁止去做）** | 隔離已有測；仍唔准接線 |
+| 圖表／指標設計頁 | Draft（ns-1） | Desk TV-style 圖表範圍；本頁唔取代 |
 | **Issue #10** | **OPEN** | Parent audit inventory remains OPEN |
 
 ---
@@ -273,6 +274,8 @@ v0 管戶敘事：**股票紙倉係帳本**；期權頁係**參考／研究**。
 4. **BOUNDED_INTELLIGENCE_ACCEPTANCE**（AI 能力切片接受條件）  
 5. **本頁**（管戶產品範圍／Desk vs worker／分期；Owner 接受後）  
 6. 舊 roadmap／runbook（frozen；**ADR-002 is VOID**）
+
+相關 Draft（唔升格）：[`CHARTS_INDICATORS_DESIGN.md`](CHARTS_INDICATORS_DESIGN.md)（ns-1 圖表／指標）。Issue #10 stays OPEN.
 
 本頁**不改變** live RiskEngine／Kelly／mandate／kill 設定或交易 runtime。
 

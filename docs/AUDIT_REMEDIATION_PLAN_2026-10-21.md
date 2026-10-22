@@ -52,6 +52,8 @@ Keep ADR-003; revise docs before build. Risk if skip: Python rule kernel + docs 
 
 **Draft (not a Confirmed remediation item):** [`docs/LAB_PRODUCT_M7_BINDING.md`](LAB_PRODUCT_M7_BINDING.md) — plan-16 lab≠product M7 binding path；**not** Accepted；does not expand 2026-10-21 Confirmed scope；**not** Confirmed item 6. Issue #10 stays OPEN.
 
+**Draft (not a Confirmed remediation item):** [`docs/CHARTS_INDICATORS_DESIGN.md`](CHARTS_INDICATORS_DESIGN.md) — ns-1 TradingView-style charts/indicators design path；**not** Accepted；does not expand 2026-10-21 Confirmed scope；**not** Confirmed item 6. Issue #10 stays OPEN.
+
 ---
 
 ## Explicit non-goals this cycle
