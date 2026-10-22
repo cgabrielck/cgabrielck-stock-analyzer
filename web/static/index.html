@@ -775,6 +775,8 @@ function applyChrome(){
   document.documentElement.lang = lang === "zh-TW" ? "zh-Hant" : "en";
   $$("[data-i18n]").forEach(el => el.textContent = t(el.dataset.i18n));
   $$("[data-i18n-placeholder]").forEach(el => el.placeholder = t(el.dataset.i18nPlaceholder));
+  const booksBanner = $("#booksBanner");
+  if(booksBanner) booksBanner.textContent = t("desk.books");
   $("#langEn").classList.toggle("on", lang==="en");
   $("#langZh").classList.toggle("on", lang==="zh-TW");
   const on = !!(paperControls && workerProcessOn(worker));

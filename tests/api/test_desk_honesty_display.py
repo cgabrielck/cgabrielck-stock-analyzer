@@ -1,6 +1,7 @@
 """Slice D D4–D7: fail-cases for dishonest Desk labels and silent fallback."""
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -1399,6 +1400,50 @@ def test_plan12e_journal_disclaimer_matches_ui_lead(honesty_api):
 
 # --- D7: dual-book honesty (Kelly/lab data/ ≠ Desk broker backend/data/) ---
 
+APP_PY = ROOT / "backend" / "api" / "app.py"
+
+
+def _html_slice(html: str, start: str, end: str) -> str:
+    i = html.index(start)
+    return html[i : html.index(end, i)]
+
+
+def _index_i18n_value(html: str, lang: str, key: str) -> str:
+    if lang == "en":
+        block = _html_slice(html, "\n  en: {", '\n  "zh-TW": {')
+    elif lang == "zh-TW":
+        block = _html_slice(html, '\n  "zh-TW": {', "\n};")
+    else:
+        raise AssertionError(lang)
+    match = re.search(rf'"{re.escape(key)}":"((?:\\.|[^"\\])*)"', block)
+    assert match, f"{lang} I18N missing {key}"
+    return match.group(1)
+
+
+def _books_banner_element(html: str) -> tuple[str, str]:
+    match = re.search(
+        r"<div\b([^>]*\bid=[\"']booksBanner[\"'][^>]*)>(.*?)</div>",
+        html,
+        re.DOTALL,
+    )
+    assert match, "missing #booksBanner element"
+    return match.group(1), match.group(2).strip()
+
+
+def _assert_books_envelope(payload: dict) -> None:
+    books = payload["books"]
+    assert books["dual_books"] is True
+    assert books["design_open"] is True
+    assert books["lab_book_dir"] == LAB_BOOK_DIR_LABEL
+    assert books["broker_book_dir"] == BROKER_BOOK_DIR_LABEL
+    assert books["disclaimer"] == DUAL_BOOK_CUE
+    assert books["disclaimer_zh"] == DUAL_BOOK_CUE_ZH
+    assert books.get("verified") is not True
+    assert books.get("live") is not True
+    assert payload.get("verified") is not True
+    assert payload.get("live") is not True
+
+
 
 def test_d7_source_dirs_remain_split():
     """D7-DESIGN still OPEN: two writers, two directories."""
@@ -1426,7 +1471,12 @@ def test_d7_holdings_hint_is_not_the_dual_book_banner():
 
 
 def test_d7_honesty_surface_cannot_disappear_while_dirs_split():
-    """Fail-case: removing the dual-book warning while dirs remain split."""
+    """Fail-case: hollow banner / hollow desk.books / missing chrome warning.
+
+    A leftover tour tip (t2.b) must not keep this green. Chrome, i18n keys,
+    applyChrome paint, and money-page t("desk.books") must all still show the
+    dual-book warning while dirs remain split.
+    """
     assert dual_books_split() is True
     html = INDEX.read_text(encoding="utf-8")
     tsx = APP_TSX.read_text(encoding="utf-8")
@@ -1434,23 +1484,46 @@ def test_d7_honesty_surface_cannot_disappear_while_dirs_split():
     guide = USER_GUIDE.read_text(encoding="utf-8")
     streamlit = STREAMLIT_APP.read_text(encoding="utf-8")
     dash = DASHBOARD.read_text(encoding="utf-8")
-    for blob, label in (
-        (html, "index.html"),
-        (tsx, "App.tsx"),
-        (i18n, "i18n.py"),
-        (guide, "CGAB_USER_GUIDE.md"),
-    ):
-        assert DUAL_BOOK_CUE in blob, label
-        assert LAB_BOOK_DIR_LABEL.rstrip("/") in blob, label
-        assert BROKER_BOOK_DIR_LABEL in blob, label
-        assert "not the same book" in blob.lower(), label
-    assert 'id="booksBanner"' in html
-    assert 'id="booksBanner"' in tsx
-    assert 'data-i18n="desk.books"' in html
+
+    attrs, inner = _books_banner_element(html)
+    assert 'data-i18n="desk.books"' in attrs
+    assert 'class="books-banner"' in attrs or "books-banner" in attrs
+    assert inner == DUAL_BOOK_CUE
     assert html.index('id="booksBanner"') < html.index('id="root"')
+    assert _index_i18n_value(html, "en", "desk.books") == DUAL_BOOK_CUE
+    assert _index_i18n_value(html, "zh-TW", "desk.books") == DUAL_BOOK_CUE_ZH
+
+    chrome = _html_slice(html, "function applyChrome()", "async function api(")
+    assert re.search(r'\$\(["\']#booksBanner["\']\)', chrome)
+    assert re.search(r't\(["\']desk\.books["\']\)', chrome)
+    assert "booksBanner.textContent" in chrome
+    assert 't("desk.books")' in chrome
+
+    desk_fn = _html_slice(html, "async function desk()", "async function orders()")
+    orders_fn = _html_slice(html, "async function orders()", "async function journal(")
+    # journal() is declared later; slice until the next top-level page fn after it
+    journal_fn = _html_slice(html, "async function journal(", "async function settings()")
+    assert '${t("desk.books")}' in desk_fn
+    assert '${t("desk.books")}' in orders_fn
+    assert 't("desk.books")' in journal_fn
+
+    cue_const = re.search(r'const DUAL_BOOK_CUE = "([^"]*)"', tsx)
+    assert cue_const, "App.tsx missing DUAL_BOOK_CUE"
+    assert cue_const.group(1) == DUAL_BOOK_CUE
+    banner_jsx = re.search(r'id="booksBanner"[^>]*>\s*\{([^}]+)\}', tsx)
+    assert banner_jsx, "App.tsx chrome banner is hollow or missing"
+    assert banner_jsx.group(1).strip() == "DUAL_BOOK_CUE"
     assert tsx.index('id="booksBanner"') < tsx.index('{page === "desk"')
-    assert DUAL_BOOK_CUE_ZH in html
+    desk_tsx = _html_slice(tsx, "function Desk(", "function Orders(")
+    orders_tsx = _html_slice(tsx, "function Orders(", "function Research(")
+    journal_tsx = _html_slice(tsx, "function Journal(", "function Options(")
+    assert "{DUAL_BOOK_CUE}" in desk_tsx
+    assert "{DUAL_BOOK_CUE}" in orders_tsx
+    assert "{DUAL_BOOK_CUE}" in journal_tsx
+
+    assert DUAL_BOOK_CUE in i18n
     assert DUAL_BOOK_CUE_ZH in i18n
+    assert DUAL_BOOK_CUE in guide
     assert DUAL_BOOK_CUE_ZH in guide
     assert 't("portfolio.dual_book"' in streamlit
     assert "st.warning(t(\"portfolio.dual_book\"" in streamlit
@@ -1473,21 +1546,28 @@ def test_d7_api_envelope_when_dirs_split(honesty_api):
 
     ops = honesty_api["client"].get("/api/ops")
     assert ops.status_code == 200, ops.text
-    books = ops.json()["books"]
-    assert books["dual_books"] is True
-    assert books["disclaimer"] == DUAL_BOOK_CUE
-    assert books.get("verified") is not True
-    assert books.get("live") is not True
-    assert ops.json().get("verified") is not True
-    assert ops.json().get("live") is not True
+    _assert_books_envelope(ops.json())
 
     journal = honesty_api["client"].get("/api/journal")
     assert journal.status_code == 200, journal.text
-    body = journal.json()
-    assert body["books"]["dual_books"] is True
-    assert body["books"]["disclaimer"] == DUAL_BOOK_CUE
-    assert body.get("verified") is not True
-    assert body.get("live") is not True
+    _assert_books_envelope(journal.json())
+
+    from backend.trading.models import AccountSummary
+
+    honesty_api["broker"].get_account_summary.return_value = AccountSummary(
+        cash=100000,
+        buying_power=100000,
+        portfolio_value=100000,
+        equity=100000,
+        positions=[],
+        paper=True,
+    )
+    positions = honesty_api["client"].get("/api/positions")
+    assert positions.status_code == 200, positions.text
+    pos_body = positions.json()
+    _assert_books_envelope(pos_body)
+    assert "positions" in pos_body
+    assert pos_body["count"] == 0
 
     guide = honesty_api["client"].get("/api/guide")
     assert guide.status_code == 200, guide.text
@@ -1498,6 +1578,43 @@ def test_d7_api_envelope_when_dirs_split(honesty_api):
     desk = next(step for step in steps if step["id"] == "desk")
     assert DUAL_BOOK_CUE in desk["en"]["body"]
     assert DUAL_BOOK_CUE_ZH in desk["zh"]["body"]
+
+
+def test_d7_positions_envelope_cannot_drop_while_dirs_split(honesty_api):
+    """Fail-case: GET /api/positions must stamp books while dirs remain split."""
+    assert dual_books_split() is True
+    src = APP_PY.read_text(encoding="utf-8")
+    positions_fn = _html_slice(src, '@app.get("/api/positions")', '@app.get("/api/orders")')
+    assert "dual_book_envelope()" in positions_fn
+    assert '"books"' in positions_fn or "books=" in positions_fn or "books :" in positions_fn
+    ops_fn = _html_slice(src, "@app.get(\"/api/ops\")", "@app.post(\"/api/ops/kill\")")
+    assert "dual_book_envelope()" in ops_fn
+    journal_src = (ROOT / "backend" / "api" / "trade_journal.py").read_text(encoding="utf-8")
+    assert "dual_book_envelope()" in journal_src
+    assert '"books": books' in journal_src or '"books": dual_book_envelope()' in journal_src
+
+    from backend.trading.models import AccountSummary
+
+    honesty_api["broker"].get_account_summary.return_value = AccountSummary(
+        cash=100000,
+        buying_power=100000,
+        portfolio_value=100000,
+        equity=100000,
+        positions=[],
+        paper=True,
+    )
+    res = honesty_api["client"].get("/api/positions")
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert "books" in body, "GET /api/positions dropped the dual-book envelope"
+    _assert_books_envelope(body)
+
+    ops = honesty_api["client"].get("/api/ops")
+    assert ops.status_code == 200, ops.text
+    _assert_books_envelope(ops.json())
+    journal = honesty_api["client"].get("/api/journal")
+    assert journal.status_code == 200, journal.text
+    _assert_books_envelope(journal.json())
 
 
 def test_d7_unified_dirs_must_not_keep_claiming_two_books(monkeypatch, tmp_path):
