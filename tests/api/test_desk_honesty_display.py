@@ -1402,18 +1402,19 @@ def test_plan12e_journal_disclaimer_matches_ui_lead(honesty_api):
 
 def test_d7_source_dirs_remain_split():
     """D7-DESIGN still OPEN: two writers, two directories."""
-    from backend.agents.portfolio_manager import DATA_DIR as lab
     from backend.utils.constants import DATA_DIR as broker
 
-    assert Path(lab).resolve() != Path(broker).resolve()
-    assert lab_book_dir() == Path(lab).resolve()
-    assert broker_book_dir() == Path(broker).resolve()
-    assert dual_books_split() is True
     pm = PORTFOLIO_MANAGER.read_text(encoding="utf-8")
     const = CONSTANTS.read_text(encoding="utf-8")
     assert '"..", "..", "data"' in pm
     assert 'os.path.dirname(os.path.dirname(__file__)), "data"' in const
     assert "do not silently merge" in pm.lower()
+    # Same formula as portfolio_manager.DATA_DIR without importing yfinance.
+    lab_from_pm = (PORTFOLIO_MANAGER.resolve().parent.parent.parent / "data").resolve()
+    assert lab_book_dir() == lab_from_pm
+    assert broker_book_dir() == Path(broker).resolve()
+    assert lab_book_dir() != broker_book_dir()
+    assert dual_books_split() is True
 
 
 def test_d7_holdings_hint_is_not_the_dual_book_banner():
