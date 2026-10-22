@@ -167,6 +167,7 @@ def test_digest_classifies_filled_vs_pending():
         {
             "symbol": "AAPL",
             "status": "filled",
+            "filled_avg_price": 190.0,
             "filled_at": "2026-09-15T18:00:00+00:00",
         },
         {"symbol": "MSFT", "status": "new"},
@@ -174,6 +175,7 @@ def test_digest_classifies_filled_vs_pending():
         {
             "symbol": "GOOGL",
             "status": "filled",
+            "filled_avg_price": 140.0,
             "filled_at": "2026-09-01T18:00:00+00:00",
         },
     ]
@@ -183,6 +185,25 @@ def test_digest_classifies_filled_vs_pending():
     assert "NVDA" in book["pending"]
     assert "GOOGL" in book["filled"]
     assert book["pending_count"] == 2
+
+
+def test_digest_unpriced_fill_is_not_classified_filled():
+    now = datetime(2026, 9, 15, 17, 0, tzinfo=_ET)
+    book = classify_orders(
+        [
+            {
+                "symbol": "AAPL",
+                "status": "filled",
+                "limit_price": 150.0,
+                "filled_avg_price": None,
+                "filled_at": "2026-09-15T18:00:00+00:00",
+            }
+        ],
+        now_et=now,
+    )
+    assert "AAPL" not in book["filled_today"]
+    assert "AAPL" not in book["filled"]
+    assert "AAPL" in book["pending"]
 
 
 def test_build_desk_digest_offline(monkeypatch):

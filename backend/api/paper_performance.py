@@ -438,11 +438,11 @@ def build_daily_digest(
     filled_syms = [r["symbol"] for r in filled_today]
     pending_syms = [r["symbol"] for r in pending]
     disclaimer_zh = (
-        "未成交限價單（new／accepted）不算封印。filled 才入帳。"
+        "未成交限價單（new／accepted）不算封印。只有已記錄成交價的 fill 才入帳。"
         " paper vs SPY 已扣假設來回成本。"
     )
     disclaimer_en = (
-        "Unfilled limits (new/accepted) are not a seal. Only filled shares count. "
+        "Unfilled limits (new/accepted) are not a seal. Only priced fills count. "
         "Paper vs SPY is net of assumed round-trip costs."
     )
     payload = {

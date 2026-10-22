@@ -66,6 +66,49 @@ function kpiSourceLabel(perf: any) {
 function ordersBookDirty(book: any) {
   return !!(book?.degraded || book?.unverified || book?.source === "local_store");
 }
+function positiveFillPrice(o: any): number | null {
+  const raw = o?.filled_avg_price ?? o?.fill_price ?? o?.filled_price;
+  const n = Number(raw);
+  return raw != null && raw !== "" && !Number.isNaN(n) && n > 0 ? n : null;
+}
+function isPricedFill(e: any) {
+  const fills = e?.fills || [];
+  return fills.length > 0 || positiveFillPrice(e) != null;
+}
+function orderStatusLabel(o: any) {
+  const st = String(o?.status || "").toLowerCase();
+  if ((st === "filled" || st === "partially_filled") && positiveFillPrice(o) == null) {
+    return "unpriced — not a fill";
+  }
+  return o?.status ? String(o.status) : "—";
+}
+function fillPriceLabel(o: any) {
+  const px = positiveFillPrice(o);
+  return px == null ? "—" : `$${px.toFixed(2)}`;
+}
+function journalStatusLabel(e: any) {
+  const st = String(e?.status || "").toLowerCase();
+  if ((st === "filled" || st === "partially_filled") && !isPricedFill(e)) {
+    return "unpriced — not a fill";
+  }
+  return e?.status ? String(e.status) : "—";
+}
+function mandateGap(ops: any) {
+  const st = ops?.mandate_status;
+  if (!st || st === "loaded") return "";
+  return `Mandate ${st} — Desk and paper worker fail-closed until mandate.json loads.`;
+}
+
+const HOLDINGS_HINT = "Alpaca Paper real book (not a model portfolio)";
+const EMPTY_POSITIONS = "No positions yet — paper auto only fills when a signal passes every gate.";
+const OPEN_ORDERS_HINT = "new / accepted = sent to the broker, not filled yet. The limit must trade before shares hit the book.";
+const JOURNAL_LEAD = "Orders, risk rejects, and operator notes from the local ledger. Empty means nothing was recorded — not a live fill. Fills appear only with a recorded fill price. Streamlit journal is lab/legacy.";
+const JOURNAL_EMPTY = "No recorded orders, rejects, or notes yet. This is not a live book.";
+const ALERTS_BODY = "New rules attach to saved research plans. Telegram worker stays the delivery path. Not a live fill feed.";
+const AIMODE_LEAD = "Only place to tune the agent and start paper auto trading. LLM cannot bypass RiskEngine / kill / mandate.";
+const AIMODE_PAPER = "Orders stay on Alpaca paper while PAPER is shown.";
+const DESK_LLM = "Tune the agent in AI Mode. LLM cannot bypass RiskEngine.";
+const PAPER_GATE = "Do not set APCA_PAPER=false until the paper runbook is signed.";
 
 export default function App() {
   const [page, setPage] = useState<Page>("desk");
@@ -206,11 +249,11 @@ function Desk({ account, onTrade, onRefresh }: { account: any; onTrade: (s: stri
       <div className="layout">
         <div className="card">
           <h3>Holdings — broker inventory</h3>
-          <p className="muted">Alpaca Paper real book (not Kelly model book)</p>
+          <p className="muted">{HOLDINGS_HINT}</p>
           <table className="table">
             <thead><tr><th>Symbol</th><th>Qty</th><th>Avg</th><th>Last</th><th>Mkt</th><th>Unreal</th><th>Wgt</th><th></th></tr></thead>
             <tbody>
-              {positions.length === 0 && <tr><td colSpan={8} className="muted">No positions yet</td></tr>}
+              {positions.length === 0 && <tr><td colSpan={8} className="muted">{EMPTY_POSITIONS}</td></tr>}
               {positions.map((p: any) => {
                 const equity = account?.equity || account?.portfolio_value || 0;
                 const wgt = equity && p.market_value ? (100 * p.market_value / equity).toFixed(1) : "—";
@@ -252,11 +295,12 @@ function Desk({ account, onTrade, onRefresh }: { account: any; onTrade: (s: stri
           </div>
           <div className="card" style={{ marginBottom: 12 }}>
             <h3>Open orders</h3>
+            <p className="muted">{OPEN_ORDERS_HINT}</p>
             {ordersDirty && <p className="muted">Orders source={orderBook.source || "local_store"} · degraded · unverified — not a clean broker book.</p>}
             {orders.length === 0 && <p className="muted">None</p>}
             {orders.slice(0, 6).map((o) => (
               <div key={o.id} className="row" style={{ justifyContent: "space-between", marginBottom: 6 }}>
-                <span>{o.side} {o.qty} {o.symbol}</span>
+                <span>{o.side} {o.qty} {o.symbol} · {orderStatusLabel(o)} · {fillPriceLabel(o)}</span>
                 <button className="btn ghost" onClick={() => api.cancelOrder(o.id).then(() => api.orders("open").then(setOrderBook))}>Cancel</button>
               </div>
             ))}
@@ -264,11 +308,12 @@ function Desk({ account, onTrade, onRefresh }: { account: any; onTrade: (s: stri
           <div className="card">
             <h3>Risk / Ops</h3>
             <p className="muted">Kill switch {ops?.kill_switch ? "ON" : "OFF"}</p>
+            {mandateGap(ops) && <p className="muted">{mandateGap(ops)}</p>}
             <div className="row">
               <button className="btn danger" onClick={() => api.kill().then(setOps)}>Halt buys</button>
               <button className="btn ghost" onClick={() => api.resume().then(setOps)}>Resume</button>
             </div>
-            <p className="muted" style={{ marginTop: 8 }}>Tune strategy in AI Mode. LLM cannot bypass RiskEngine.</p>
+            <p className="muted" style={{ marginTop: 8 }}>{DESK_LLM}</p>
           </div>
         </div>
       </div>
@@ -291,12 +336,13 @@ function Orders() {
           <button className={`tab ${filter === "open" ? "on" : ""}`} onClick={() => setFilter("open")}>Open</button>
         </div>
       </div>
+      <p className="muted">{OPEN_ORDERS_HINT}</p>
       {dirty && <p className="muted">Orders source={book.source || "local_store"} · degraded · unverified — not a clean broker book.</p>}
       <table className="table">
-        <thead><tr><th>Symbol</th><th>Side</th><th>Qty</th><th>Type</th><th>Status</th><th>Time</th></tr></thead>
+        <thead><tr><th>Symbol</th><th>Side</th><th>Qty</th><th>Limit</th><th>Fill</th><th>Type</th><th>Status</th><th>Time</th></tr></thead>
         <tbody>
           {rows.map((o) => (
-            <tr key={o.id}><td>{o.symbol}</td><td>{o.side}</td><td>{o.qty || o.quantity}</td><td>{o.type || o.order_type}</td><td>{o.status}</td><td>{String(o.submitted_at || "").slice(0, 19)}</td></tr>
+            <tr key={o.id}><td>{o.symbol}</td><td>{o.side}</td><td>{o.qty || o.quantity}</td><td>{o.limit_price != null ? `$${Number(o.limit_price).toFixed(2)}` : "—"}</td><td>{fillPriceLabel(o)}</td><td>{o.type || o.order_type}</td><td>{orderStatusLabel(o)}</td><td>{String(o.submitted_at || "").slice(0, 19)}</td></tr>
           ))}
         </tbody>
       </table>
@@ -444,7 +490,7 @@ function AiMode() {
     <form className="layout" onSubmit={save}>
       <div className="card">
         <h3>AI Mode</h3>
-        <p className="muted">Only place to tune the trading agent. Cannot bypass RiskEngine / kill switch / mandate.</p>
+        <p className="muted">{AIMODE_LEAD}</p>
         <div className="row" style={{ margin: "12px 0" }}>
           {["stable", "aggressive", "hybrid"].map((s) => (
             <button type="button" key={s} className={`tab ${cfg.strategy === s ? "on" : ""}`} onClick={() => setCfg({ ...cfg, strategy: s })}>{s}</button>
@@ -471,7 +517,7 @@ function AiMode() {
       <div className="card">
         <h3>Gates</h3>
         <p>Kill switch: {cfg.kill_switch ? "ON" : "OFF"}</p>
-        <p className="muted">Paper mode only. LLM is a modifier, not an execution override.</p>
+        <p className="muted">{AIMODE_PAPER} LLM is a modifier, not an execution override.</p>
       </div>
     </form>
   );
@@ -500,7 +546,7 @@ function Alerts() {
   return (
     <div className="card">
       <h3>Alerts</h3>
-      <p className="muted">Rules from saved research plans + Telegram delivery live in the existing alert worker. Inbox wiring continues here.</p>
+      <p className="muted">{ALERTS_BODY}</p>
       <button className="btn">New rule</button>
     </div>
   );
@@ -529,12 +575,12 @@ function Journal() {
   const [note, setNote] = useState("");
   const [symbol, setSymbol] = useState("AAPL");
   const [kind, setKind] = useState("all");
-  const [disclaimer, setDisclaimer] = useState("Orders, risk rejects, and notes. Empty is not a live fill.");
+  const [disclaimer, setDisclaimer] = useState(JOURNAL_LEAD);
   const [detail, setDetail] = useState("");
   const load = (filter = kind) => {
     api.journal(filter).then((d) => {
       setEntries(d.entries || []);
-      setDisclaimer(d.disclaimer || "Empty is not a live book.");
+      setDisclaimer(d.disclaimer || JOURNAL_LEAD);
     }).catch(() => setEntries([]));
   };
   useEffect(() => { load(kind); }, [kind]);
@@ -555,7 +601,7 @@ function Journal() {
       <table className="table">
         <thead><tr><th>Time</th><th>Symbol</th><th>Side</th><th>Qty</th><th>Status</th><th>Reasons</th><th>Summary</th><th>Provenance</th><th>Audit</th></tr></thead>
         <tbody>
-          {entries.length === 0 && <tr><td colSpan={9} className="muted">No recorded orders, rejects, or notes yet. This is not a live book.</td></tr>}
+          {entries.length === 0 && <tr><td colSpan={9} className="muted">{JOURNAL_EMPTY}</td></tr>}
           {entries.map((e, i) => (
             <tr key={e.log_id || e.id || i} onClick={async () => {
               if (!e.log_id) return;
@@ -566,7 +612,7 @@ function Journal() {
               <td>{e.symbol}</td>
               <td>{e.side || "—"}</td>
               <td>{e.qty || "—"}</td>
-              <td>{e.status || "—"}</td>
+              <td>{journalStatusLabel(e)}</td>
               <td>{(e.reason_codes || []).join(" · ") || "—"}</td>
               <td>{e.user_visible_summary || e.note || "—"}</td>
               <td>{e.provenance?.source || "unknown"} · unverified</td>
@@ -621,7 +667,8 @@ function Settings() {
       <p>Paper: {String(meta?.paper)}</p>
       <p>Ignore market hours env: {String(meta?.ignore_market_hours)}</p>
       <p className="muted">Kill switch: {ops?.kill_switch ? "ON" : "OFF"}</p>
-      <p className="muted">Do not set APCA_PAPER=false until the paper runbook is signed.</p>
+      {mandateGap(ops) && <p className="muted">{mandateGap(ops)}</p>}
+      <p className="muted">{PAPER_GATE}</p>
     </div>
   );
 }

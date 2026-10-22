@@ -471,7 +471,7 @@ def guide() -> Dict[str, Any]:
             {
                 "id": "desk",
                 "en": {
-                    "title": "Desk is the live paper book",
+                    "title": "Desk is the paper book",
                     "body": "Equity, cash, and holdings come from your Alpaca paper account. An empty table means no fills yet — not that the desk is broken.",
                 },
                 "zh": {

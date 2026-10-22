@@ -16,11 +16,13 @@ from backend.utils.provenance.trade_log import (
 logger = logging.getLogger(__name__)
 
 DISCLAIMER = (
-    "Desk journal is a local ledger of notes, orders, and risk rejects. "
-    "Empty is not a live book. Fills appear only when the order store recorded one."
+    "Orders, risk rejects, and operator notes from the local ledger. "
+    "Empty means nothing was recorded — not a live fill. "
+    "Fills appear only with a recorded fill price. Streamlit journal is lab/legacy."
 )
 DISCLAIMER_ZH = (
-    "交易日誌是本機帳本：筆記、訂單與風控拒絕。空白不是即時成交。只有訂單帳本已記錄的成交才會顯示 fill。"
+    "本機帳本中的訂單、風控拒絕與操作筆記。空白代表尚未入帳，不是即時成交。"
+    "只有已記錄成交價才會顯示 fill。Streamlit 日誌只是實驗室／舊介面。"
 )
 
 

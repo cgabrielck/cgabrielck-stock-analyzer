@@ -375,3 +375,97 @@ def test_d4_user_guide_matches_live_pid_chip():
     assert "心跳正常" not in text
     assert "live pid" in text.lower()
     assert "未驗證心跳" in text
+
+
+# --- plan-12e: live UI copy index.html vs App.tsx ---------------------------
+
+HOLDINGS_HINT = "Alpaca Paper real book (not a model portfolio)"
+EMPTY_POSITIONS = "No positions yet — paper auto only fills when a signal passes every gate."
+OPEN_ORDERS_HINT = "new / accepted = sent to the broker, not filled yet. The limit must trade before shares hit the book."
+UNPRICED_FILL = "unpriced — not a fill"
+PAPER_GATE = "Do not set APCA_PAPER=false until the paper runbook is signed."
+JOURNAL_LEAD = (
+    "Orders, risk rejects, and operator notes from the local ledger. "
+    "Empty means nothing was recorded — not a live fill. "
+    "Fills appear only with a recorded fill price. Streamlit journal is lab/legacy."
+)
+ALERTS_BODY = (
+    "New rules attach to saved research plans. Telegram worker stays the delivery path. "
+    "Not a live fill feed."
+)
+AIMODE_LEAD = (
+    "Only place to tune the agent and start paper auto trading. "
+    "LLM cannot bypass RiskEngine / kill / mandate."
+)
+MANDATE_GAP = "Desk and paper worker fail-closed until mandate.json loads."
+
+
+def test_plan12e_no_unverified_live_or_filled_claims():
+    html = INDEX.read_text(encoding="utf-8")
+    tsx = APP_TSX.read_text(encoding="utf-8")
+    assert "live paper book" not in html.lower()
+    assert "live paper book" not in tsx.lower()
+    assert "Worker linked" not in tsx
+    assert "delivery live" not in tsx.lower()
+    assert "Details also live in" not in html
+    assert "worker still fail-open" not in html.lower()
+    assert "paper worker still fail-open" not in html.lower()
+    assert '"verified": true' not in tsx.lower()
+    assert "verified: true" not in tsx.lower()
+
+
+def test_plan12e_copy_aligned_between_product_html_and_app_tsx():
+    html = INDEX.read_text(encoding="utf-8")
+    tsx = APP_TSX.read_text(encoding="utf-8")
+    for phrase in (
+        HOLDINGS_HINT,
+        EMPTY_POSITIONS,
+        OPEN_ORDERS_HINT,
+        UNPRICED_FILL,
+        PAPER_GATE,
+        JOURNAL_LEAD,
+        ALERTS_BODY,
+        AIMODE_LEAD,
+        MANDATE_GAP,
+        "positiveFillPrice",
+        "orderStatusLabel",
+        "journalStatusLabel",
+    ):
+        assert phrase in html, phrase
+        assert phrase in tsx, phrase
+
+
+def test_plan12e_unpriced_fill_is_not_shown_as_filled_in_ui():
+    html = INDEX.read_text(encoding="utf-8")
+    tsx = APP_TSX.read_text(encoding="utf-8")
+    assert "function orderStatusLabel" in html
+    assert "function orderStatusLabel" in tsx
+    assert "function positiveFillPrice" in html
+    assert "function positiveFillPrice" in tsx
+    assert 'st==="filled"' in html or 'st === "filled"' in html
+    assert 'st === "filled"' in tsx
+    assert UNPRICED_FILL in html
+    assert UNPRICED_FILL in tsx
+    assert "jnl-status submitted" in html
+    assert "journalStatusLabel" in tsx
+
+
+def test_plan12e_guide_api_desk_is_paper_book_not_live(honesty_api):
+    res = honesty_api["client"].get("/api/guide")
+    assert res.status_code == 200, res.text
+    desk = next(step for step in res.json()["steps"] if step["id"] == "desk")
+    title = desk["en"]["title"].lower()
+    assert "live paper" not in title
+    assert "paper book" in title
+    assert desk["en"]["title"] == "Desk is the paper book"
+
+
+def test_plan12e_journal_disclaimer_matches_ui_lead(honesty_api):
+    res = honesty_api["client"].get("/api/journal")
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["disclaimer"] == JOURNAL_LEAD
+    assert "not a live fill" in body["disclaimer"].lower()
+    assert "recorded fill price" in body["disclaimer"].lower()
+    assert body.get("verified") is not True
+    assert body.get("live") is not True

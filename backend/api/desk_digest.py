@@ -9,6 +9,8 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Mapping, Optional
 from zoneinfo import ZoneInfo
 
+from backend.trading.fill_honesty import honest_fill_status, recorded_fill_price
+
 _ET = ZoneInfo("America/New_York")
 
 _PENDING = {
@@ -31,7 +33,8 @@ def _status_of(row: Mapping[str, Any]) -> str:
     raw = row.get("status")
     if hasattr(raw, "value"):
         raw = raw.value
-    return str(raw or "").lower().strip()
+    fill_px = recorded_fill_price(row)
+    return honest_fill_status(str(raw or "").lower().strip(), {"filled_avg_price": fill_px})
 
 
 def _symbol_of(row: Mapping[str, Any]) -> str:
