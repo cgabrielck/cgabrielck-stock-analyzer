@@ -39,7 +39,16 @@ export const api = {
   addWatch: (symbol: string) => req<any>("/api/watchlist", { method: "POST", body: JSON.stringify({ symbol }) }),
   delWatch: (symbol: string) => req<any>(`/api/watchlist/${symbol}`, { method: "DELETE" }),
   quotes: () => req<{ quotes: any[] }>("/api/quotes"),
-  chart: (symbol: string) => req<{ symbol: string; bars: any[] }>(`/api/chart/${symbol}`),
+  chart: (symbol: string, period = "6mo") =>
+    req<{
+      symbol: string;
+      bars: any[];
+      vendor?: string;
+      asof?: string | null;
+      fallback?: boolean;
+      fallback_reason?: string | null;
+      indicators?: Record<string, { t: string; v: number }[]>;
+    }>(`/api/chart/${symbol}?period=${encodeURIComponent(period)}`),
   research: (symbol: string) => req<any>(`/api/research/${symbol}`),
   options: (symbol: string) => req<any>(`/api/options/${symbol}`),
   calendar: () => req<{ events: any[] }>("/api/calendar"),

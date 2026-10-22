@@ -604,23 +604,9 @@ def quotes(limit: int = 24) -> Dict[str, Any]:
 
 @app.get("/api/chart/{symbol}")
 def chart(symbol: str, period: str = "6mo") -> Dict[str, Any]:
-    import yfinance as yf
+    from backend.api.desk_chart import chart_payload
 
-    hist = yf.Ticker(symbol.upper()).history(period=period, interval="1d")
-    if hist is None or hist.empty:
-        raise HTTPException(status_code=404, detail="No chart data")
-    bars = [
-        {
-            "t": idx.strftime("%Y-%m-%d"),
-            "o": round(float(row["Open"]), 4),
-            "h": round(float(row["High"]), 4),
-            "l": round(float(row["Low"]), 4),
-            "c": round(float(row["Close"]), 4),
-            "v": int(row["Volume"]),
-        }
-        for idx, row in hist.iterrows()
-    ]
-    return {"symbol": symbol.upper(), "bars": bars}
+    return chart_payload(symbol, period=period)
 
 
 @app.post("/api/scan")
@@ -983,3 +969,23 @@ def health() -> Dict[str, str]:
 @app.get("/")
 def index():
     return FileResponse(STATIC_DIR / "index.html", headers={"Cache-Control": "no-store"})
+
+
+@app.get("/static/vendor/{filename}")
+def desk_vendor(filename: str):
+    """Serve vendored Chart JS only (lightweight-charts). Not a generic dump."""
+    allowed = {
+        "lightweight-charts.standalone.production.js",
+        "LICENSE.lightweight-charts.txt",
+    }
+    if filename not in allowed:
+        raise HTTPException(status_code=404, detail="Not found")
+    path = STATIC_DIR / "vendor" / filename
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Not found")
+    media = "application/javascript" if path.suffix == ".js" else "text/plain"
+    return FileResponse(
+        path,
+        media_type=media,
+        headers={"Cache-Control": "public, max-age=86400"},
+    )

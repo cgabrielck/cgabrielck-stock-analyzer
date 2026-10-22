@@ -83,6 +83,14 @@
     .tab.on { color:#052226; background:var(--cyan); border-color:var(--cyan); }
     .bars { display:flex; align-items:flex-end; gap:2px; height:140px; }
     .bar { flex:1; background:linear-gradient(180deg,var(--cyan),var(--purple)); border-radius:3px 3px 0 0; min-height:4px; }
+    .chart-toolbar { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:10px; }
+    .chart-legend { font-size:12px; font-variant-numeric:tabular-nums; color:var(--text); min-height:18px; margin:6px 0 8px; }
+    .chart-legend span { color:var(--muted); margin-right:10px; }
+    .chart-host { background:#07141a; border:1px solid var(--line); border-radius:12px; padding:8px; }
+    .tvchart { width:100%; height:420px; }
+    .tvchart-pane { width:100%; height:110px; }
+    .ind-btn { background:#0d1f26; border:1px solid var(--line); color:var(--muted); border-radius:999px; padding:6px 10px; cursor:pointer; font-size:12px; font-weight:700; }
+    .ind-btn.on { color:#052226; background:var(--cyan); border-color:var(--cyan); }
     .banner {
       display:flex; gap:14px; align-items:flex-start; justify-content:space-between; flex-wrap:wrap;
       margin-bottom:16px; padding:14px 16px; border-radius:16px;
@@ -258,6 +266,28 @@ const I18N = {
     "page.research":"Research",
     "page.market":"Market",
     "page.chart":"Chart",
+    "chart.lead":"TradingView-style daily snapshot. Not TradingView, not live, not an order.",
+    "chart.period":"Period",
+    "chart.empty":"No history for this symbol — not a filled series.",
+    "chart.overlays":"Overlays",
+    "chart.panes":"Panes",
+    "chart.sma20":"SMA20",
+    "chart.sma50":"SMA50",
+    "chart.ema20":"EMA20",
+    "chart.bb":"Bollinger",
+    "chart.rsi":"RSI(14)",
+    "chart.macd":"MACD",
+    "chart.prov":"{vendor} · as-of {asof} · {bars} daily bars",
+    "chart.fallback":"Yahoo labeled fallback",
+    "chart.not_tv":"TradingView-style readability (lightweight-charts). Not an official TradingView widget.",
+    "chart.not_live":"Paper desk snapshot. Loading a chart does not mean live or verified.",
+    "chart.not_order":"Indicators are a derived view — they do not place orders.",
+    "chart.lib_error":"Chart library failed to load.",
+    "chart.period.1mo":"1M",
+    "chart.period.3mo":"3M",
+    "chart.period.6mo":"6M",
+    "chart.period.1y":"1Y",
+    "chart.period.2y":"2Y",
     "page.aimode":"AI Mode",
     "page.strategies":"Strategies",
     "page.alerts":"Alerts",
@@ -458,6 +488,28 @@ const I18N = {
     "page.research":"研究",
     "page.market":"行情",
     "page.chart":"圖表",
+    "chart.lead":"TradingView 式日線快照。不是 TradingView、不是 live、不是下單。",
+    "chart.period":"期間",
+    "chart.empty":"此代碼沒有歷史 K 線 — 不是已填補的序列。",
+    "chart.overlays":"主圖",
+    "chart.panes":"副圖",
+    "chart.sma20":"SMA20",
+    "chart.sma50":"SMA50",
+    "chart.ema20":"EMA20",
+    "chart.bb":"布林",
+    "chart.rsi":"RSI(14)",
+    "chart.macd":"MACD",
+    "chart.prov":"{vendor} · as-of {asof} · {bars} 根日線",
+    "chart.fallback":"Yahoo 標示後備",
+    "chart.not_tv":"僅 TradingView 式可讀性（lightweight-charts）。不是官方 TradingView widget。",
+    "chart.not_live":"紙上交易台快照。載入圖表不代表 live 或 verified。",
+    "chart.not_order":"指標是衍生視圖 — 不會下單。",
+    "chart.lib_error":"圖表庫載入失敗。",
+    "chart.period.1mo":"1月",
+    "chart.period.3mo":"3月",
+    "chart.period.6mo":"6月",
+    "chart.period.1y":"1年",
+    "chart.period.2y":"2年",
     "page.aimode":"AI 模式",
     "page.strategies":"策略",
     "page.alerts":"警示",
@@ -650,6 +702,12 @@ const $$ = (s) => [...document.querySelectorAll(s)];
 const root = $("#root");
 let page = "desk", symbol = "AAPL", account = null, worker = null, tourStep = 0, lang = localStorage.getItem("cgab.lang") || "en";
 let paperControls = false, metaState = null;
+let chartPeriod = localStorage.getItem("cgab.chart.period") || "6mo";
+let chartInd = null;
+let _deskCharts = [];
+let _lwChartsPromise = null;
+const CHART_PERIODS = ["1mo","3mo","6mo","1y","2y"];
+const CHART_IND_DEFAULT = {sma20:true,sma50:true,ema20:true,bb:true,rsi:true,macd:true};
 const t = (k, vars) => {
   let s = (I18N[lang] && I18N[lang][k]) || I18N.en[k] || k;
   if (vars) Object.entries(vars).forEach(([a,b]) => { s = s.replaceAll("{"+a+"}", b); });
@@ -1690,14 +1748,268 @@ async function market(){
   root.querySelectorAll(".open").forEach(b=>b.onclick=()=>{symbol=b.dataset.s; navTo("research");});
 }
 
+function loadChartInd(){
+  if(chartInd) return chartInd;
+  try {
+    const raw = JSON.parse(localStorage.getItem("cgab.chart.ind")||"null");
+    chartInd = {...CHART_IND_DEFAULT, ...(raw&&typeof raw==="object"?raw:{})};
+  } catch { chartInd = {...CHART_IND_DEFAULT}; }
+  return chartInd;
+}
+function saveChartInd(){
+  localStorage.setItem("cgab.chart.ind", JSON.stringify(loadChartInd()));
+}
+function wipeDeskCharts(){
+  _deskCharts.forEach(c => { try { c.remove(); } catch(e){} });
+  _deskCharts = [];
+}
+function loadLwCharts(){
+  if(window.LightweightCharts) return Promise.resolve(window.LightweightCharts);
+  if(_lwChartsPromise) return _lwChartsPromise;
+  _lwChartsPromise = new Promise((resolve, reject) => {
+    const s = document.createElement("script");
+    s.src = "/static/vendor/lightweight-charts.standalone.production.js";
+    s.onload = () => window.LightweightCharts ? resolve(window.LightweightCharts) : reject(new Error("missing LightweightCharts"));
+    s.onerror = () => reject(new Error("chart library failed to load"));
+    document.head.appendChild(s);
+  }).catch(err => { _lwChartsPromise = null; throw err; });
+  return _lwChartsPromise;
+}
+function chartTimeStr(time){
+  if(time==null) return "";
+  if(typeof time==="string") return time.slice(0,10);
+  if(typeof time==="object" && time.year){
+    const m = String(time.month).padStart(2,"0");
+    const d = String(time.day).padStart(2,"0");
+    return time.year+"-"+m+"-"+d;
+  }
+  return String(time);
+}
+function fmtPx(n){ return (n==null||isNaN(n)) ? "—" : Number(n).toFixed(2); }
+function fmtVol(n){
+  if(n==null||isNaN(n)) return "—";
+  const v = Number(n);
+  if(v>=1e9) return (v/1e9).toFixed(2)+"B";
+  if(v>=1e6) return (v/1e6).toFixed(2)+"M";
+  if(v>=1e3) return (v/1e3).toFixed(1)+"K";
+  return String(Math.round(v));
+}
+function indMap(series){
+  const m = {};
+  (series||[]).forEach(p => { if(p && p.t!=null && p.v!=null) m[p.t] = p.v; });
+  return m;
+}
+function toLine(series){
+  return (series||[]).filter(p => p && p.t && p.v!=null).map(p => ({time:p.t, value:Number(p.v)}));
+}
+function chartTheme(){
+  return {
+    layout: { background: { color: "#07141a" }, textColor: "#8aa8ae" },
+    grid: { vertLines: { color: "#1a3d44" }, horzLines: { color: "#1a3d44" } },
+    rightPriceScale: { borderColor: "#1a3d44" },
+    timeScale: { borderColor: "#1a3d44", timeVisible: false },
+    crosshair: { mode: (window.LightweightCharts && window.LightweightCharts.CrosshairMode && window.LightweightCharts.CrosshairMode.Normal) || 0 },
+  };
+}
+function makeDeskChart(el, extra){
+  const LW = window.LightweightCharts;
+  const chart = LW.createChart(el, Object.assign({ autoSize: true, width: el.clientWidth || 640 }, chartTheme(), extra||{}));
+  _deskCharts.push(chart);
+  return chart;
+}
+function paintDeskChart(d){
+  const LW = window.LightweightCharts;
+  const ind = d.indicators || {};
+  const bars = d.bars || [];
+  const byT = {};
+  bars.forEach(b => { byT[b.t] = b; });
+  const maps = {
+    sma20: indMap(ind.sma20), sma50: indMap(ind.sma50), ema20: indMap(ind.ema20),
+    bb_upper: indMap(ind.bb_upper), bb_lower: indMap(ind.bb_lower),
+    rsi14: indMap(ind.rsi14), macd: indMap(ind.macd), macd_signal: indMap(ind.macd_signal), macd_hist: indMap(ind.macd_hist),
+  };
+  const candles = bars.map(b => ({time:b.t, open:b.o, high:b.h, low:b.l, close:b.c}));
+  const volumes = bars.map(b => ({
+    time:b.t, value: b.v==null?0:Number(b.v),
+    color: b.c>=b.o ? "rgba(62,224,160,.45)" : "rgba(255,107,129,.45)",
+  }));
+  const priceEl = $("#tvPrice");
+  const rsiEl = $("#tvRsi");
+  const macdEl = $("#tvMacd");
+  if(!priceEl) return;
+  const main = makeDeskChart(priceEl, { height: 420 });
+  const candleSeries = main.addCandlestickSeries({
+    upColor:"#3ee0a0", downColor:"#ff6b81", borderVisible:false,
+    wickUpColor:"#3ee0a0", wickDownColor:"#ff6b81",
+  });
+  candleSeries.setData(candles);
+  const volSeries = main.addHistogramSeries({ priceFormat:{type:"volume"}, priceScaleId:"volume" });
+  volSeries.setData(volumes);
+  main.priceScale("volume").applyOptions({ scaleMargins:{ top:0.78, bottom:0 } });
+  main.priceScale("right").applyOptions({ scaleMargins:{ top:0.08, bottom:0.22 } });
+  const overlay = {
+    sma20: main.addLineSeries({ color:"#fbbf24", lineWidth:1, title:"SMA20" }),
+    sma50: main.addLineSeries({ color:"#a78bfa", lineWidth:1, title:"SMA50" }),
+    ema20: main.addLineSeries({ color:"#22d3c5", lineWidth:1, title:"EMA20" }),
+    bb_upper: main.addLineSeries({ color:"#64748b", lineWidth:1, lineStyle: LW.LineStyle ? LW.LineStyle.Dotted : 1, title:"BB Upper" }),
+    bb_lower: main.addLineSeries({ color:"#64748b", lineWidth:1, lineStyle: LW.LineStyle ? LW.LineStyle.Dotted : 1, title:"BB Lower" }),
+  };
+  overlay.sma20.setData(toLine(ind.sma20));
+  overlay.sma50.setData(toLine(ind.sma50));
+  overlay.ema20.setData(toLine(ind.ema20));
+  overlay.bb_upper.setData(toLine(ind.bb_upper));
+  overlay.bb_lower.setData(toLine(ind.bb_lower));
+  let rsiChart = null, rsiSeries = null;
+  if(rsiEl){
+    rsiChart = makeDeskChart(rsiEl, { height: 110 });
+    rsiSeries = rsiChart.addLineSeries({ color:"#a78bfa", lineWidth:1, title:"RSI(14)" });
+    rsiSeries.setData(toLine(ind.rsi14));
+    rsiSeries.createPriceLine({ price:70, color:"#ff6b81", lineWidth:1, lineStyle:1, axisLabelVisible:true, title:"70" });
+    rsiSeries.createPriceLine({ price:30, color:"#3ee0a0", lineWidth:1, lineStyle:1, axisLabelVisible:true, title:"30" });
+    rsiChart.priceScale("right").applyOptions({ scaleMargins:{ top:0.08, bottom:0.08 } });
+  }
+  let macdChart = null, macdLine = null, macdSig = null, macdHist = null;
+  if(macdEl){
+    macdChart = makeDeskChart(macdEl, { height: 110 });
+    macdHist = macdChart.addHistogramSeries({ title:"MACD Hist" });
+    macdHist.setData((ind.macd_hist||[]).filter(p=>p&&p.t&&p.v!=null).map(p => ({
+      time:p.t, value:Number(p.v), color: Number(p.v)>=0 ? "rgba(62,224,160,.55)" : "rgba(255,107,129,.55)",
+    })));
+    macdLine = macdChart.addLineSeries({ color:"#60a5fa", lineWidth:1, title:"MACD" });
+    macdLine.setData(toLine(ind.macd));
+    macdSig = macdChart.addLineSeries({ color:"#fbbf24", lineWidth:1, title:"Signal" });
+    macdSig.setData(toLine(ind.macd_signal));
+  }
+  const applyToggles = () => {
+    const on = loadChartInd();
+    overlay.sma20.applyOptions({ visible: !!on.sma20 });
+    overlay.sma50.applyOptions({ visible: !!on.sma50 });
+    overlay.ema20.applyOptions({ visible: !!on.ema20 });
+    overlay.bb_upper.applyOptions({ visible: !!on.bb });
+    overlay.bb_lower.applyOptions({ visible: !!on.bb });
+    if(rsiEl) rsiEl.style.display = on.rsi ? "" : "none";
+    if(macdEl) macdEl.style.display = on.macd ? "" : "none";
+    _deskCharts.forEach(c => { try { c.timeScale().fitContent(); } catch(e){} });
+  };
+  applyToggles();
+  const panes = [rsiChart, macdChart].filter(Boolean);
+  main.timeScale().subscribeVisibleLogicalRangeChange(range => {
+    if(!range) return;
+    panes.forEach(c => { try { c.timeScale().setVisibleLogicalRange(range); } catch(e){} });
+  });
+  const legend = $("#chartLegend");
+  const writeLegend = (time) => {
+    if(!legend) return;
+    const key = time ? chartTimeStr(time) : (bars.length ? bars[bars.length-1].t : "");
+    const b = byT[key];
+    if(!b){ legend.textContent = ""; return; }
+    const on = loadChartInd();
+    const bits = [`<b>${d.symbol}</b> <span>${b.t}</span><span>O ${fmtPx(b.o)}</span><span>H ${fmtPx(b.h)}</span><span>L ${fmtPx(b.l)}</span><span>C ${fmtPx(b.c)}</span><span>V ${fmtVol(b.v)}</span>`];
+    if(on.sma20 && maps.sma20[key]!=null) bits.push(`<span>SMA20 ${fmtPx(maps.sma20[key])}</span>`);
+    if(on.sma50 && maps.sma50[key]!=null) bits.push(`<span>SMA50 ${fmtPx(maps.sma50[key])}</span>`);
+    if(on.ema20 && maps.ema20[key]!=null) bits.push(`<span>EMA20 ${fmtPx(maps.ema20[key])}</span>`);
+    if(on.bb && maps.bb_upper[key]!=null) bits.push(`<span>BB ${fmtPx(maps.bb_lower[key])}–${fmtPx(maps.bb_upper[key])}</span>`);
+    if(on.rsi && maps.rsi14[key]!=null) bits.push(`<span>RSI ${fmtPx(maps.rsi14[key])}</span>`);
+    if(on.macd && maps.macd[key]!=null) bits.push(`<span>MACD ${Number(maps.macd[key]).toFixed(3)}</span>`);
+    legend.innerHTML = bits.join("");
+  };
+  writeLegend(null);
+  main.subscribeCrosshairMove(param => {
+    const time = param && param.time;
+    writeLegend(time || null);
+  });
+  root.querySelectorAll(".ind-btn[data-ind]").forEach(btn => {
+    btn.onclick = () => {
+      const key = btn.dataset.ind;
+      const on = loadChartInd();
+      on[key] = !on[key];
+      saveChartInd();
+      btn.classList.toggle("on", !!on[key]);
+      applyToggles();
+      writeLegend(null);
+    };
+  });
+}
+function chartShell(inner){
+  const on = loadChartInd();
+  const periods = CHART_PERIODS.map(p => `<button class="tab ${chartPeriod===p?"on":""}" data-p="${p}">${t("chart.period."+p)}</button>`).join("");
+  const tog = (key, label) => `<button class="ind-btn ${on[key]?"on":""}" data-ind="${key}">${label}</button>`;
+  return `<div class="card"><h3>${t("page.chart")} ${symbol}</h3>
+    <p class="muted">${t("chart.lead")}</p>
+    <div class="chart-toolbar">
+      <input id="chartSym" value="${symbol}" style="width:110px" />
+      <span class="muted">${t("chart.period")}</span>
+      <div class="row" id="chartPeriods">${periods}</div>
+    </div>
+    <div class="chart-toolbar">
+      <span class="muted">${t("chart.overlays")}</span>
+      ${tog("sma20", t("chart.sma20"))}${tog("sma50", t("chart.sma50"))}${tog("ema20", t("chart.ema20"))}${tog("bb", t("chart.bb"))}
+      <span class="muted">${t("chart.panes")}</span>
+      ${tog("rsi", t("chart.rsi"))}${tog("macd", t("chart.macd"))}
+    </div>
+    ${inner}
+  </div>`;
+}
+function bindChartChrome(){
+  const inp = $("#chartSym");
+  if(inp){
+    inp.addEventListener("keydown", e => {
+      if(e.key==="Enter"){ symbol = inp.value.trim().toUpperCase() || symbol; chart(); }
+    });
+  }
+  root.querySelectorAll("#chartPeriods .tab").forEach(b => {
+    b.onclick = () => {
+      chartPeriod = b.dataset.p;
+      localStorage.setItem("cgab.chart.period", chartPeriod);
+      chart();
+    };
+  });
+}
 async function chart(){
-  const d = await api("/api/chart/"+symbol);
-  const bars = d.bars||[];
-  const cs = bars.map(b=>b.c);
-  const max=Math.max(...cs,1), min=Math.min(...cs,0), span=max-min||1;
-  root.innerHTML = `<div class="card"><h3>${t("page.chart")} ${symbol}</h3>
-    <div class="bars">${bars.slice(-80).map(b=>`<div class="bar" title="${b.t} ${b.c}" style="height:${((b.c-min)/span)*100}%"></div>`).join("")}</div>
-    <p class="muted">Daily closes</p></div>`;
+  wipeDeskCharts();
+  const want = (symbol||"").toUpperCase();
+  const period = CHART_PERIODS.includes(chartPeriod) ? chartPeriod : "6mo";
+  chartPeriod = period;
+  root.innerHTML = chartShell(`<p class="muted">${t("chart.lead")}</p>`);
+  bindChartChrome();
+  try {
+    await loadLwCharts();
+    const d = await api("/api/chart/"+encodeURIComponent(want)+"?period="+encodeURIComponent(period));
+    if(page!=="chart") return;
+    if((d.symbol||want) && d.symbol) symbol = d.symbol;
+    const bars = d.bars || [];
+    if(!bars.length){
+      wipeDeskCharts();
+      root.innerHTML = chartShell(`<p class="err">${t("chart.empty")}</p>
+        <p class="muted">${t("chart.not_live")}</p>`);
+      bindChartChrome();
+      return;
+    }
+    const fallback = d.fallback ? ` · ${t("chart.fallback")}` : "";
+    const prov = t("chart.prov", {vendor: d.vendor||"none", asof: d.asof||"—", bars: String(bars.length)}) + fallback;
+    root.innerHTML = chartShell(`
+      <p class="muted" id="chartProv">${prov}</p>
+      <div class="chart-legend" id="chartLegend"></div>
+      <div class="chart-host">
+        <div id="tvPrice" class="tvchart"></div>
+        <div id="tvRsi" class="tvchart-pane"></div>
+        <div id="tvMacd" class="tvchart-pane"></div>
+      </div>
+      <p class="muted">${t("chart.not_tv")}</p>
+      <p class="muted">${t("chart.not_live")}</p>
+      <p class="muted">${t("chart.not_order")}</p>`);
+    bindChartChrome();
+    paintDeskChart(d);
+  } catch(e) {
+    if(page!=="chart") return;
+    wipeDeskCharts();
+    const msg = (e && e.message) ? e.message : t("chart.empty");
+    const libFail = /library failed|LightweightCharts/i.test(msg);
+    root.innerHTML = chartShell(`<p class="err">${libFail ? t("chart.lib_error") : t("chart.empty")}</p>
+      <p class="muted">${msg}</p>
+      <p class="muted">${t("chart.not_live")}</p>`);
+    bindChartChrome();
+  }
 }
 
 async function aimode(){
