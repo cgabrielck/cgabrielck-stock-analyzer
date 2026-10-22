@@ -694,6 +694,7 @@ flowchart LR
 - [`ADR-003-live-ai-trading-desk.md`](ADR-003-live-ai-trading-desk.md) — **Accepted** 決策（含 **Addendum A** Proposal 治理）  
 - [`ARCHITECTURE_DECISION.md`](ARCHITECTURE_DECISION.md) — 決策索引（002 VOID）  
 - [`AUDIT_REMEDIATION_PLAN_2026-10-21.md`](AUDIT_REMEDIATION_PLAN_2026-10-21.md) — **Confirmed** 2026-10-21  
+- [`LEGACY_AUDIT_2026-10-22.md`](LEGACY_AUDIT_2026-10-22.md) — report-only（Risk／mandate／kill + OrderManager／broker；未修 R1–O6）  
 - [`PAPER_VALIDATION_RUNBOOK.md`](PAPER_VALIDATION_RUNBOOK.md) — **frozen**；紙倉／晉升操作參考  
 - [`AUTO_TRADING_ROADMAP.md`](AUTO_TRADING_ROADMAP.md) — **frozen**；衝突以 ADR-003 為準  
 - [`PAID_DATA_PIT_PLAN.md`](PAID_DATA_PIT_PLAN.md) — 付費數據  
