@@ -13,6 +13,7 @@ This file is the **index**. Canonical ADR-003 text lives in its own file. This f
 2. **[`MODULAR_ARCHITECTURE.md`](MODULAR_ARCHITECTURE.md)** — M1–M13, dual-clock H1–H3, L1/L2, `HarnessProposal`, Intent v0.
 3. **[`AUDIT_REMEDIATION_PLAN_2026-10-21.md`](AUDIT_REMEDIATION_PLAN_2026-10-21.md)** — **Confirmed by Gabriel 2026-10-21** (Hong Kong time). Next-doc work under ADR-003. **Confirmed P0 order:** user-visible journal / provenance first; IntentStore (H1/H3 split) after.
    - **Draft** (pending Owner/PM; not yet Accepted): [`BOUNDED_INTELLIGENCE_ACCEPTANCE.md`](BOUNDED_INTELLIGENCE_ACCEPTANCE.md) — AUDIT item 5 / plan-14 bounded-intelligence acceptance one-pager.
+   - **Draft** (pending Owner/PM; not yet Accepted; does not expand 2026-10-21 Confirmed scope): [`ACCOUNT_MANAGEMENT_DESIGN.md`](ACCOUNT_MANAGEMENT_DESIGN.md) — plan-15 account-management design page (Desk vs worker). Issue #10 stays OPEN.
 4. Older roadmaps — **frozen / superseded**, not authority:
    `AUTO_TRADING_ROADMAP`, `NEXT_PHASE_PLAN`, `QUALITY_ROADMAP`, `PAPER_VALIDATION_RUNBOOK`, `PROGRESS_LOG`, `CGAB_WORLD_CLASS_UPGRADE`.
 

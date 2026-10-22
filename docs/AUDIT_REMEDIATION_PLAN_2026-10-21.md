@@ -48,6 +48,8 @@ Keep ADR-003; revise docs before build. Risk if skip: Python rule kernel + docs 
    - `lab/advisory_debate` ≠ 產品 M7；**禁止**將 lab debate 接到 OrderManager／落單路徑。  
    - Draft path: [`docs/BOUNDED_INTELLIGENCE_ACCEPTANCE.md`](BOUNDED_INTELLIGENCE_ACCEPTANCE.md) — **Draft** pending Owner/PM; **not yet Accepted**.
 
+**Draft (not a Confirmed remediation item):** [`docs/ACCOUNT_MANAGEMENT_DESIGN.md`](ACCOUNT_MANAGEMENT_DESIGN.md) — plan-15 管戶設計頁 path；**not** Accepted；does not expand 2026-10-21 Confirmed scope. Issue #10 stays OPEN.
+
 ---
 
 ## Explicit non-goals this cycle
