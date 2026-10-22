@@ -341,6 +341,7 @@ def test_market_shadow_sell_with_position_mark_is_not_filled_at_zero(tmp_path):
     account = _account(
         positions=[
             Position(
+                id="p1",
                 symbol="AAPL",
                 quantity=10,
                 average_entry_price=100.0,
