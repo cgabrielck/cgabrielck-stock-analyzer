@@ -7,7 +7,9 @@ Upgrade from 1.0 (instant fill at limit price):
   - Limit sell fills only if a later bar's High >= limit price.
   - Records filled_avg_price and slippage_pct on the Order for later P&L review.
   - Supports partial fills via the quantity_touched parameter (useful for backtest reuse).
-  - No bars / no positive fill price → not FILLED (O1). Never store FILLED @ $0.
+  - No bars / no positive fill price → not FILLED (O1/O8). Never store
+    FILLED @ $0 or @ limit_price. Limit in filled_avg_price is treated as a
+    real fill by Desk/journal/notify — so it must come from bars, not a placeholder.
 """
 from __future__ import annotations
 
@@ -56,8 +58,8 @@ class ShadowTradingEngine:
             order:           A RISK_APPROVED order to simulate.
             next_bars:       OHLCV DataFrame of bars AFTER the signal bar.
                              Columns must include Open, High, Low, Close (and
-                             optionally Time). If None, falls back to an
-                             immediate fill at limit_price (legacy behavior).
+                             optionally Time). If None or empty, the order is
+                             not filled — limit_price is not a fill.
             quantity_touched: If provided, only fill this many shares (partial).
                              Defaults to the full order quantity.
 
@@ -80,20 +82,10 @@ class ShadowTradingEngine:
             except Exception:
                 pass
 
-        # No forward US-session bars: only a limit-bound order with a positive
-        # limit may record a simulated fill at that limit. Market/stop must not
-        # become FILLED @ $0 or at an unconstrained leftover limit (O1).
+        # No forward bars that can prove a trade: do not store FILLED.
+        # Limit/stop_limit must not land in filled_avg_price (Desk/journal/notify
+        # would treat that as a real fill).
         if next_bars is None or len(next_bars) == 0:
-            otype = str(getattr(order.order_type, "value", order.order_type) or "").lower()
-            if otype in ("limit", "stop_limit"):
-                fill_px = positive_price(order.limit_price)
-                if fill_px is None:
-                    self._refuse_unpriced_fill(order)
-                    return order
-                self._mark_filled(order, fill_price=fill_px, slippage=0.0)
-                logger.info("[SHADOW] Instant fill %s @ %s (no forward bars)",
-                            order.symbol, fill_px)
-                return order
             self._refuse_unpriced_fill(order)
             return order
 

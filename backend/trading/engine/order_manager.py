@@ -19,6 +19,23 @@ from backend.trading.engine.sticky_idempotency import (
 
 logger = logging.getLogger(__name__)
 
+
+def _honestly_terminal(order: Order) -> bool:
+    """True only when a terminal status is backed by evidence.
+
+    ``FILLED`` with no real avg is not terminal — sync must re-fetch or demote
+    so the ledger is not display-only honest.
+    """
+    if order.status in (
+        OrderStatus.CANCELLED,
+        OrderStatus.REJECTED,
+        OrderStatus.EXPIRED,
+    ):
+        return True
+    if order.status == OrderStatus.FILLED and recorded_fill_price(order) is not None:
+        return True
+    return False
+
 class OrderStore(Protocol):
     """Protocol for durable storage of orders and fills."""
     def save_order(self, order: Order) -> None: ...
@@ -203,8 +220,7 @@ class OrderManager:
              logger.warning(f"Order {internal_order_id} not found in local store during sync.")
              return None
         
-        if local_order.status in [OrderStatus.FILLED, OrderStatus.CANCELLED, OrderStatus.REJECTED, OrderStatus.EXPIRED]:
-             # Terminal states, no need to sync
+        if _honestly_terminal(local_order):
              return local_order
             
         broker_order = self.broker.get_order(local_order.id)
@@ -242,8 +258,11 @@ class OrderManager:
             return local_order
         else:
              logger.error(f"Order {local_order.id} exists locally but not found on broker during sync.")
-             # We don't mark as error immediately, it could be a propagation delay on the broker side.
-             # A robust system would retry or escalate.
+             if is_fill_status(local_order.status) and recorded_fill_price(local_order) is None:
+                 local_order.status = OrderStatus.SUBMITTED
+                 local_order.filled_avg_price = None
+                 local_order.filled_at = None
+                 self.store.save_order(local_order)
              return local_order
 
     def cancel_active_order(self, internal_order_id: str) -> Optional[Order]:
@@ -255,7 +274,7 @@ class OrderManager:
              logger.warning(f"Cannot cancel: Order {internal_order_id} not found.")
              return None
             
-        if local_order.status in [OrderStatus.FILLED, OrderStatus.CANCELLED, OrderStatus.REJECTED, OrderStatus.EXPIRED]:
+        if _honestly_terminal(local_order):
             logger.info(f"Order {internal_order_id} is already in terminal state: {local_order.status}")
             return local_order
 

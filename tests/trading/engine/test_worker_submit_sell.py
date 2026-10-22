@@ -351,7 +351,8 @@ def test_shadow_sell_honest_path_evaluates_before_fill():
     worker.risk_engine.evaluate_order = lambda *a, **k: risk_calls.append(1) or orig_risk(*a, **k)
     result = worker._submit_sell("AAPL", 10.0, 100.40, "stop")
     assert risk_calls
-    assert result.status == OrderStatus.FILLED
+    assert result.status != OrderStatus.FILLED
+    assert result.filled_avg_price is None
     broker.submit_order.assert_not_called()
 
 

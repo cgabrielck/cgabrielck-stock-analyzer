@@ -213,6 +213,63 @@ def test_o3_sync_does_not_copy_limit_as_fill():
     assert result.limit_price == 349.39
 
 
+def test_o3_sync_demotes_local_filled_without_avg():
+    """Residual: already FILLED + avg=None must not skip broker / keep ledger filled."""
+    store = InMemoryOrderStore()
+    broker = MagicMock()
+    manager = OrderManager(broker=broker, store=store)
+    local = _order(
+        id="sync-stale",
+        status=OrderStatus.FILLED,
+        filled_avg_price=None,
+        limit_price=100.0,
+    )
+    store.save_order(local)
+    broker.get_order.return_value = None
+
+    result = manager.sync_order_status("sync-stale")
+    broker.get_order.assert_called_once()
+    assert result.status != OrderStatus.FILLED
+    assert result.filled_avg_price is None
+    saved = store.get_order("sync-stale")
+    assert saved.status != OrderStatus.FILLED
+    assert saved.filled_avg_price is None
+
+
+def test_o3_sync_skips_filled_with_real_price():
+    store = InMemoryOrderStore()
+    broker = MagicMock()
+    manager = OrderManager(broker=broker, store=store)
+    local = _order(id="sync-done", status=OrderStatus.FILLED, filled_avg_price=12.5)
+    store.save_order(local)
+    result = manager.sync_order_status("sync-done")
+    broker.get_order.assert_not_called()
+    assert result.status == OrderStatus.FILLED
+    assert result.filled_avg_price == 12.5
+
+
+def test_o3_sync_recovers_real_fill_for_unpriced_local_filled():
+    store = InMemoryOrderStore()
+    broker = MagicMock()
+    manager = OrderManager(broker=broker, store=store)
+    local = _order(
+        id="sync-recover",
+        status=OrderStatus.FILLED,
+        filled_avg_price=None,
+        limit_price=100.0,
+    )
+    store.save_order(local)
+    broker_order = local.model_copy()
+    broker_order.status = OrderStatus.FILLED
+    broker_order.filled_avg_price = 9.87
+    broker.get_order.return_value = broker_order
+
+    result = manager.sync_order_status("sync-recover")
+    assert result.status == OrderStatus.FILLED
+    assert result.filled_avg_price == 9.87
+    assert result.filled_avg_price != result.limit_price
+
+
 # --- O1 shadow --------------------------------------------------------------
 
 
@@ -261,6 +318,56 @@ def test_o1_shadow_market_leftover_limit_is_not_a_fill_without_bars():
     result = engine.simulate_submission(order, next_bars=None)
     assert result.status != OrderStatus.FILLED
     assert result.filled_avg_price is None
+
+
+def test_o8_shadow_limit_no_bars_is_not_filled_at_limit():
+    """Cursor BLOCK: no bars → must not store FILLED @ limit as filled_avg_price."""
+    engine = ShadowTradingEngine()
+    order = _order(limit_price=150.0, status=OrderStatus.RISK_APPROVED)
+    result = engine.simulate_submission(order, next_bars=None)
+    assert result.status != OrderStatus.FILLED
+    assert result.filled_avg_price is None
+    saved = None
+    if engine.order_manager is not None:
+        saved = engine.order_manager.store.get_order(order.id)
+    assert saved is None or saved.status != OrderStatus.FILLED
+
+
+def test_o8_shadow_stop_limit_no_bars_is_not_filled_at_limit():
+    engine = ShadowTradingEngine()
+    order = _order(
+        order_type=OrderType.STOP_LIMIT,
+        limit_price=150.0,
+        status=OrderStatus.RISK_APPROVED,
+    )
+    result = engine.simulate_submission(order, next_bars=None)
+    assert result.status != OrderStatus.FILLED
+    assert result.filled_avg_price is None
+
+
+def test_o8_worker_empty_ohlcv_does_not_synthesize_ref_bar():
+    """Probe: empty OHLCV must not invent Open=ref so market fills at ref*1.0005."""
+    from backend.trading.engine.worker import TradingWorker
+
+    worker = TradingWorker.__new__(TradingWorker)
+    worker._fetch_ohlcv = lambda *a, **k: pd.DataFrame()
+    nxt = TradingWorker._fetch_next_bar(worker, "AAPL", 200.0)
+    assert nxt is None or getattr(nxt, "empty", False)
+
+    engine = ShadowTradingEngine()
+    market = _order(
+        order_type=OrderType.MARKET,
+        limit_price=None,
+        status=OrderStatus.RISK_APPROVED,
+    )
+    mres = engine.simulate_submission(market, next_bars=nxt)
+    assert mres.status != OrderStatus.FILLED
+    assert mres.filled_avg_price is None
+
+    limit = _order(limit_price=200.0, status=OrderStatus.RISK_APPROVED)
+    lres = engine.simulate_submission(limit, next_bars=nxt)
+    assert lres.status != OrderStatus.FILLED
+    assert lres.filled_avg_price is None
 
 
 # --- O4 performance / digest ------------------------------------------------

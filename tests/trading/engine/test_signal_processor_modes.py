@@ -2,6 +2,8 @@
 import unittest
 from unittest.mock import MagicMock
 
+import pandas as pd
+
 from backend.trading.engine.signal_processor import SignalProcessor
 from backend.trading.engine.shadow import ShadowTradingEngine
 from backend.trading.models import OrderStatus
@@ -24,6 +26,9 @@ class TestSignalProcessorModes(unittest.TestCase):
             broker, risk, manager, execution_mode="shadow", shadow_engine=shadow
         )
 
+        bars = pd.DataFrame(
+            {"Open": [100.0], "Low": [99.0], "High": [101.0], "Close": [100.5]}
+        )
         result = processor.process_signal(
             {
                 "symbol": "AAPL",
@@ -31,11 +36,40 @@ class TestSignalProcessorModes(unittest.TestCase):
                 "quantity": 10,
                 "limit_price": 100.0,
                 "idempotency_key": "shadow-aapl-1",
-            }
+            },
+            next_bars=bars,
         )
         self.assertEqual(result.status, OrderStatus.FILLED)
+        self.assertEqual(result.filled_avg_price, 100.0)
         broker.submit_order.assert_not_called()
         self.assertIsNotNone(store.get_order(result.id))
+
+    def test_shadow_mode_without_bars_is_not_filled(self):
+        broker = MagicMock()
+        broker.get_account_summary.return_value = MagicMock(
+            cash=50_000, buying_power=50_000, portfolio_value=100_000, positions=[]
+        )
+        risk = MagicMock()
+        risk.evaluate_order.return_value = RiskDecision(approved=True, reason="ok")
+        store = InMemoryOrderStore()
+        manager = OrderManager(broker=broker, store=store)
+        shadow = ShadowTradingEngine(order_manager=manager)
+        processor = SignalProcessor(
+            broker, risk, manager, execution_mode="shadow", shadow_engine=shadow
+        )
+
+        result = processor.process_signal(
+            {
+                "symbol": "AAPL",
+                "side": "buy",
+                "quantity": 10,
+                "limit_price": 100.0,
+                "idempotency_key": "shadow-aapl-nobars",
+            }
+        )
+        self.assertNotEqual(result.status, OrderStatus.FILLED)
+        self.assertIsNone(result.filled_avg_price)
+        broker.submit_order.assert_not_called()
 
     def test_paper_mode_submits_via_order_manager(self):
         broker = MagicMock()

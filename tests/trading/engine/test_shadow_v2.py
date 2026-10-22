@@ -85,12 +85,12 @@ class TestShadowV2(unittest.TestCase):
         self.assertEqual(filled.status, OrderStatus.FILLED)
         self.assertEqual(filled.quantity, 4)
 
-    def test_no_forward_bars_falls_back_to_instant_fill(self):
+    def test_no_forward_bars_limit_is_not_filled_at_limit(self):
+        """O8 fail-case: no bars must not store FILLED @ limit_price."""
         o = _order(limit=150.0)
-        filled = self.engine.simulate_submission(o, next_bars=None)
-        self.assertEqual(filled.status, OrderStatus.FILLED)
-        self.assertEqual(filled.filled_avg_price, 150.0)
-        self.assertEqual(filled.slippage_pct, 0.0)
+        result = self.engine.simulate_submission(o, next_bars=None)
+        self.assertNotEqual(result.status, OrderStatus.FILLED)
+        self.assertIsNone(result.filled_avg_price)
 
     def test_no_forward_bars_market_is_not_filled_at_zero(self):
         """O1 fail-case: market + no bars must not FILLED @ 0."""

@@ -831,7 +831,11 @@ class TradingWorker:
         except Exception:
             return
         for order in orders:
-            if order.status in active_states:
+            unpriced_fill = (
+                order.status in (OrderStatus.FILLED, OrderStatus.PARTIALLY_FILLED)
+                and fill_notify_price(order) is None
+            )
+            if order.status in active_states or unpriced_fill:
                 try:
                     updated = self.manager.sync_order_status(order.id)
                 except Exception as exc:
@@ -1433,20 +1437,16 @@ class TradingWorker:
     def _fetch_next_bar(self, symbol: str, ref_price: float) -> Optional[pd.DataFrame]:
         """Next US equity session bar for shadow fill (not wall-clock 24h / BTC).
 
-        Live next-open is not known yet, so we use the last complete NYSE session
-        bar as a conservative estimate — weekend/crypto dates are dropped.
+        *ref_price* is unused: it must not synthesize a bar. Empty OHLCV
+        returns None so shadow cannot fill at entry/limit (O1/O8).
+        Weekend/crypto dates are dropped; no session bars → no fill.
         """
         from backend.utils.us_equity_calendar import filter_us_equity_daily_bars
 
         df = self._fetch_ohlcv(symbol, period="5d")
         session_bars = filter_us_equity_daily_bars(df)
         if session_bars is None or session_bars.empty:
-            return pd.DataFrame({
-                "Open": [ref_price],
-                "High": [ref_price * 1.002],
-                "Low": [ref_price * 0.998],
-                "Close": [ref_price],
-            })
+            return None
         return session_bars.tail(1)
 
 
