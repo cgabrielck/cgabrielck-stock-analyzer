@@ -340,6 +340,8 @@ def from_order(
     audit_id: Optional[str] = None,
     strategy_id: Optional[str] = None,
     intent_id: Optional[str] = None,
+    link_intent: bool = True,
+    provenance_extra: Optional[Dict[str, Any]] = None,
 ) -> Optional[Dict[str, Any]]:
     data = _as_dict(order)
     if not data and order is None:
@@ -370,7 +372,17 @@ def from_order(
     )
     audit_ref = f"/api/journal/audit/{audit_id}" if audit_id else ""
     linked_intent = intent_id or _field(order, "intent_id")
-    intent_ref = f"/api/intents/{linked_intent}" if linked_intent else ""
+    # H1 journals link to IntentStore. Desk PATH stamps a journal-only
+    # correlation id and must not invent /api/intents/{id} (that document
+    # was never written — Intent v0 forbids stuffing this L2 order in).
+    intent_ref = (
+        f"/api/intents/{linked_intent}" if linked_intent and link_intent else ""
+    )
+    extra: Dict[str, Any] = {}
+    if order_id:
+        extra["order_id"] = order_id
+    if provenance_extra:
+        extra.update(provenance_extra)
     entry.update(
         {
             "strategy_id": strategy_id or _field(order, "strategy_id"),
@@ -387,7 +399,7 @@ def from_order(
             "provenance": journal_provenance(
                 source="order_store",
                 as_of=ts,
-                extra={"order_id": order_id} if order_id else None,
+                extra=extra or None,
             ),
         }
     )

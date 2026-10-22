@@ -361,6 +361,8 @@ flowchart TD
 
 **IntentStore vs OrderStore：** IntentStore（H3 寫、H1 消費）= `backend/trading/intents/`（`intent.v0` JSON file ledger，見 `JSONIntentStore`）。現有 `OrderStore`／`JSONOrderStore`／`SQLiteOrderStore`（`backend/trading/storage.py`）係 **L2 訂單帳本**，唔係 IntentStore。唔好把 `Order` 欄位塞進 Intent v0。H1 consume hook：`backend/trading/engine/harness_realtime.py`（完整 H1/H2 worker 拆分仍 TODO）。
 
+**R1-PATH（Desk money path write-point, 2026-10-23）：** 手動 Desk `POST /api/orders` / `place_desk_order` **唔走** H3 `upsert_active_intent` → H1 consume → M8 sizer（操作員 qty 保留；Mandate＋Risk 仍 evaluate）。Provenance／intent 寫入點 = trade journal `record_from_order`（`strategy_id=desk_manual`、durable `intent_id`、`provenance.write_point=place_desk_order`、`links.intent_ref` 空——呢個 id **唔係** IntentStore 文件，因為 Desk 無誠實嘅 conviction_tier／pct stop，亦唔可寫 `active` 等 H1 再落一張單）。完整 M8 StrategyBase wiring 仍 OPEN。
+
 ```mermaid
 flowchart TB
   subgraph H1["H1 realtime (no LLM)"]
@@ -709,3 +711,4 @@ flowchart LR
 - **2026-10-21 (P0 order):** Confirmed — journal／provenance first; IntentStore (H1/H3) later. See audit plan item 4.
 - **2026-10-21 (IntentStore):** `intent.v0` JSON IntentStore + H3 `upsert_active_intent` + thin H1 `harness_realtime` consume hook. Full H1/H2 worker split still TODO. Not live.
 - **2026-10-21 (IntentStore CR):** `consumed` = handed to M8, not a fill; risk rejects stay `consumed` and show as journal `risk_rejected` + `intent_id`. No new Intent status.
+- **2026-10-23 (R1-PATH):** Desk money path write-point = journal `record_from_order` (`desk_manual` + `intent_id`); not IntentStore / H1 / M8. See §4.4.

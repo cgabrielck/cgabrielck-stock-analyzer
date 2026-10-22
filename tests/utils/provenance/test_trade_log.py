@@ -244,6 +244,31 @@ def test_merge_attaches_audit_link_to_order_twin():
     assert rows[0]["links"]["audit_ref"] == "/api/journal/audit/aud-6"
 
 
+def test_from_order_desk_path_stamp_does_not_invent_intent_ref():
+    """Desk PATH: journal intent_id is not an IntentStore document."""
+    entry = from_order(
+        {
+            "id": "ord-desk-path",
+            "symbol": "AAPL",
+            "side": "buy",
+            "quantity": 1,
+            "status": "submitted",
+            "limit_price": 150.0,
+        },
+        intent_id="desk-corr-1",
+        strategy_id="desk_manual",
+        link_intent=False,
+        provenance_extra={"write_point": "place_desk_order"},
+    )
+    assert entry is not None
+    assert entry["intent_id"] == "desk-corr-1"
+    assert entry["strategy_id"] == "desk_manual"
+    assert entry["links"]["intent_ref"] == ""
+    assert entry["provenance"]["write_point"] == "place_desk_order"
+    assert entry["provenance"]["verified"] is False
+    assert entry["provenance"]["live"] is False
+
+
 def test_merge_keeps_intent_link_from_journal():
     journal = from_order(
         {
