@@ -729,11 +729,7 @@ def journal_entry(log_id: str) -> Dict[str, Any]:
     entry = trade_journal.get_entry(log_id, order_store=_store)
     if not entry:
         raise HTTPException(status_code=404, detail="Journal entry not found")
-    linked = None
-    audit_id = entry.get("risk_decision_id")
-    if audit_id:
-        linked = trade_journal.get_audit_event(str(audit_id))
-    return {"entry": entry, "audit": linked}
+    return {"entry": entry, "audit": trade_journal.linked_audit_for_entry(entry)}
 
 
 @app.post("/api/journal")

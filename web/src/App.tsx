@@ -110,13 +110,14 @@ function journalStatusLabel(e: any) {
 function journalSummaryLabel(e: any) {
   const summary = String(e?.user_visible_summary || e?.note || "").trim();
   const st = String(e?.status || "").toLowerCase();
-  if ((st !== "filled" && st !== "partially_filled") || isPricedFill(e)) {
+  const claiming = st === "filled" || st === "partially_filled" || st.includes("unpriced");
+  if (!claiming || isPricedFill(e)) {
     return summary || "—";
   }
   if (!summary) return "unpriced — not a fill";
   const low = summary.toLowerCase();
-  if (low.includes("unpriced")) return summary;
   if (low.includes("filled")) return "unpriced — not a fill";
+  if (low.includes("unpriced")) return summary;
   return `${summary} · unpriced — not a fill`;
 }
 function mandateGap(ops: any) {

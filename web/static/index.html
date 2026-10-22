@@ -739,11 +739,12 @@ function journalStatusClass(e){
 function journalSummaryLabel(e){
   const summary = String((e && (e.user_visible_summary||e.note)) || "").trim();
   const st = String(e && e.status || "").toLowerCase();
-  if((st!=="filled" && st!=="partially_filled") || isPricedFill(e)) return summary || "—";
+  const claiming = st==="filled" || st==="partially_filled" || st.indexOf("unpriced")>=0;
+  if(!claiming || isPricedFill(e)) return summary || "—";
   if(!summary) return t("orders.unpriced");
   const low = summary.toLowerCase();
-  if(low.indexOf("unpriced")>=0) return summary;
   if(low.indexOf("filled")>=0) return t("orders.unpriced");
+  if(low.indexOf("unpriced")>=0) return summary;
   return summary+" · "+t("orders.unpriced");
 }
 function mandateGap(ops){

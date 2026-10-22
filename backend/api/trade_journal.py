@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional
 
-from backend.api.desk_display import journal_display_row
+from backend.api.desk_display import journal_display_audit, journal_display_row
 from backend.utils.provenance import journal_store
 from backend.utils.provenance.trade_log import (
     TRADE_LOG_SCHEMA,
@@ -139,3 +139,13 @@ def get_audit_event(event_id: str) -> Optional[Dict[str, Any]]:
     except Exception as exc:
         logger.warning("journal audit lookup failed: %s", exc)
     return None
+
+
+def linked_audit_for_entry(entry: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Attach a display-only audit copy. Does not write audit jsonl / journal."""
+    if not entry:
+        return None
+    audit_id = entry.get("risk_decision_id")
+    if not audit_id:
+        return None
+    return journal_display_audit(get_audit_event(str(audit_id)), entry=entry)

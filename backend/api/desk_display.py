@@ -241,10 +241,10 @@ def journal_summary_label(row: Optional[Dict[str, Any]]) -> str:
     if not summary:
         return UNPRICED_FILL_LABEL
     low = summary.lower()
-    if "unpriced" in low:
-        return summary
     if "filled" in low:
         return UNPRICED_FILL_LABEL
+    if "unpriced" in low:
+        return summary
     return f"{summary} · {UNPRICED_FILL_LABEL}"
 
 
@@ -268,4 +268,42 @@ def journal_display_row(row: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     data["display_status"] = journal_status_label(data)
     data["display_status_class"] = journal_status_class(data)
     data["user_visible_summary"] = journal_summary_label(data)
+    return data
+
+
+def _entry_shows_unpriced(entry: Optional[Dict[str, Any]]) -> bool:
+    if not entry:
+        return False
+    st = str(entry.get("status") or "").lower()
+    ds = str(entry.get("display_status") or "").lower()
+    if st == UNPRICED_FILL_LABEL.lower() or ds == UNPRICED_FILL_LABEL.lower():
+        return True
+    return _claims_fill_status(entry) and not is_priced_fill(entry)
+
+
+def _demote_fill_status_fields(obj: Dict[str, Any]) -> None:
+    st = str(obj.get("status") or "").lower()
+    if st in _JOURNAL_FILL_STATUSES:
+        obj["status"] = UNPRICED_FILL_LABEL
+
+
+def journal_display_audit(
+    audit: Optional[Dict[str, Any]],
+    *,
+    entry: Optional[Dict[str, Any]] = None,
+) -> Optional[Dict[str, Any]]:
+    """Display overlay for Entry+audit JSON. Does not write audit jsonl."""
+    if not isinstance(audit, dict):
+        return audit
+    data = dict(audit)
+    payload = dict(data["payload"]) if isinstance(data.get("payload"), dict) else None
+    if payload is not None:
+        data["payload"] = payload
+    if not _entry_shows_unpriced(entry):
+        return data
+    if is_priced_fill(data) or (payload is not None and is_priced_fill(payload)):
+        return data
+    _demote_fill_status_fields(data)
+    if payload is not None:
+        _demote_fill_status_fields(payload)
     return data
