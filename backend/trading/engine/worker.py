@@ -25,10 +25,11 @@ import pandas as pd
 from backend.trading.broker import BrokerAdapter
 from backend.trading.engine.order_manager import OrderManager, OrderStore
 from backend.trading.engine.shadow import ShadowTradingEngine
-from backend.trading.engine.signal_processor import SignalProcessor
+from backend.trading.engine.signal_processor import JournalWriteError, SignalProcessor
+from backend.trading.engine.stamp import sell_reached_venue, stamp_risk_approved
 from backend.trading.models import Order, OrderSide, OrderStatus, OrderType
 from backend.trading.reconciliation.service import ReconciliationService
-from backend.trading.risk.gates import RiskEngine, RiskLimits
+from backend.trading.risk.gates import RiskEngine, RiskLimits, positive_price
 from backend.trading.risk.position_sizer import cap_shares_to_notional, shares_to_buy
 from backend.trading.strategies.base import StrategyBase
 from backend.trading.strategies.registry import KNOWN_STRATEGIES, get_strategy
@@ -368,12 +369,26 @@ class TradingWorker:
 
             if exit_sig:
                 logger.info("EXIT signal for %s: %s @ %.4f", symbol, exit_sig.reason, exit_sig.exit_price)
-                self._submit_sell(symbol, pos.quantity, exit_sig.exit_price, exit_sig.reason)
-                self._cooldown[symbol] = now
-                self._trailing_highs.pop(symbol, None)
-                self._position_meta.pop(symbol, None)
-                summary_rows.append({"ticker": symbol, "action": f"EXIT:{exit_sig.reason}",
-                                      "price": exit_sig.exit_price})
+                sell_result = self._submit_sell(
+                    symbol, pos.quantity, exit_sig.exit_price, exit_sig.reason
+                )
+                if sell_reached_venue(sell_result):
+                    self._cooldown[symbol] = now
+                    self._trailing_highs.pop(symbol, None)
+                    self._position_meta.pop(symbol, None)
+                    summary_rows.append({"ticker": symbol, "action": f"EXIT:{exit_sig.reason}",
+                                          "price": exit_sig.exit_price})
+                else:
+                    reason = (
+                        (sell_result.error_message if sell_result is not None else None)
+                        or "sell_not_evaluated"
+                    )
+                    logger.info("EXIT blocked for %s: %s", symbol, reason)
+                    summary_rows.append({
+                        "ticker": symbol,
+                        "action": "EXIT_BLOCKED",
+                        "reason": reason,
+                    })
 
         # 5. Scan universe for entry signals — prefer today's top-5 when available
         current_positions_list = [
@@ -1108,9 +1123,38 @@ class TradingWorker:
             logger.debug("deep plan lookup failed for %s: %s", ticker, exc)
             return None
 
-    def _submit_sell(self, symbol: str, quantity: float, price: float, reason: str) -> None:
-        """Submit a market sell order for an open position."""
+    def _fail_sell(self, order: Order, detail: str) -> Order:
+        """Persist a rejected sell. Never stamps RISK_APPROVED."""
+        order.status = OrderStatus.REJECTED
+        order.error_message = detail
+        order.failed_at = datetime.now(timezone.utc)
+        try:
+            self.store.save_order(order)
+        except Exception:
+            logger.exception("Failed to persist rejected sell for %s", order.symbol)
+        try:
+            from backend.utils.provenance.journal_store import record_from_order
+
+            record_from_order(
+                order,
+                strategy_id=getattr(self.strategy, "strategy_id", None),
+            )
+        except Exception:
+            logger.exception("Failed to journal rejected sell for %s", order.symbol)
+        logger.error("SELL rejected %s: %s", order.symbol, detail)
+        return order
+
+    def _submit_sell(self, symbol: str, quantity: float, price: float, reason: str) -> Optional[Order]:
+        """Submit a sell only after Mandate + RiskEngine evaluate (STAMP parent).
+
+        ``RISK_APPROVED`` is stamped only via ``stamp_risk_approved`` after
+        both evaluates ran and approved. The approval/submit reference is
+        the honest positive ``price`` (exit/mark) — never a 0.995 haircut
+        that understates notional. See ``backend.trading.engine.stamp``.
+        """
         import uuid
+
+        approval_price = positive_price(price)
         idem = f"sell-{symbol}-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
         order = Order(
             id=str(uuid.uuid4()),
@@ -1118,21 +1162,99 @@ class TradingWorker:
             side=OrderSide.SELL,
             order_type=OrderType.LIMIT,
             quantity=quantity,
-            limit_price=round(price * 0.995, 4),  # slight discount to ensure fill
+            limit_price=approval_price,
             idempotency_key=idem,
         )
+        if approval_price is None:
+            return self._fail_sell(
+                order, "Cannot evaluate sell without a positive reference price."
+            )
+
+        account = self._safe_get_account()
+        if account is None:
+            return self._fail_sell(
+                order, "Cannot evaluate sell: account snapshot failed."
+            )
+
+        eval_order = order.model_copy()
+        eval_order.limit_price = approval_price
+
+        mandate_decision = self.mandate_gate.evaluate(eval_order, approval_price)
         try:
-            if self.execution_mode == "shadow" and self.shadow_engine is not None:
-                # Shadow mode: simulate fill with next-day bar
-                order.status = OrderStatus.RISK_APPROVED
-                next_bars = self._fetch_next_bar(symbol, price)
-                self.shadow_engine.simulate_submission(order, next_bars=next_bars)
+            notional = float(quantity) * float(approval_price)
+        except (TypeError, ValueError):
+            notional = None
+        audit.log_mandate_decision(
+            symbol, "sell", mandate_decision.approved, mandate_decision.reason,
+            notional=notional,
+        )
+        if not mandate_decision.approved:
+            return self._fail_sell(
+                order, mandate_decision.reason or "Mandate rejected this sell."
+            )
+
+        risk_decision = self.risk_engine.evaluate_order(eval_order, account)
+        if not risk_decision.approved:
+            audit.log_risk_decision(
+                symbol, "sell", float(quantity or 0), False,
+                f"Risk Gate Rejected: {risk_decision.reason}",
+            )
+            return self._fail_sell(
+                order, f"Risk Gate Rejected: {risk_decision.reason}"
+            )
+
+        if self.execution_mode == "shadow" and self.shadow_engine is None:
+            return self._fail_sell(
+                order, "Shadow mode requested but ShadowTradingEngine is not configured"
+            )
+
+        audit.log_risk_decision(
+            symbol, "sell", float(quantity or 0), True, "approved_via_worker_sell"
+        )
+        stamp_risk_approved(
+            order,
+            risk_decision=risk_decision,
+            mandate_decision=mandate_decision,
+            require_mandate=True,
+        )
+
+        try:
+            if self.execution_mode == "shadow":
+                next_bars = self._fetch_next_bar(symbol, approval_price)
+                result = self.shadow_engine.simulate_submission(
+                    order, next_bars=next_bars
+                )
             else:
-                # Paper/live mode: submit to broker
-                self.manager.submit_new_order(order)
-            logger.info("SELL submitted: %s ×%.0f @ %.4f (%s)", symbol, quantity, price, reason)
+                result = self.manager.submit_new_order(order)
         except Exception as exc:
             logger.error("SELL submission failed for %s: %s", symbol, exc)
+            return self._fail_sell(order, f"SELL submission failed: {exc}")
+
+        try:
+            from backend.utils.provenance.journal_store import record_from_order
+
+            entry = record_from_order(
+                result,
+                strategy_id=getattr(self.strategy, "strategy_id", None),
+            )
+            if not entry:
+                raise JournalWriteError(
+                    "record_from_order returned no entry",
+                    order=result,
+                )
+        except JournalWriteError:
+            raise
+        except Exception as exc:
+            logger.exception("Failed to persist journal for sell %s", symbol)
+            raise JournalWriteError(str(exc), order=result) from exc
+
+        audit.log_order_submission(
+            symbol, "sell", float(quantity or 0), approval_price,
+            result.id,
+            result.status.value if hasattr(result.status, "value") else str(result.status),
+        )
+        logger.info("SELL submitted: %s ×%.0f @ %.4f (%s)", symbol, quantity, approval_price, reason)
+        return result
 
     def _fetch_next_bar(self, symbol: str, ref_price: float) -> Optional[pd.DataFrame]:
         """Next US equity session bar for shadow fill (not wall-clock 24h / BTC).
