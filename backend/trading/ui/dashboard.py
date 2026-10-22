@@ -21,6 +21,7 @@ from backend.trading.engine.order_manager import OrderManager, OrderStore
 from backend.trading.engine.worker import TradingWorker
 from backend.trading.models import OrderStatus
 from backend.trading.reconciliation.service import ReconciliationService
+from backend.trading.risk.gates import positive_price
 from backend.trading.strategies.registry import STRATEGY_REGISTRY
 from backend.i18n import t
 
@@ -340,11 +341,15 @@ def _render_manual_tab(broker, store, summary, lang: str) -> None:
                     execution_mode="shadow" if use_shadow else "paper",
                 )
             reason = _lab_result_reason(result)
+            fill_ok = True
+            if use_shadow and result.order.status == OrderStatus.FILLED:
+                fill_ok = positive_price(getattr(result.order, "filled_avg_price", None)) is not None
             honest_ok = (
                 (not result.blocked)
                 and result.http_status == 200
                 and result.journaled
                 and result.order.status != OrderStatus.REJECTED
+                and fill_ok
             )
             if not honest_ok:
                 st.error(t("trading.signal.rejected", lang, reason=reason))

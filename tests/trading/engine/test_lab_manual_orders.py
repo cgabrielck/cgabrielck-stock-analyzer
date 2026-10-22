@@ -14,12 +14,21 @@ import pytest
 
 from backend.trading.engine.desk_orders import (
     ACCOUNT_MISSING_DETAIL,
+    SHADOW_NO_POSITIVE_FILL_DETAIL,
     place_desk_order,
     place_lab_manual_order,
     reset_desk_mandate_gate,
 )
 from backend.trading.engine.order_manager import InMemoryOrderStore
-from backend.trading.models import AccountSummary, Order, OrderSide, OrderStatus, OrderType
+from backend.trading.models import (
+    AccountSummary,
+    Order,
+    OrderSide,
+    OrderStatus,
+    OrderType,
+    Position,
+)
+from backend.trading.risk.gates import positive_price
 from backend.trading.safety import audit, kill_switch
 from backend.utils.provenance import journal_store
 
@@ -291,6 +300,73 @@ def test_streamlit_shadow_journal_fail_is_not_success(tmp_path, monkeypatch):
     assert result.http_status == 502
     assert result.journaled is False
     assert result.detail["broker_submitted"] is False
+    broker.submit_order.assert_not_called()
+
+
+def test_market_shadow_with_quote_is_not_filled_at_zero(tmp_path):
+    """Would have been HTTP 200 FILLED @ $0 on 82dabda — never a fill."""
+    path = _mandate_file(tmp_path, TIGHT)
+    broker = _broker()
+    store = InMemoryOrderStore()
+    result = place_lab_manual_order(
+        broker=broker,
+        store=store,
+        symbol="AAPL",
+        side="buy",
+        quantity=1,
+        order_type="market",
+        limit_price=None,
+        account=_account(),
+        execution_mode="shadow",
+        mandate_path=path,
+        quote_fn=lambda _s: 150.0,
+    )
+    assert result.blocked is True
+    assert result.http_status == 409
+    assert result.gate == "shadow"
+    assert result.detail == SHADOW_NO_POSITIVE_FILL_DETAIL
+    assert result.order.status == OrderStatus.REJECTED
+    assert result.order.status != OrderStatus.FILLED
+    assert result.order.status != OrderStatus.RISK_APPROVED
+    assert positive_price(getattr(result.order, "filled_avg_price", None)) is None
+    broker.submit_order.assert_not_called()
+    saved = store.get_order(result.order.id)
+    if saved is not None:
+        assert saved.status != OrderStatus.FILLED
+
+
+def test_market_shadow_sell_with_position_mark_is_not_filled_at_zero(tmp_path):
+    """Position current_price=150, no quote_fn — still not FILLED @ $0."""
+    path = _mandate_file(tmp_path, TIGHT)
+    account = _account(
+        positions=[
+            Position(
+                symbol="AAPL",
+                quantity=10,
+                average_entry_price=100.0,
+                current_price=150.0,
+            )
+        ]
+    )
+    broker = _broker(account)
+    store = InMemoryOrderStore()
+    result = place_lab_manual_order(
+        broker=broker,
+        store=store,
+        symbol="AAPL",
+        side="sell",
+        quantity=1,
+        order_type="market",
+        limit_price=None,
+        account=account,
+        execution_mode="shadow",
+        mandate_path=path,
+    )
+    assert result.blocked is True
+    assert result.http_status == 409
+    assert result.order.status == OrderStatus.REJECTED
+    assert result.order.status != OrderStatus.FILLED
+    assert positive_price(getattr(result.order, "filled_avg_price", None)) is None
     broker.submit_order.assert_not_called()
 
 
