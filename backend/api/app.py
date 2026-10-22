@@ -22,6 +22,7 @@ from backend.pathsetup import ensure_backend_on_path
 
 ensure_backend_on_path()
 
+from backend.api import intents as intents_api
 from backend.api import research_jobs, worker_ctl
 from backend.api.desk_auth import is_operator, require_operator
 from backend.trading import telegram_inbox
@@ -82,6 +83,7 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(title=APP_NAME, version="1.0.0", lifespan=lifespan)
+app.include_router(intents_api.router)
 STATIC_DIR = Path(__file__).resolve().parents[2] / "web" / "static"
 app.add_middleware(
     CORSMiddleware,

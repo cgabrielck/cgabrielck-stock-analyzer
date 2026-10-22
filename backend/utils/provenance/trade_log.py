@@ -241,6 +241,7 @@ def empty_trade_log(
         "symbol": str(symbol or "").upper(),
         "card_id": None,
         "strategy_id": None,
+        "intent_id": None,
         "side": None,
         "qty": 0,
         "order_id": None,
@@ -251,7 +252,7 @@ def empty_trade_log(
         "fills": [],
         "r_multiple": None,
         "user_visible_summary": "",
-        "links": {"audit_ref": "", "signal_ref": ""},
+        "links": {"audit_ref": "", "signal_ref": "", "intent_ref": ""},
         "reason_codes": [],
         "kind": display_kind(status if status in TRADE_STATUSES else "proposed"),
         "provenance": journal_provenance(source="unknown"),
@@ -273,6 +274,7 @@ def normalize_trade_log(raw: Any) -> Optional[Dict[str, Any]]:
             {
                 "card_id": raw.get("card_id"),
                 "strategy_id": raw.get("strategy_id"),
+                "intent_id": raw.get("intent_id"),
                 "side": _side(raw.get("side")),
                 "qty": _qty(raw.get("qty") if raw.get("qty") is not None else raw.get("quantity")),
                 "order_id": raw.get("order_id"),
@@ -287,6 +289,7 @@ def normalize_trade_log(raw: Any) -> Optional[Dict[str, Any]]:
                 "links": {
                     "audit_ref": (raw.get("links") or {}).get("audit_ref") or "",
                     "signal_ref": (raw.get("links") or {}).get("signal_ref") or "",
+                    "intent_ref": (raw.get("links") or {}).get("intent_ref") or "",
                 },
                 "reason_codes": list(raw.get("reason_codes") or []),
             }
@@ -331,7 +334,13 @@ def normalize_trade_log(raw: Any) -> Optional[Dict[str, Any]]:
     return entry
 
 
-def from_order(order: Any, *, audit_id: Optional[str] = None, strategy_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+def from_order(
+    order: Any,
+    *,
+    audit_id: Optional[str] = None,
+    strategy_id: Optional[str] = None,
+    intent_id: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
     data = _as_dict(order)
     if not data and order is None:
         return None
@@ -360,16 +369,19 @@ def from_order(order: Any, *, audit_id: Optional[str] = None, strategy_id: Optio
         status=status,
     )
     audit_ref = f"/api/journal/audit/{audit_id}" if audit_id else ""
+    linked_intent = intent_id or _field(order, "intent_id")
+    intent_ref = f"/api/intents/{linked_intent}" if linked_intent else ""
     entry.update(
         {
             "strategy_id": strategy_id or _field(order, "strategy_id"),
+            "intent_id": linked_intent,
             "side": side,
             "qty": qty,
             "order_id": order_id,
             "risk_decision_id": audit_id,
             "fills": _fills_from_price(fill_px, qty) if status == "filled" else [],
             "user_visible_summary": summary,
-            "links": {"audit_ref": audit_ref, "signal_ref": ""},
+            "links": {"audit_ref": audit_ref, "signal_ref": "", "intent_ref": intent_ref},
             "reason_codes": codes,
             "kind": display_kind(status),
             "provenance": journal_provenance(
@@ -594,6 +606,11 @@ def _enrich_entry(base: Dict[str, Any], incoming: Dict[str, Any]) -> None:
     incoming_ref = (incoming.get("links") or {}).get("audit_ref") or ""
     if incoming_ref and not (base.get("links") or {}).get("audit_ref"):
         base.setdefault("links", {})["audit_ref"] = incoming_ref
+    if incoming.get("intent_id") and not base.get("intent_id"):
+        base["intent_id"] = incoming["intent_id"]
+    incoming_intent = (incoming.get("links") or {}).get("intent_ref") or ""
+    if incoming_intent and not (base.get("links") or {}).get("intent_ref"):
+        base.setdefault("links", {})["intent_ref"] = incoming_intent
     codes = list(base.get("reason_codes") or [])
     for code in incoming.get("reason_codes") or []:
         if code not in codes:

@@ -203,6 +203,31 @@ def test_merge_attaches_audit_link_to_order_twin():
     assert rows[0]["links"]["audit_ref"] == "/api/journal/audit/aud-6"
 
 
+def test_merge_keeps_intent_link_from_journal():
+    journal = from_order(
+        {
+            "id": "ord-int",
+            "symbol": "AAPL",
+            "side": "buy",
+            "quantity": 2,
+            "status": "submitted",
+            "updated_at": "2026-10-21T15:00:00+00:00",
+        },
+        intent_id="int-ok",
+    )
+    rows = merge_trade_logs(
+        [journal],
+        [{"id": "ord-int", "symbol": "AAPL", "side": "buy", "quantity": 2, "status": "submitted",
+          "updated_at": "2026-10-21T15:00:00+00:00"}],
+        [],
+        limit=20,
+    )
+    assert len(rows) == 1
+    assert rows[0]["intent_id"] == "int-ok"
+    assert rows[0]["links"]["intent_ref"] == "/api/intents/int-ok"
+    assert rows[0]["status"] == "submitted"
+
+
 def test_empty_merge_is_empty():
     assert merge_trade_logs([], [], [], limit=10) == []
 

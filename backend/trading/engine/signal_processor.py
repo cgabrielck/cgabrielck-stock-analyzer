@@ -18,6 +18,22 @@ from backend.trading.risk.gates import RiskEngine
 
 logger = logging.getLogger(__name__)
 
+JOURNAL_WRITE_FAILED = "journal_write_failed"
+
+
+class JournalWriteError(RuntimeError):
+    """Journal did not persist. Callers must not treat this as honest success.
+
+    Aligns with Desk place-order: after broker accept, a journal raise is
+    observable failure (HTTP 502), not a happy SUBMITTED. The broker may
+    already have the order — this is not a fill and not verified/live.
+    """
+
+    def __init__(self, detail: str, *, order: Optional[Order] = None):
+        super().__init__(f"{JOURNAL_WRITE_FAILED}: {detail}")
+        self.order = order
+        self.detail = detail
+
 
 class SignalProcessor:
     """
@@ -91,9 +107,9 @@ class SignalProcessor:
             draft_order.status = OrderStatus.REJECTED
             draft_order.error_message = f"Risk Gate Rejected: {risk_decision.reason}"
             self.order_manager.store.save_order(draft_order)
+            audit_id = None
             try:
                 from backend.trading.safety import audit
-                from backend.utils.provenance.journal_store import record_from_order
 
                 audit_id = audit.log_risk_decision(
                     symbol,
@@ -102,13 +118,9 @@ class SignalProcessor:
                     False,
                     draft_order.error_message,
                 )
-                record_from_order(
-                    draft_order,
-                    audit_id=audit_id,
-                    strategy_id=signal.get("strategy_id"),
-                )
             except Exception:
-                logger.exception("Failed to persist risk-reject journal/audit for %s", symbol)
+                logger.exception("Failed to persist risk-reject audit for %s", symbol)
+            self._record_journal(draft_order, signal, audit_id=audit_id)
             return draft_order
 
         draft_order.status = OrderStatus.RISK_APPROVED
@@ -118,11 +130,41 @@ class SignalProcessor:
                 draft_order.status = OrderStatus.REJECTED
                 draft_order.error_message = "Shadow mode requested but ShadowTradingEngine is not configured"
                 self.order_manager.store.save_order(draft_order)
+                self._record_journal(draft_order, signal)
                 return draft_order
             logger.info("Signal Risk-Approved. Forwarding to ShadowTradingEngine.")
             bars = next_bars if next_bars is not None else None
-            return self.shadow_engine.simulate_submission(draft_order, next_bars=bars)
+            result = self.shadow_engine.simulate_submission(draft_order, next_bars=bars)
+            self._record_journal(result, signal)
+            return result
 
         logger.info("Signal Risk-Approved. Forwarding to Order Manager.")
         # Keep RISK_APPROVED from the evaluate above. OrderManager must not invent it.
-        return self.order_manager.submit_new_order(draft_order)
+        result = self.order_manager.submit_new_order(draft_order)
+        self._record_journal(result, signal)
+        return result
+
+    @staticmethod
+    def _record_journal(order: Order, signal: Dict[str, Any], *, audit_id: Optional[str] = None) -> None:
+        """Persist TradeLogEntry with intent_id. Never swallow — fail the call.
+
+        Desk contract: journal raise / empty write is not honest success.
+        Intent H1 maps JournalWriteError to consumed_journal_failed (not consumed).
+        """
+        from backend.utils.provenance.journal_store import record_from_order
+
+        try:
+            entry = record_from_order(
+                order,
+                audit_id=audit_id,
+                strategy_id=signal.get("strategy_id"),
+                intent_id=signal.get("intent_id"),
+            )
+        except Exception as exc:
+            logger.exception("Failed to persist journal for %s", getattr(order, "symbol", "?"))
+            raise JournalWriteError(str(exc), order=order) from exc
+        if not entry:
+            raise JournalWriteError(
+                "record_from_order returned no entry",
+                order=order,
+            )
