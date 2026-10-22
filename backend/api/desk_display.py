@@ -204,9 +204,16 @@ def is_priced_fill(row: Optional[Dict[str, Any]]) -> bool:
     return display_fill_price(row) is not None
 
 
+def _claims_fill_status(row: Optional[Dict[str, Any]]) -> bool:
+    st = str((row or {}).get("status") or "").lower()
+    return st in _JOURNAL_FILL_STATUSES or st == UNPRICED_FILL_LABEL.lower()
+
+
 def journal_status_label(row: Optional[Dict[str, Any]]) -> str:
     row = row or {}
     st = str(row.get("status") or "").lower()
+    if st == UNPRICED_FILL_LABEL.lower():
+        return UNPRICED_FILL_LABEL
     if st in _JOURNAL_FILL_STATUSES and not is_priced_fill(row):
         return UNPRICED_FILL_LABEL
     return str(row.get("status") or "—")
@@ -216,7 +223,9 @@ def journal_status_class(row: Optional[Dict[str, Any]]) -> str:
     """CSS token after ``jnl-status``. Unpriced fills must not be mint ``filled``."""
     row = row or {}
     st = str(row.get("status") or "").lower()
-    if st in _JOURNAL_FILL_STATUSES and not is_priced_fill(row):
+    if st == UNPRICED_FILL_LABEL.lower() or (
+        st in _JOURNAL_FILL_STATUSES and not is_priced_fill(row)
+    ):
         return "submitted"
     return st
 
@@ -226,7 +235,8 @@ def journal_summary_label(row: Optional[Dict[str, Any]]) -> str:
     row = row or {}
     summary = str(row.get("user_visible_summary") or row.get("note") or "").strip()
     st = str(row.get("status") or "").lower()
-    if st not in _JOURNAL_FILL_STATUSES or is_priced_fill(row):
+    claiming = st in _JOURNAL_FILL_STATUSES or st == UNPRICED_FILL_LABEL.lower()
+    if not claiming or is_priced_fill(row):
         return summary
     if not summary:
         return UNPRICED_FILL_LABEL
@@ -239,14 +249,23 @@ def journal_summary_label(row: Optional[Dict[str, Any]]) -> str:
 
 
 def journal_display_row(row: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-    """Display overlay for GET /api/journal. Does not write the fill ledger."""
+    """Display overlay for list + entry JSON. Does not write the fill ledger."""
     data = dict(row or {})
     priced = is_priced_fill(data)
     st = str(data.get("status") or "").lower()
-    unpriced_fill = st in _JOURNAL_FILL_STATUSES and not priced
+    claiming = _claims_fill_status(data)
+    if claiming and not priced:
+        src = dict(data)
+        if st == UNPRICED_FILL_LABEL.lower():
+            src["status"] = "filled"
+        data["display_status"] = UNPRICED_FILL_LABEL
+        data["display_status_class"] = "submitted"
+        data["user_visible_summary"] = journal_summary_label(src)
+        data["kind"] = "order"
+        data["status"] = UNPRICED_FILL_LABEL
+        data["fills"] = []
+        return data
     data["display_status"] = journal_status_label(data)
     data["display_status_class"] = journal_status_class(data)
     data["user_visible_summary"] = journal_summary_label(data)
-    if unpriced_fill:
-        data["kind"] = "order"
     return data

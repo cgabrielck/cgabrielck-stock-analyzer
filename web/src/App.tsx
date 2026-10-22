@@ -631,7 +631,10 @@ function Journal() {
           {entries.map((e, i) => (
             <tr key={e.log_id || e.id || i} onClick={async () => {
               if (!e.log_id) return;
-              try { setDetail(JSON.stringify(await api.journalEntry(e.log_id), null, 2)); }
+              try {
+                const payload = await api.journalEntry(e.log_id);
+                setDetail(JSON.stringify({ entry: payload.entry, audit: payload.audit }, null, 2));
+              }
               catch (err: any) { setDetail(err.message || "not found"); }
             }}>
               <td>{String(e.ts || "").replace("T", " ").slice(0, 19)}</td>

@@ -1873,7 +1873,7 @@ async function journal(kind){
       const path = id ? "/api/journal/entry/"+encodeURIComponent(id) : ref;
       const payload = await api(path);
       detail.classList.remove("hidden");
-      detail.textContent = t("journal.detail")+"\n"+JSON.stringify(payload, null, 2);
+      detail.textContent = t("journal.detail")+"\n"+JSON.stringify({entry: payload.entry, audit: payload.audit}, null, 2);
     } catch(err){
       detail.classList.remove("hidden");
       detail.textContent = err.message || t("journal.no_audit");

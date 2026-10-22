@@ -505,6 +505,19 @@ def _unpriced_journal_rows():
             "fills": [],
             "user_visible_summary": "filled buy 1 GOOG",
         },
+        {
+            "schema_version": "trade_log.v0",
+            "log_id": "tl-top-zero",
+            "symbol": "META",
+            "ts": "2026-10-22T12:04:00+00:00",
+            "status": "filled",
+            "kind": "fill",
+            "side": "buy",
+            "qty": 1,
+            "fills": [],
+            "filled_avg_price": 0,
+            "user_visible_summary": "filled buy 1 META",
+        },
     ]
 
 
@@ -522,7 +535,13 @@ def test_plan12e_unpriced_fills_array_is_not_journal_filled():
         assert "filled" not in shown["user_visible_summary"].lower()
         assert UNPRICED_FILL_LABEL in shown["user_visible_summary"]
         assert shown.get("kind") != "fill"
+        assert shown.get("status") != "filled"
+        assert shown.get("status") != "partially_filled"
+        assert shown["status"] == UNPRICED_FILL_LABEL
         assert journal_summary_label(raw) == UNPRICED_FILL_LABEL
+        dumped = __import__("json").dumps(shown).lower()
+        assert '"status": "filled"' not in dumped
+        assert '"status":"filled"' not in dumped
 
 
 def test_plan12e_priced_fills_array_still_shows_filled():
@@ -541,6 +560,13 @@ def test_plan12e_priced_fills_array_still_shows_filled():
 
 
 def _assert_journal_row_not_priced_filled(row: dict) -> None:
+    import json
+
+    st = str(row.get("status") or "")
+    assert st.lower() != "filled"
+    assert st.lower() != "partially_filled"
+    assert "filled" not in st.lower()
+    assert st == UNPRICED_FILL_LABEL
     assert row["display_status"] == UNPRICED_FILL_LABEL
     assert row["display_status"] != "filled"
     assert row["display_status_class"] == "submitted"
@@ -550,6 +576,10 @@ def _assert_journal_row_not_priced_filled(row: dict) -> None:
     assert row.get("kind") != "fill"
     assert row.get("verified") is not True
     assert (row.get("provenance") or {}).get("live") is not True
+    dumped = json.dumps(row).lower()
+    assert '"status": "filled"' not in dumped
+    assert '"status":"filled"' not in dumped
+    assert '"kind": "fill"' not in dumped
 
 
 def test_plan12e_journal_api_unpriced_fills_not_shown_filled(honesty_api, tmp_path, monkeypatch):
@@ -588,6 +618,8 @@ def test_plan12e_journal_entry_api_unpriced_fills_not_shown_filled(honesty_api, 
         _assert_journal_row_not_priced_filled(entry)
         dumped = json.dumps(payload).lower()
         assert '"kind": "fill"' not in dumped
+        assert '"status": "filled"' not in dumped
+        assert '"status":"filled"' not in dumped
         assert "filled buy" not in dumped
         assert payload.get("verified") is not True
 
