@@ -173,6 +173,47 @@ def test_kill_heartbeat_without_reason_skipped():
     }) is None
 
 
+def test_kill_engage_audit_maps_into_journal():
+    entry = from_audit_event({
+        "schema_version": "audit.v0",
+        "event_id": "aud-kill-1",
+        "ts": "2026-10-22T02:00:00+00:00",
+        "actor": "desk_ops",
+        "kind": "kill",
+        "event_type": "kill_switch_engage",
+        "reason": "Manual halt from Cgab",
+        "source": "POST /api/ops/kill",
+        "halted": True,
+        "engaged": True,
+        "sentinel": "/tmp/KILL_SWITCH",
+    })
+    assert entry is not None
+    assert entry["symbol"] == "SYSTEM"
+    assert "kill_switch" in entry["reason_codes"]
+    assert entry["user_visible_summary"] == "Manual halt from Cgab"
+    assert entry["links"]["audit_ref"] == "/api/journal/audit/aud-kill-1"
+    assert entry["provenance"]["verified"] is False
+    assert entry["provenance"]["live"] is False
+
+
+def test_kill_resume_audit_maps_into_journal():
+    entry = from_audit_event({
+        "schema_version": "audit.v0",
+        "event_id": "aud-resume-1",
+        "ts": "2026-10-22T02:01:00+00:00",
+        "actor": "desk_ops",
+        "kind": "resume",
+        "event_type": "kill_switch_resume",
+        "reason": "Kill switch cleared",
+        "source": "POST /api/ops/resume",
+        "halted": False,
+    })
+    assert entry is not None
+    assert entry["kind"] == "note"
+    assert entry["user_visible_summary"] == "Kill switch cleared"
+    assert entry["links"]["audit_ref"] == "/api/journal/audit/aud-resume-1"
+
+
 def test_merge_dedupes_order_and_audit():
     rows = merge_trade_logs(
         [],

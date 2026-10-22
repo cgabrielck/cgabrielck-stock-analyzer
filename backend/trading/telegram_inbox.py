@@ -614,14 +614,14 @@ def _cmd_stop_auto() -> str:
 def _cmd_halt() -> str:
     from backend.trading.safety import kill_switch
 
-    kill_switch.engage("halted via Telegram")
+    kill_switch.engage("halted via Telegram", actor="telegram", source="telegram halt")
     return "急停已開：暫停新買入，賣出仍可執行。"
 
 
 def _cmd_resume() -> str:
     from backend.trading.safety import kill_switch
 
-    kill_switch.disengage()
+    kill_switch.disengage(actor="telegram", source="telegram resume")
     return "急停已解除。"
 
 

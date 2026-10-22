@@ -189,6 +189,14 @@ def explain(status: Dict[str, Any], position_count: int = 0) -> Dict[str, Any]:
     elif status.get("stale"):
         code = "stale"
         reasons.append("A worker PID exists but the heartbeat is stale — the process likely crashed.")
+    elif not status.get("running") and (
+        status.get("unverified") or status.get("degraded")
+    ):
+        code = "unverified"
+        reasons.append(
+            "A heartbeat claimed the worker was running, but no live PID was found. "
+            "Treating as not running (unverified)."
+        )
     elif not status.get("running"):
         code = "not_running"
         reasons.append("The paper worker is not running. Open AI Mode and click Start paper auto.")
@@ -234,6 +242,7 @@ def explain(status: Dict[str, Any], position_count: int = 0) -> Dict[str, Any]:
         "not_paper": "目前不是 Alpaca 模擬盤（paper）。請確認 APCA_PAPER=true。",
         "not_running": "自動交易尚未啟動。請到「AI 模式」按下「啟動紙上自動交易」。",
         "stale": "偵測到舊的工作行程，但心跳已過期，行程可能已當掉。請先停止再重新啟動。",
+        "unverified": "心跳自稱運行中，但找不到活著的 PID。當作未運行（未驗證），不會顯示綠色 AUTO ON。",
         "halted": "緊急停止（Kill switch）已開啟，不會開新倉。可在 Desk 解除。",
         "off_hours": "紙上自動交易已在跑，但美股盤外會暫停掃描（約美東 09:30–16:00）。若 .env 設 IGNORE_MARKET_HOURS=true 則全日掃描。",
         "cadence_wait": "紙上自動交易已開，但週頻節奏要等到美東週一再平衡（PANIC／高波動仍可交易）。預設仍是全日 demo，除非你在 AI 模式改成 weekly。",
@@ -246,6 +255,7 @@ def explain(status: Dict[str, Any], position_count: int = 0) -> Dict[str, Any]:
         "not_paper": "Not Alpaca paper mode. Keep APCA_PAPER=true.",
         "not_running": "Auto trading is off. Open AI Mode and click Start paper auto.",
         "stale": "A worker was started but its heartbeat is stale. Stop and start again.",
+        "unverified": "Heartbeat claimed running but no live PID was found. Treated as not running (unverified).",
         "halted": "Kill switch is on — no new buys. Resume from Desk if that was accidental.",
         "off_hours": "Paper worker is alive but waiting for US regular hours (09:30–16:00 ET) unless IGNORE_MARKET_HOURS=true.",
         "cadence_wait": "Paper auto is on, but weekly cadence waits for a US Monday rebalance (PANIC still trades).",
@@ -278,13 +288,27 @@ def status(position_count: int = 0, halted: bool = False) -> Dict[str, Any]:
         age = max(0.0, (datetime.now(timezone.utc) - ts).total_seconds())
     stale = bool(alive and age is not None and age > STALE_AFTER_SEC)
     heartbeat_fresh = bool(age is not None and age <= STALE_AFTER_SEC)
+    heartbeat_claims_running = hb.get("running") is True
     if alive:
         running = True
-    elif hb_pid_i is None and heartbeat_fresh and hb.get("running") is True:
-        # Legacy CLI worker that wrote a heartbeat without pid.
-        running = True
+        process_evidence = "pid_alive"
+        degraded = False
+        unverified = False
     else:
+        # D9: never claim running=True without a live pid (or equivalent process evidence).
         running = False
+        if heartbeat_claims_running and heartbeat_fresh and not pid:
+            process_evidence = "heartbeat_unverified"
+            degraded = True
+            unverified = True
+        elif pid:
+            process_evidence = "pid_dead"
+            degraded = False
+            unverified = False
+        else:
+            process_evidence = "none"
+            degraded = False
+            unverified = False
     paper = bool(hb.get("paper", _is_paper()))
     market_hours = bool(hb.get("market_hours")) if hb else False
     payload = {
@@ -292,6 +316,9 @@ def status(position_count: int = 0, halted: bool = False) -> Dict[str, Any]:
         "alive": alive,
         "stale": stale,
         "pid": pid if alive else None,
+        "process_evidence": process_evidence,
+        "degraded": degraded,
+        "unverified": unverified,
         "paper": paper,
         "mode": hb.get("mode") or ("paper" if paper else "unknown"),
         "strategy": hb.get("strategy"),
