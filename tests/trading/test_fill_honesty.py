@@ -6,7 +6,7 @@ Would have been dishonest success on main before this slice:
   O3 sync promoted FILLED without a price
   O4 performance used limit as fill
   O6 worker notify used entry/limit/0 as fill
-O5 (Desk vs worker dual path) is out of scope.
+O5 (Desk vs worker dual-execution) is not this module.
 """
 from __future__ import annotations
 

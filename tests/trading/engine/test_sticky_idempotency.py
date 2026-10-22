@@ -21,7 +21,13 @@ from alpaca.trading.enums import TimeInForce
 from alpaca.trading.requests import MarketOrderRequest
 
 from backend.trading.alpaca_broker import disable_unsafe_place_retries
-from backend.trading.engine.desk_orders import place_desk_order, reset_desk_mandate_gate
+from backend.trading.engine.desk_orders import (
+    DESK_ACTOR,
+    DESK_STRATEGY_ID,
+    DESK_WRITE_POINT,
+    place_desk_order,
+    reset_desk_mandate_gate,
+)
 from backend.trading.engine.order_manager import InMemoryOrderStore, OrderManager
 from backend.trading.engine.sticky_idempotency import (
     DO_NOT_BLIND_RETRY,
@@ -436,7 +442,19 @@ def test_desk_journal_late_success_keeps_sticky_so_new_key_cannot_second_submit(
         calls["n"] += 1
         if calls["n"] == 1:
             raise RuntimeError("disk full")
-        return {"id": "journal-ok"}
+        # Catch-up 200 still requires the O5/PATH stamp. A bare {"id": ...}
+        # is not an honest journal success.
+        return {
+            "intent_id": "desk-corr-late",
+            "strategy_id": DESK_STRATEGY_ID,
+            "links": {"intent_ref": ""},
+            "provenance": {
+                "write_point": DESK_WRITE_POINT,
+                "actor": DESK_ACTOR,
+                "verified": False,
+                "live": False,
+            },
+        }
 
     monkeypatch.setattr("backend.trading.engine.desk_orders.record_from_order", _journal)
     keys = []

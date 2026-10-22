@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from backend.trading.engine.desk_orders import (
+    DESK_ACTOR,
     DESK_STRATEGY_ID,
     DESK_WRITE_POINT,
     KILL_BUY_DETAIL,
@@ -603,6 +604,7 @@ def test_happy_path_submits_via_order_manager(tmp_path):
     assert result.intent_id == stamped["intent_id"]
     assert stamped["links"]["intent_ref"] == ""
     assert stamped["provenance"]["write_point"] == DESK_WRITE_POINT
+    assert stamped["provenance"]["actor"] == DESK_ACTOR
 
 
 def test_desk_success_missing_intent_id_is_not_http_200(tmp_path, monkeypatch):
@@ -659,6 +661,33 @@ def test_desk_success_missing_write_point_is_not_http_200(tmp_path, monkeypatch)
     assert result.http_status == 502
     assert result.journaled is False
     assert result.gate == "journal"
+
+
+def test_desk_success_missing_actor_is_not_http_200(tmp_path, monkeypatch):
+    """O5 fail-case: journal row without provenance.actor=desk is not HTTP 200."""
+    path = _mandate_file(tmp_path, TIGHT)
+    real = journal_store.record_from_order
+
+    def _drop_actor(*args, **kwargs):
+        extra = dict(kwargs.get("provenance_extra") or {})
+        extra.pop("actor", None)
+        kwargs["provenance_extra"] = extra
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr("backend.trading.engine.desk_orders.record_from_order", _drop_actor)
+    result = place_desk_order(
+        _order(id="path-actor", idempotency_key="path-actor"),
+        broker=_broker(),
+        store=InMemoryOrderStore(),
+        mandate_path=path,
+    )
+    assert result.http_status != 200
+    assert result.http_status == 502
+    assert result.journaled is False
+    assert result.gate == "journal"
+    rows = journal_store.load_raw_entries()
+    assert rows
+    assert not any(desk_journal_has_path_stamp(row) for row in rows)
 
 
 def test_desk_success_dangling_intent_ref_is_not_http_200(tmp_path, monkeypatch):

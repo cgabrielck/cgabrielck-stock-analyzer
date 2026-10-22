@@ -1,9 +1,13 @@
-"""Desk / lab manual place-order path (R1-SAFE + R1-PATH write-point).
+"""Desk / lab manual place-order path (R1-SAFE + R1-PATH + O5).
 
 Manual Desk stays a separate money path from IntentStore / H1 /
 SignalProcessor. It does **not** call ``upsert_active_intent``, H1
 ``claim_for_consume``, or the M8 sizer — operator qty is kept, then
-Mandate + RiskEngine still have to approve.
+Mandate + RiskEngine still have to approve. O5 is that dual-path:
+Desk POST cannot broker-succeed when the shared Mandate / Risk /
+kill / size kernel would refuse, and a success is not journal/audit
+silent (``actor=desk``). Worker still owns Kelly/M8 extras
+(cooldown map, correlation bars, in-process day-start).
 
 R1-PATH write-point (journal, not IntentStore)
 ---------------------------------------------
@@ -13,6 +17,7 @@ stamped via ``record_from_order`` with:
     strategy_id = desk_manual
     intent_id   = durable UUID (journal correlation id)
     provenance.write_point = place_desk_order
+    provenance.actor = desk
     links.intent_ref = ""   # not an IntentStore document
 
 Intent v0 (§5.6) cannot honestly hold this L2 ticket: Desk has qty /
@@ -257,13 +262,18 @@ def _side_value(order: Order) -> str:
     return side.lower()
 
 
+def desk_journal_provenance_extra() -> Dict[str, str]:
+    """O5 journal provenance: same class as worker (actor + write_point)."""
+    return {"write_point": DESK_WRITE_POINT, "actor": DESK_ACTOR}
+
+
 def desk_journal_has_path_stamp(entry: Optional[Dict[str, Any]]) -> bool:
-    """True when a journal row carries the R1-PATH Desk write-point.
+    """True when a journal row carries the R1-PATH / O5 Desk write-point.
 
     Fail-case tests use this: a Desk HTTP 200 whose row is missing
-    ``intent_id`` / ``strategy_id=desk_manual`` / ``write_point`` (or that
-    points ``intent_ref`` at a non-existent IntentStore document) is not
-    an honest success.
+    ``intent_id`` / ``strategy_id=desk_manual`` / ``write_point`` /
+    ``actor=desk`` (or that points ``intent_ref`` at a non-existent
+    IntentStore document) is not an honest success.
     """
     if not isinstance(entry, dict):
         return False
@@ -277,6 +287,8 @@ def desk_journal_has_path_stamp(entry: Optional[Dict[str, Any]]) -> bool:
         return False
     provenance = entry.get("provenance") if isinstance(entry.get("provenance"), dict) else {}
     if str(provenance.get("write_point") or "").strip() != DESK_WRITE_POINT:
+        return False
+    if str(provenance.get("actor") or "").strip() != DESK_ACTOR:
         return False
     if provenance.get("verified") is True or provenance.get("live") is True:
         return False
@@ -293,7 +305,7 @@ def _journal_order(order: Order, *, audit_id: Optional[str]) -> Tuple[bool, Opti
             strategy_id=DESK_STRATEGY_ID,
             intent_id=stamp_id,
             link_intent=False,
-            provenance_extra={"write_point": DESK_WRITE_POINT},
+            provenance_extra=desk_journal_provenance_extra(),
         )
     except Exception as exc:
         logger.exception("Desk journal record failed for %s", order.symbol)
@@ -303,7 +315,7 @@ def _journal_order(order: Order, *, audit_id: Optional[str]) -> Tuple[bool, Opti
     if not desk_journal_has_path_stamp(entry):
         return (
             False,
-            "journal: Desk PATH stamp missing (intent_id / strategy_id / write_point)",
+            "journal: Desk PATH stamp missing (intent_id / strategy_id / write_point / actor)",
             None,
         )
     return True, None, str(entry.get("intent_id") or stamp_id)

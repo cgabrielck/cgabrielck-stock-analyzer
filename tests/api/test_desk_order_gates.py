@@ -8,6 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from backend.trading.engine.desk_orders import (
+    DESK_ACTOR,
     DESK_STRATEGY_ID,
     DESK_WRITE_POINT,
     KILL_BUY_DETAIL,
@@ -128,8 +129,17 @@ def test_api_happy_path_still_submits(desk_api):
     assert stamped["intent_id"]
     assert stamped["links"]["intent_ref"] == ""
     assert stamped["provenance"]["write_point"] == DESK_WRITE_POINT
+    assert stamped["provenance"]["actor"] == DESK_ACTOR
     assert stamped["provenance"]["verified"] is False
     assert stamped["provenance"]["live"] is False
+    events = audit.read_recent_events(audit_dir=desk_api["tmp_path"] / "audit", limit=50)
+    money = [
+        e
+        for e in events
+        if e.get("event_type") in {"mandate_decision", "risk_decision", "order_submission"}
+    ]
+    assert money, "accepted Desk POST must write audit events"
+    assert all(e.get("actor") == DESK_ACTOR for e in money)
 
 
 def test_api_success_without_path_stamp_is_not_200(desk_api, monkeypatch):
@@ -143,6 +153,29 @@ def test_api_success_without_path_stamp_is_not_200(desk_api, monkeypatch):
         return real(*args, **kwargs)
 
     monkeypatch.setattr("backend.trading.engine.desk_orders.record_from_order", _omit_stamp)
+    client = desk_api["client"]
+    res = client.post(
+        "/api/orders",
+        json={"symbol": "AAPL", "side": "buy", "quantity": 1, "limit_price": 150, "order_type": "limit"},
+    )
+    assert res.status_code != 200
+    assert res.status_code == 502
+    rows = journal_store.load_raw_entries()
+    assert not any(desk_journal_has_path_stamp(row) for row in rows)
+
+
+def test_api_success_without_actor_stamp_is_not_200(desk_api, monkeypatch):
+    """O5 fail-case: FastAPI POST must not 200 if journal actor=desk is skipped."""
+    real = journal_store.record_from_order
+
+    def _omit_actor(*args, **kwargs):
+        extra = dict(kwargs.get("provenance_extra") or {})
+        extra.pop("actor", None)
+        kwargs["provenance_extra"] = extra
+        kwargs["link_intent"] = False
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr("backend.trading.engine.desk_orders.record_from_order", _omit_actor)
     client = desk_api["client"]
     res = client.post(
         "/api/orders",
