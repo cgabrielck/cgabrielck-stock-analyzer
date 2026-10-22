@@ -206,6 +206,55 @@ def imported_has_prefix(imported: set[str], needle: str) -> bool:
     return any(item == needle or item.startswith(needle + ".") for item in imported)
 
 
+def test_missing_volume_stays_null_not_zero(client, monkeypatch):
+    frame = _frame(5)
+    frame.loc[frame.index[1], "Volume"] = float("nan")
+    monkeypatch.setattr(
+        desk_chart,
+        "fetch_daily_ohlcv",
+        lambda *a, **k: _ok(frame, provider="yahoo"),
+    )
+    data = client.get("/api/chart/AAPL").json()
+    assert data["bars"][0]["v"] == 1000
+    assert data["bars"][1]["v"] is None
+    assert data["bars"][2]["v"] == 1002
+
+
+def test_desk_chart_omits_missing_volume_histogram():
+    html = INDEX.read_text(encoding="utf-8")
+    start = html.find("function toVolume(")
+    end = html.find("function chartErrorTitle(")
+    chunk = html[start:end]
+    assert start != -1 and end != -1
+    assert "b.v==null?0" not in html
+    assert "b.v == null ? 0" not in html
+    assert "b.v!=null" in chunk
+    assert "isFinite(Number(b.v))" in chunk
+    paint = html[html.find("function paintDeskChart(") : html.find("function chartShell(")]
+    assert "toVolume(bars)" in paint
+    assert "value: b.v==null?0:Number(b.v)" not in paint
+
+
+def test_desk_chart_non_empty_errors_use_distinct_title():
+    html = INDEX.read_text(encoding="utf-8")
+    helper = html[html.find("function chartErrorTitle(") : html.find("function chartTheme(")]
+    assert 't("chart.load_error")' in helper
+    assert 't("chart.empty")' in helper
+    assert "status === 404" in helper
+    chart_fn = html[html.find("async function chart(") : html.find("async function aimode(")]
+    catch = chart_fn[chart_fn.find("catch(") :]
+    assert "chartErrorTitle(e)" in catch
+    assert 'libFail ? t("chart.lib_error") : t("chart.empty")' not in html
+    assert t_key_present(html, "chart.load_error")
+    assert t_key_present(html, "chart.empty")
+    assert t_key_present(html, "chart.lib_error")
+    assert html.count('"chart.load_error"') >= 2
+    assert "Chart failed to load." in html
+    assert "圖表載入失敗。" in html
+    assert "此代碼沒有歷史 K 線" in html
+    assert "No history for this symbol" in html
+
+
 def test_desk_chart_page_has_tv_style_surface_not_order_wire():
     html = INDEX.read_text(encoding="utf-8")
     start = html.find("function loadChartInd(")
