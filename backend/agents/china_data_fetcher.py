@@ -1,7 +1,6 @@
 import time as _time
 from typing import Any, Dict, Optional
 
-import akshare as ak
 import requests
 
 _SESSION = requests.Session()
@@ -12,6 +11,17 @@ _EM_FIN_CACHE: Dict[str, tuple[float, Dict[str, Any]]] = {}
 _EM_BS_CACHE: Dict[str, tuple[float, Dict[str, Any]]] = {}
 QUOTE_CACHE_TTL_SECONDS = 60
 FUNDAMENTALS_CACHE_TTL_SECONDS = 6 * 60 * 60
+
+
+def _ak():
+    """Load akshare on first East Money call.
+
+    Importing akshare pulls py_mini_racer, which still calls the deprecated
+    pkg_resources API. US research does not need that import at startup.
+    """
+    import akshare as ak
+
+    return ak
 
 
 def _get_cached(
@@ -66,7 +76,7 @@ def fetch_em_financials(ticker: str) -> Optional[Dict[str, Any]]:
     if cached:
         return cached
     try:
-        df = ak.stock_financial_us_analysis_indicator_em(symbol=ticker)
+        df = _ak().stock_financial_us_analysis_indicator_em(symbol=ticker)
         if df is None or df.empty:
             return None
         row = df.iloc[0]
@@ -100,7 +110,7 @@ def fetch_em_balance_sheet(ticker: str) -> Optional[Dict[str, Any]]:
     if cached:
         return cached
     try:
-        df = ak.stock_financial_us_report_em(
+        df = _ak().stock_financial_us_report_em(
             stock=ticker, symbol="资产负债表", indicator="年报"
         )
         if df is None or df.empty:
@@ -146,7 +156,7 @@ def fetch_china_data(ticker: str) -> Optional[Dict[str, Any]]:
 
 def fetch_china_daily(ticker: str) -> Optional[list]:
     try:
-        df = ak.stock_us_daily(symbol=ticker, adjust="qfq")
+        df = _ak().stock_us_daily(symbol=ticker, adjust="qfq")
         if df is None or df.empty:
             return None
         return df.tail(100).to_dict("records")
