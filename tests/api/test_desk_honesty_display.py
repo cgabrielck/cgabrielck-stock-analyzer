@@ -279,6 +279,31 @@ def test_d5_get_orders_fallback_marks_degraded(honesty_api):
     assert "broker" not in (row.get("display_status") or "").lower()
 
 
+def test_d5_broker_open_book_keeps_alpaca_done_for_day():
+    """Fail-case: broker OPEN rows must not be re-filtered by the local allowlist."""
+    book = orders_book(
+        [
+            {"id": "brk-dfd", "symbol": "AAPL", "status": "done_for_day"},
+            {"id": "brk-new", "symbol": "MSFT", "status": "new"},
+            {"id": "brk-fill", "symbol": "NVDA", "status": "filled", "filled_avg_price": 12.5},
+        ],
+        source="broker",
+        degraded=False,
+        unverified=False,
+        status="open",
+    )
+    assert book["source"] == "broker"
+    assert book["degraded"] is False
+    ids = [row["id"] for row in book["orders"]]
+    assert "brk-dfd" in ids
+    assert "brk-new" in ids
+    assert "brk-fill" in ids
+    dfd = next(row for row in book["orders"] if row["id"] == "brk-dfd")
+    assert dfd["status"] == "done_for_day"
+    assert dfd["degraded"] is False
+    assert LOCAL_ORDER_CUE not in (dfd.get("display_status") or "")
+
+
 def test_d5_get_orders_broker_success_is_labeled_broker(honesty_api):
     row = MagicMock()
     row.id = "brk-1"
@@ -303,6 +328,81 @@ def test_d5_get_orders_broker_success_is_labeled_broker(honesty_api):
     assert body["orders"][0]["source"] == "broker"
     assert body["orders"][0]["degraded"] is False
     assert LOCAL_ORDER_CUE not in (body["orders"][0].get("display_status") or "")
+
+
+def _broker_order(oid, symbol, status, *, filled_avg_price=None):
+    row = MagicMock()
+    row.id = oid
+    row.symbol = symbol
+    row.side = "buy"
+    row.type = "limit"
+    row.qty = 1
+    row.status = status
+    row.limit_price = 10.0
+    row.filled_avg_price = filled_avg_price
+    row.submitted_at = None
+    return row
+
+
+def test_d5_broker_open_keeps_done_for_day_while_fallback_drops_priced_fill(honesty_api):
+    """Fail-case: clean broker OPEN keeps done_for_day; local fallback still hides priced fills."""
+    honesty_api["broker"].api.get_orders.return_value = [
+        _broker_order("brk-dfd", "AAPL", "done_for_day"),
+        _broker_order("brk-new", "MSFT", "new"),
+        _broker_order("brk-fill", "NVDA", "filled", filled_avg_price=12.5),
+    ]
+    res = honesty_api["client"].get("/api/orders?status=open")
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["source"] == "broker"
+    assert body["degraded"] is False
+    assert body["unverified"] is False
+    ids = [row.get("id") for row in body["orders"]]
+    assert "brk-dfd" in ids
+    assert "brk-new" in ids
+    dfd = next(row for row in body["orders"] if row["id"] == "brk-dfd")
+    assert dfd["status"] == "done_for_day"
+    assert dfd["source"] == "broker"
+    assert dfd["degraded"] is False
+    assert LOCAL_ORDER_CUE not in (dfd.get("display_status") or "")
+    assert body.get("verified") is not True
+    assert body.get("live") is not True
+
+    honesty_api["broker"].api.get_orders.side_effect = RuntimeError("alpaca unavailable")
+    honesty_api["store"].save_order(
+        Order(
+            id="loc-filled",
+            symbol="NVDA",
+            side=OrderSide.BUY,
+            order_type=OrderType.MARKET,
+            quantity=1,
+            status=OrderStatus.FILLED,
+            filled_avg_price=12.5,
+            idempotency_key="idem-filled-dfd",
+        )
+    )
+    honesty_api["store"].save_order(
+        Order(
+            id="loc-open",
+            symbol="MSFT",
+            side=OrderSide.BUY,
+            order_type=OrderType.MARKET,
+            quantity=2,
+            status=OrderStatus.SUBMITTED,
+            idempotency_key="idem-open-dfd",
+        )
+    )
+    fallback = honesty_api["client"].get("/api/orders?status=open")
+    assert fallback.status_code == 200, fallback.text
+    fb = fallback.json()
+    assert fb["source"] == "local_store"
+    assert fb["degraded"] is True
+    assert fb["unverified"] is True
+    fb_ids = [row.get("id") for row in fb["orders"]]
+    assert "loc-filled" not in fb_ids
+    assert "loc-open" in fb_ids
+    open_row = next(row for row in fb["orders"] if row["id"] == "loc-open")
+    assert LOCAL_ORDER_CUE in open_row["display_status"]
 
 
 def test_d5_open_fallback_does_not_present_filled_local_as_broker(honesty_api):

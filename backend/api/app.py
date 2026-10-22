@@ -270,7 +270,7 @@ def orders(status: str = "all", limit: int = 50, _auth: None = Depends(_require_
                     "submitted_at": str(o.submitted_at) if o.submitted_at else None,
                 }
             )
-        return orders_book(out, source="broker", degraded=False, unverified=False, status=status)
+        return orders_book(out, source="broker", degraded=False, unverified=False)
     except Exception:
         recent = _store.get_recent_orders(limit=limit)
         out = [o.model_dump(mode="json") for o in recent]

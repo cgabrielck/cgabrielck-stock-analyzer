@@ -128,13 +128,20 @@ def orders_book(
     unverified: bool,
     status: str = "all",
 ) -> Dict[str, Any]:
-    """D5: GET /api/orders envelope. Fallback must not look like a clean broker book."""
+    """D5: GET /api/orders envelope. Fallback must not look like a clean broker book.
+
+    ``status=open`` filters **local_store** rows only. A successful broker book
+    is returned as Alpaca sent it (including still-active statuses such as
+    ``done_for_day``).
+    """
     src = str(source or "unknown")
     local = src == "local_store"
     degraded_flag = bool(degraded) or local
     unverified_flag = bool(unverified) or local
     honest_rows = [honest_order_row(row) for row in (rows or [])]
-    if str(status or "all").strip().lower() == "open":
+    # Open filter is local-store only. Broker OPEN already comes from Alpaca;
+    # re-allowlisting would drop still-active statuses such as done_for_day.
+    if local and str(status or "all").strip().lower() == "open":
         honest_rows = [row for row in honest_rows if is_open_order_status(row.get("status"))]
     stamped = [
         _stamp_order_row(row, source=src, degraded=degraded_flag, unverified=unverified_flag)
