@@ -252,6 +252,196 @@ def test_stop_sell_tiny_limit_price_409_does_not_hit_broker(tmp_path):
     assert "notional" in detail or "exceed" in detail or "risk" in detail
 
 
+def test_resolve_reference_price_sell_limit_uses_max_of_limit_and_quote():
+    """Sell limit is a floor — tiny limit must not understate vs mark/quote."""
+    tiny = _order(side=OrderSide.SELL, order_type=OrderType.LIMIT, limit_price=0.01)
+    assert constraining_order_price(tiny) == 0.01
+    assert resolve_reference_price(tiny, _account(), quote_fn=lambda _s: 150.0) == 150.0
+    above = _order(side=OrderSide.SELL, order_type=OrderType.LIMIT, limit_price=200.0)
+    assert resolve_reference_price(above, _account(), quote_fn=lambda _s: 150.0) == 200.0
+
+
+def test_resolve_reference_price_sell_limit_tiny_without_quote_is_none():
+    order = _order(side=OrderSide.SELL, order_type=OrderType.LIMIT, limit_price=0.01)
+    assert resolve_reference_price(order, _account(), quote_fn=lambda _s: None) is None
+
+
+def test_resolve_reference_price_sell_limit_uses_position_mark():
+    account = _account(
+        positions=[
+            Position(
+                id="p1",
+                symbol="AAPL",
+                quantity=10,
+                average_entry_price=140.0,
+                current_price=148.5,
+            )
+        ]
+    )
+    order = _order(side=OrderSide.SELL, order_type=OrderType.LIMIT, limit_price=0.01)
+    assert resolve_reference_price(account=account, order=order, quote_fn=lambda _s: None) == 148.5
+
+
+def test_resolve_reference_price_sell_stop_limit_uses_max_of_limit_and_quote():
+    order = _order(
+        side=OrderSide.SELL,
+        order_type=OrderType.STOP_LIMIT,
+        limit_price=0.01,
+        stop_price=140.0,
+    )
+    assert constraining_order_price(order) == 0.01
+    assert resolve_reference_price(order, _account(), quote_fn=lambda _s: 150.0) == 150.0
+
+
+def test_resolve_reference_price_buy_limit_keeps_tiny_limit():
+    """Buy limit caps spend — do not lift a cheap bid to the quote."""
+    order = _order(side=OrderSide.BUY, order_type=OrderType.LIMIT, limit_price=0.01)
+    assert resolve_reference_price(order, _account(), quote_fn=lambda _s: 150.0) == 0.01
+
+
+def test_sell_limit_tiny_limit_price_409_does_not_hit_broker(tmp_path):
+    """qty=10000 × dummy $0.01 looks like $100; marketable sell is ~$1.5M."""
+    path = _mandate_file(tmp_path, TIGHT)
+    broker = _broker()
+    result = place_desk_order(
+        _order(
+            side=OrderSide.SELL,
+            order_type=OrderType.LIMIT,
+            quantity=10000,
+            limit_price=0.01,
+            id="lim-tiny-sell",
+            idempotency_key="lim-tiny-sell",
+        ),
+        broker=broker,
+        store=InMemoryOrderStore(),
+        mandate_path=path,
+        quote_fn=lambda _s: 150.0,
+    )
+    assert result.http_status == 409
+    assert result.blocked is True
+    assert result.gate in ("mandate", "risk")
+    broker.submit_order.assert_not_called()
+    detail = (result.detail or "").lower()
+    assert "notional" in detail or "exceed" in detail or "risk" in detail
+
+
+def test_sell_stop_limit_tiny_limit_price_409_does_not_hit_broker(tmp_path):
+    path = _mandate_file(tmp_path, TIGHT)
+    broker = _broker()
+    result = place_desk_order(
+        _order(
+            side=OrderSide.SELL,
+            order_type=OrderType.STOP_LIMIT,
+            quantity=10000,
+            limit_price=0.01,
+            stop_price=140.0,
+            id="sl-tiny-sell",
+            idempotency_key="sl-tiny-sell",
+        ),
+        broker=broker,
+        store=InMemoryOrderStore(),
+        mandate_path=path,
+        quote_fn=lambda _s: 150.0,
+    )
+    assert result.http_status == 409
+    assert result.blocked is True
+    assert result.gate in ("mandate", "risk")
+    broker.submit_order.assert_not_called()
+    detail = (result.detail or "").lower()
+    assert "notional" in detail or "exceed" in detail or "risk" in detail
+
+
+def test_sell_limit_tiny_without_quote_does_not_approve(tmp_path):
+    """No mark/quote: cannot certify sell notional from a tiny floor limit."""
+    path = _mandate_file(tmp_path, TIGHT)
+    broker = _broker()
+    result = place_desk_order(
+        _order(
+            side=OrderSide.SELL,
+            order_type=OrderType.LIMIT,
+            quantity=10000,
+            limit_price=0.01,
+            id="lim-tiny-sell-nq",
+            idempotency_key="lim-tiny-sell-nq",
+        ),
+        broker=broker,
+        store=InMemoryOrderStore(),
+        mandate_path=path,
+        quote_fn=lambda _s: None,
+    )
+    assert result.http_status == 409
+    assert result.detail == NO_CONSTRAINING_PRICE_DETAIL
+    broker.submit_order.assert_not_called()
+
+
+def test_sell_limit_honest_still_submits(tmp_path):
+    path = _mandate_file(tmp_path, TIGHT)
+    broker = _broker()
+    result = place_desk_order(
+        _order(
+            side=OrderSide.SELL,
+            order_type=OrderType.LIMIT,
+            quantity=1,
+            limit_price=150.0,
+            id="lim-honest-sell",
+            idempotency_key="lim-honest-sell",
+        ),
+        broker=broker,
+        store=InMemoryOrderStore(),
+        mandate_path=path,
+        quote_fn=lambda _s: 150.0,
+    )
+    assert result.http_status == 200
+    assert result.blocked is False
+    broker.submit_order.assert_called_once()
+
+
+def test_buy_limit_tiny_still_submits_spend_is_capped(tmp_path):
+    """Buy limit $0.01 × 10000 = $100 — honest max spend, must not lift to quote."""
+    path = _mandate_file(tmp_path, TIGHT)
+    broker = _broker()
+    result = place_desk_order(
+        _order(
+            side=OrderSide.BUY,
+            order_type=OrderType.LIMIT,
+            quantity=10000,
+            limit_price=0.01,
+            id="lim-tiny-buy",
+            idempotency_key="lim-tiny-buy",
+        ),
+        broker=broker,
+        store=InMemoryOrderStore(),
+        mandate_path=path,
+        quote_fn=lambda _s: 150.0,
+    )
+    assert result.http_status == 200
+    assert result.blocked is False
+    broker.submit_order.assert_called_once()
+
+
+def test_sell_stop_limit_honest_still_submits(tmp_path):
+    path = _mandate_file(tmp_path, TIGHT)
+    broker = _broker()
+    result = place_desk_order(
+        _order(
+            side=OrderSide.SELL,
+            order_type=OrderType.STOP_LIMIT,
+            quantity=1,
+            limit_price=150.0,
+            stop_price=140.0,
+            id="sl-honest-sell",
+            idempotency_key="sl-honest-sell",
+        ),
+        broker=broker,
+        store=InMemoryOrderStore(),
+        mandate_path=path,
+        quote_fn=lambda _s: 150.0,
+    )
+    assert result.http_status == 200
+    assert result.blocked is False
+    broker.submit_order.assert_called_once()
+
+
 def test_market_zero_limit_without_quote_does_not_approve(tmp_path):
     path = _mandate_file(tmp_path, TIGHT)
     broker = _broker()
@@ -527,6 +717,7 @@ def test_sell_skips_kill_d_sell_kill_backlog(tmp_path):
         broker=broker,
         store=InMemoryOrderStore(),
         mandate_path=path,
+        quote_fn=lambda _s: 150.0,
     )
     assert result.blocked is False
     broker.submit_order.assert_called_once()

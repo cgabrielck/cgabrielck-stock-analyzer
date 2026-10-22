@@ -83,7 +83,7 @@ def test_api_mandate_reject_gme(desk_api):
     client = desk_api["client"]
     res = client.post(
         "/api/orders",
-        json={"symbol": "GME", "side": "buy", "quantity": 1, "limit_price": 20},
+        json={"symbol": "GME", "side": "buy", "quantity": 1, "limit_price": 20, "order_type": "limit"},
     )
     assert res.status_code == 409, res.text
     assert "block" in res.json()["detail"].lower()
@@ -98,7 +98,7 @@ def test_api_risk_reject_notional(desk_api, monkeypatch):
     client = desk_api["client"]
     res = client.post(
         "/api/orders",
-        json={"symbol": "AAPL", "side": "buy", "quantity": 10, "limit_price": 150},
+        json={"symbol": "AAPL", "side": "buy", "quantity": 10, "limit_price": 150, "order_type": "limit"},
     )
     assert res.status_code == 409, res.text
     assert "Risk Gate Rejected" in res.json()["detail"]
@@ -130,7 +130,7 @@ def test_api_ops_mandate_matches_order_path(desk_api):
     assert "GME" in body["mandate"]["blocked_symbols"]
     denied = client.post(
         "/api/orders",
-        json={"symbol": "GME", "side": "buy", "quantity": 1, "limit_price": 20},
+        json={"symbol": "GME", "side": "buy", "quantity": 1, "limit_price": 20, "order_type": "limit"},
     )
     assert denied.status_code == 409
     # Same source: blocked list shown on ops is what rejected the order.
@@ -309,6 +309,67 @@ def test_api_market_zero_limit_without_quote_409_no_broker(desk_api, monkeypatch
     assert res.status_code == 409, res.text
     assert res.json()["detail"] == NO_CONSTRAINING_PRICE_DETAIL
     desk_api["broker"].submit_order.assert_not_called()
+
+
+def test_api_limit_sell_tiny_limit_price_409_no_broker(desk_api, monkeypatch):
+    from backend.trading.engine import desk_orders as desk_mod
+
+    monkeypatch.setattr(desk_mod, "default_quote_price", lambda _s: 150.0)
+    client = desk_api["client"]
+    res = client.post(
+        "/api/orders",
+        json={
+            "symbol": "AAPL",
+            "side": "sell",
+            "quantity": 10000,
+            "order_type": "limit",
+            "limit_price": 0.01,
+        },
+    )
+    assert res.status_code == 409, res.text
+    desk_api["broker"].submit_order.assert_not_called()
+    assert "notional" in res.json()["detail"].lower() or "exceed" in res.json()["detail"].lower()
+
+
+def test_api_stop_limit_sell_tiny_limit_price_409_no_broker(desk_api, monkeypatch):
+    from backend.trading.engine import desk_orders as desk_mod
+
+    monkeypatch.setattr(desk_mod, "default_quote_price", lambda _s: 150.0)
+    client = desk_api["client"]
+    res = client.post(
+        "/api/orders",
+        json={
+            "symbol": "AAPL",
+            "side": "sell",
+            "quantity": 10000,
+            "order_type": "stop_limit",
+            "limit_price": 0.01,
+        },
+    )
+    assert res.status_code == 409, res.text
+    desk_api["broker"].submit_order.assert_not_called()
+    assert "notional" in res.json()["detail"].lower() or "exceed" in res.json()["detail"].lower()
+
+
+def test_api_limit_sell_honest_still_submits(desk_api, monkeypatch):
+    from backend.trading.engine import desk_orders as desk_mod
+
+    monkeypatch.setattr(desk_mod, "default_quote_price", lambda _s: 150.0)
+    client = desk_api["client"]
+    res = client.post(
+        "/api/orders",
+        json={
+            "symbol": "AAPL",
+            "side": "sell",
+            "quantity": 1,
+            "order_type": "limit",
+            "limit_price": 150,
+        },
+    )
+    assert res.status_code == 200, res.text
+    desk_api["broker"].submit_order.assert_called_once()
+    rows = journal_store.load_raw_entries()
+    assert rows, "accepted Desk sell limit must be journaled"
 
 
 def test_api_kill_buy_409(desk_api):
