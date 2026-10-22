@@ -93,7 +93,7 @@
 
 **接受陳述：** 產品接受嘅係**帳戶級有界輔助**，唔係「每隻股票一個不可審計黑箱策略」。
 
-管戶**產品範圍**（Desk vs worker、雙帳本、期權／黃金分期）見 Draft [`ACCOUNT_MANAGEMENT_DESIGN.md`](ACCOUNT_MANAGEMENT_DESIGN.md)（plan-15）。Issue #10 stays OPEN.
+管戶**產品範圍**（Desk vs worker、雙帳本、期權／黃金分期）見 Draft [`ACCOUNT_MANAGEMENT_DESIGN.md`](ACCOUNT_MANAGEMENT_DESIGN.md)（plan-15）。圖表／指標產品範圍見 Draft [`CHARTS_INDICATORS_DESIGN.md`](CHARTS_INDICATORS_DESIGN.md)（ns-1）。Issue #10 stays OPEN.
 
 ---
 
