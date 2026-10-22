@@ -13,6 +13,7 @@ from typing import Any, Dict, Optional
 from backend.trading.broker import BrokerAdapter
 from backend.trading.engine.order_manager import OrderManager
 from backend.trading.engine.shadow import ShadowTradingEngine
+from backend.trading.engine.stamp import stamp_risk_approved
 from backend.trading.models import Order, OrderSide, OrderStatus, OrderType
 from backend.trading.risk.gates import RiskEngine
 
@@ -123,7 +124,13 @@ class SignalProcessor:
             self._record_journal(draft_order, signal, audit_id=audit_id)
             return draft_order
 
-        draft_order.status = OrderStatus.RISK_APPROVED
+        # RISK_APPROVED only after RiskEngine.evaluate_order approved.
+        # Mandate is the caller's job (worker buy/sell). See stamp.py.
+        stamp_risk_approved(
+            draft_order,
+            risk_decision=risk_decision,
+            require_mandate=False,
+        )
 
         if self.execution_mode == "shadow":
             if self.shadow_engine is None:
