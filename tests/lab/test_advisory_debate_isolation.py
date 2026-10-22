@@ -10,6 +10,7 @@ from __future__ import annotations
 import ast
 import inspect
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -94,6 +95,15 @@ def _call_names(tree: ast.AST) -> set[str]:
     return names
 
 
+def _module_functions(path: Path, names: frozenset[str]) -> dict[str, ast.FunctionDef]:
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    found: dict[str, ast.FunctionDef] = {}
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef) and node.name in names:
+            found[node.name] = node
+    return found
+
+
 def _assert_no_dishonest_claims(payload: dict) -> None:
     assert payload.get("places_order") is False
     for key in DISHONEST_PAYLOAD_KEYS:
@@ -142,6 +152,20 @@ def test_research_jobs_attaches_memo_without_money_path():
     leaked = _call_names(tree) & BANNED_CALL_NAMES
     assert not leaked
     assert "attach_desk_advisory" in src
+
+
+def test_lab_advisory_handler_ast_never_calls_money_path():
+    """Scan lab handlers in app.py. Whole-file scan would false-hit POST /api/orders."""
+    path = ROOT / "backend/api/app.py"
+    want = frozenset({"lab_advisory", "lab_status_api", "lab_ab_report"})
+    found = _module_functions(path, want)
+    assert "lab_advisory" in found, "lab_advisory handler missing from backend/api/app.py"
+    for name, node in found.items():
+        imported = _imported_modules(node)
+        for needle in BANNED_IMPORT_NEEDLES:
+            assert not any(needle in mod for mod in imported), f"{name} imports {needle}"
+        leaked = _call_names(node) & BANNED_CALL_NAMES
+        assert not leaked, f"{name} calls {sorted(leaked)}"
 
 
 def test_schema_rejects_places_order_true():
@@ -255,21 +279,27 @@ def test_deep_overlay_strips_dishonest_advisory(tmp_path, monkeypatch):
 
 
 def test_lab_advisory_api_does_not_touch_broker_or_desk_order(lab_data_dir, monkeypatch):
+    """Call counts must stay 0. Raising is not enough: lab_advisory swallows Exception."""
     monkeypatch.setenv("DESK_OPERATOR_TOKEN", "unit-test-operator")
     monkeypatch.setattr("backend.trading.telegram_inbox.start_background", lambda: (lambda: None))
     monkeypatch.setattr("backend.api.scan_scheduler.start_background", lambda: (lambda: None))
 
-    def boom(*_a, **_k):
-        raise AssertionError("lab advisory must not reach OrderManager / broker / place_desk_order")
-
-    monkeypatch.setattr("backend.api.app.place_desk_order", boom)
     from backend.api import app as api_app
-
-    monkeypatch.setattr(api_app._broker, "submit_order", boom)
+    from backend.trading.alpaca_broker import AlpacaBroker
     from backend.trading.engine.order_manager import OrderManager
 
-    monkeypatch.setattr(OrderManager, "submit_new_order", boom)
-    monkeypatch.setattr("backend.trading.engine.stamp.stamp_risk_approved", boom)
+    place_src = MagicMock(name="desk_orders.place_desk_order")
+    place_app = MagicMock(name="app.place_desk_order")
+    broker_submit = MagicMock(name="AlpacaBroker.submit_order")
+    om_submit = MagicMock(name="OrderManager.submit_new_order")
+    stamp_fn = MagicMock(name="stamp_risk_approved")
+
+    monkeypatch.setattr("backend.trading.engine.desk_orders.place_desk_order", place_src)
+    monkeypatch.setattr("backend.api.app.place_desk_order", place_app)
+    monkeypatch.setattr(AlpacaBroker, "submit_order", broker_submit)
+    monkeypatch.setattr(api_app._broker, "submit_order", broker_submit)
+    monkeypatch.setattr(OrderManager, "submit_new_order", om_submit)
+    monkeypatch.setattr("backend.trading.engine.stamp.stamp_risk_approved", stamp_fn)
 
     with TestClient(api_app.app, raise_server_exceptions=True) as client:
         res = client.post(
@@ -281,6 +311,16 @@ def test_lab_advisory_api_does_not_touch_broker_or_desk_order(lab_data_dir, monk
     _assert_no_dishonest_claims(body)
     assert body["places_order"] is False
     assert body.get("verified") is not True
+    assert place_src.call_count == 0
+    assert place_app.call_count == 0
+    assert broker_submit.call_count == 0
+    assert om_submit.call_count == 0
+    assert stamp_fn.call_count == 0
+    place_src.assert_not_called()
+    place_app.assert_not_called()
+    broker_submit.assert_not_called()
+    om_submit.assert_not_called()
+    stamp_fn.assert_not_called()
 
 
 def test_desk_committee_run_posts_lab_advisory_not_orders():
