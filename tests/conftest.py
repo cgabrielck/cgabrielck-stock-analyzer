@@ -9,8 +9,11 @@ import pytest
 @pytest.fixture(autouse=True)
 def _isolate_daily_order_counter(tmp_path, monkeypatch):
     from backend.trading.safety import mandate
+    from backend.trading.risk import shared_state
 
     monkeypatch.setattr(mandate, "DAILY_ORDERS_FILE", tmp_path / "mandate_daily_orders.json")
+    monkeypatch.setattr(shared_state, "DAY_START_FILE", tmp_path / "risk_day_start.json")
+    monkeypatch.setattr(shared_state, "COOLDOWN_FILE", tmp_path / "risk_cooldown.json")
     yield
 
 

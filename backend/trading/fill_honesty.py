@@ -4,7 +4,8 @@ A fill is only a fill when a recorded price is > 0. Limit / mark / entry /
 zero / NaN never count as ``filled_avg_price``. Missing or zero fill cannot
 escalate status to filled; fills stay empty.
 
-O5 (Desk vs worker dual path) is out of scope — R1-PATH / Intent / M8 / H1.
+O5 (Desk vs worker dual-execution: Mandate / Risk / OM / journal actor)
+is not this module — see ``desk_orders.py``. Intent / M8 / H1 remain OPEN.
 """
 from __future__ import annotations
 

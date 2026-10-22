@@ -1,9 +1,14 @@
-"""Desk / lab manual place-order path (R1-SAFE + R1-PATH write-point).
+"""Desk / lab manual place-order path (R1-SAFE + R1-PATH + O5).
 
 Manual Desk stays a separate money path from IntentStore / H1 /
 SignalProcessor. It does **not** call ``upsert_active_intent``, H1
 ``claim_for_consume``, or the M8 sizer — operator qty is kept, then
-Mandate + RiskEngine still have to approve.
+Mandate + RiskEngine still have to approve. O5 is that dual-path:
+Desk POST cannot broker-succeed when the shared Mandate / Risk /
+kill / size kernel would refuse (including worker-buy cooldown,
+correlation, and daily-loss bookkeeping), and a success is not
+journal/audit silent (``actor=desk``). Kelly / M8 sizer remains
+worker-only (Intent→M8 OPEN).
 
 R1-PATH write-point (journal, not IntentStore)
 ---------------------------------------------
@@ -13,6 +18,7 @@ stamped via ``record_from_order`` with:
     strategy_id = desk_manual
     intent_id   = durable UUID (journal correlation id)
     provenance.write_point = place_desk_order
+    provenance.actor = desk
     links.intent_ref = ""   # not an IntentStore document
 
 Intent v0 (§5.6) cannot honestly hold this L2 ticket: Desk has qty /
@@ -68,6 +74,7 @@ from backend.trading.engine.sticky_idempotency import (
 )
 from backend.trading.models import AccountSummary, Order, OrderSide, OrderStatus, OrderType
 from backend.trading.risk.gates import RiskEngine, positive_price
+from backend.trading.risk.shared_state import active_cooldown_tickers, mark_cooldown
 from backend.trading.safety import audit, kill_switch
 from backend.trading.safety.mandate import (
     MANDATE_STATUS_CORRUPT,
@@ -119,6 +126,27 @@ class DeskPlaceResult:
     audit_id: Optional[str] = None
     journaled: bool = False
     intent_id: Optional[str] = None
+
+
+def default_price_history(symbols) -> Dict[str, Any]:
+    """OHLCV for correlation. Failures skip a symbol (same as worker fetch)."""
+    out: Dict[str, Any] = {}
+    try:
+        from backend.utils.equity_ohlcv import fetch_daily_ohlcv
+    except Exception:
+        return out
+    for raw in symbols or []:
+        token = str(raw or "").upper().strip()
+        if not token or token in out:
+            continue
+        try:
+            result = fetch_daily_ohlcv(token, period="1y", min_bars=30)
+            data = result.get("data") if isinstance(result, dict) else None
+            if result.get("ok") and data is not None and not getattr(data, "empty", True):
+                out[token] = data
+        except Exception:
+            logger.debug("desk price_history fetch failed for %s", token, exc_info=True)
+    return out
 
 
 def default_quote_price(symbol: str) -> Optional[float]:
@@ -257,13 +285,18 @@ def _side_value(order: Order) -> str:
     return side.lower()
 
 
+def desk_journal_provenance_extra() -> Dict[str, str]:
+    """O5 journal provenance: same class as worker (actor + write_point)."""
+    return {"write_point": DESK_WRITE_POINT, "actor": DESK_ACTOR}
+
+
 def desk_journal_has_path_stamp(entry: Optional[Dict[str, Any]]) -> bool:
-    """True when a journal row carries the R1-PATH Desk write-point.
+    """True when a journal row carries the R1-PATH / O5 Desk write-point.
 
     Fail-case tests use this: a Desk HTTP 200 whose row is missing
-    ``intent_id`` / ``strategy_id=desk_manual`` / ``write_point`` (or that
-    points ``intent_ref`` at a non-existent IntentStore document) is not
-    an honest success.
+    ``intent_id`` / ``strategy_id=desk_manual`` / ``write_point`` /
+    ``actor=desk`` (or that points ``intent_ref`` at a non-existent
+    IntentStore document) is not an honest success.
     """
     if not isinstance(entry, dict):
         return False
@@ -277,6 +310,8 @@ def desk_journal_has_path_stamp(entry: Optional[Dict[str, Any]]) -> bool:
         return False
     provenance = entry.get("provenance") if isinstance(entry.get("provenance"), dict) else {}
     if str(provenance.get("write_point") or "").strip() != DESK_WRITE_POINT:
+        return False
+    if str(provenance.get("actor") or "").strip() != DESK_ACTOR:
         return False
     if provenance.get("verified") is True or provenance.get("live") is True:
         return False
@@ -293,7 +328,7 @@ def _journal_order(order: Order, *, audit_id: Optional[str]) -> Tuple[bool, Opti
             strategy_id=DESK_STRATEGY_ID,
             intent_id=stamp_id,
             link_intent=False,
-            provenance_extra={"write_point": DESK_WRITE_POINT},
+            provenance_extra=desk_journal_provenance_extra(),
         )
     except Exception as exc:
         logger.exception("Desk journal record failed for %s", order.symbol)
@@ -303,7 +338,7 @@ def _journal_order(order: Order, *, audit_id: Optional[str]) -> Tuple[bool, Opti
     if not desk_journal_has_path_stamp(entry):
         return (
             False,
-            "journal: Desk PATH stamp missing (intent_id / strategy_id / write_point)",
+            "journal: Desk PATH stamp missing (intent_id / strategy_id / write_point / actor)",
             None,
         )
     return True, None, str(entry.get("intent_id") or stamp_id)
@@ -493,6 +528,8 @@ def place_desk_order(
     mandate_path: Any = None,
     account: Any = _ACCOUNT_UNSET,
     execution_mode: str = "paper",
+    price_history: Any = _ACCOUNT_UNSET,
+    price_history_fn: Optional[Callable[[Any], Dict[str, Any]]] = None,
 ) -> DeskPlaceResult:
     """Evaluate a manual Desk/lab order, then paper-submit or shadow-simulate.
 
@@ -726,7 +763,34 @@ def place_desk_order(
         )
 
     # 3. RiskEngine — same kernel as the worker, not via SignalProcessor.
-    risk_decision = engine.evaluate_order(eval_order, account)
+    # O5: Desk must pass the extras worker buy uses (cooldown, correlation
+    # bars, daily-loss day-start). First-write-wins day-start is durable.
+    engine.record_day_start(float(getattr(account, "portfolio_value", 0) or 0))
+    cooldown_tickers = active_cooldown_tickers()
+    history = None
+    if side == "buy":
+        if price_history is not _ACCOUNT_UNSET:
+            history = price_history
+        else:
+            held = [
+                str(getattr(pos, "symbol", "") or "").upper()
+                for pos in (getattr(account, "positions", None) or [])
+            ]
+            held = [sym for sym in held if sym]
+            if held:
+                symbols = {str(order.symbol or "").upper(), *held}
+                fn = price_history_fn or default_price_history
+                try:
+                    history = fn(sorted(symbols))
+                except Exception:
+                    logger.debug("desk price_history_fn failed", exc_info=True)
+                    history = None
+    risk_decision = engine.evaluate_order(
+        eval_order,
+        account,
+        price_history=history,
+        cooldown_tickers=cooldown_tickers,
+    )
     if not risk_decision.approved:
         detail = f"Risk Gate Rejected: {risk_decision.reason}"
         audit_id = audit.log_risk_decision(
@@ -941,6 +1005,8 @@ def place_desk_order(
         gate.record_order()
     if journaled and submitted.status in VENUE_STATUSES:
         clear_sticky(store, submitted)
+        if side == "sell":
+            mark_cooldown(submitted.symbol)
     return DeskPlaceResult(
         order=submitted,
         blocked=False,

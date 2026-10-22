@@ -258,13 +258,14 @@ def test_from_order_desk_path_stamp_does_not_invent_intent_ref():
         intent_id="desk-corr-1",
         strategy_id="desk_manual",
         link_intent=False,
-        provenance_extra={"write_point": "place_desk_order"},
+        provenance_extra={"write_point": "place_desk_order", "actor": "desk"},
     )
     assert entry is not None
     assert entry["intent_id"] == "desk-corr-1"
     assert entry["strategy_id"] == "desk_manual"
     assert entry["links"]["intent_ref"] == ""
     assert entry["provenance"]["write_point"] == "place_desk_order"
+    assert entry["provenance"]["actor"] == "desk"
     assert entry["provenance"]["verified"] is False
     assert entry["provenance"]["live"] is False
 

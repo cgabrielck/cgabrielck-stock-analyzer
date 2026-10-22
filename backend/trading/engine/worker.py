@@ -39,6 +39,11 @@ from backend.trading.models import Order, OrderSide, OrderStatus, OrderType
 from backend.trading.reconciliation.service import ReconciliationService
 from backend.trading.fill_honesty import fill_notify_price
 from backend.trading.risk.gates import RiskEngine, RiskLimits, positive_price
+from backend.trading.risk.shared_state import (
+    COOLDOWN_HOURS,
+    active_cooldown_tickers,
+    mark_cooldown,
+)
 from backend.trading.risk.position_sizer import cap_shares_to_notional, shares_to_buy
 from backend.trading.strategies.base import StrategyBase
 from backend.trading.strategies.registry import KNOWN_STRATEGIES, get_strategy
@@ -69,8 +74,6 @@ logger = logging.getLogger(__name__)
 # We approximate market hours as 14:30–21:00 UTC (conservative)
 MARKET_OPEN_UTC_HOUR  = 14  # 09:30 ET = 14:30 UTC (winter)
 MARKET_CLOSE_UTC_HOUR = 21  # 16:00 ET = 21:00 UTC
-
-COOLDOWN_HOURS = 24
 
 
 class TradingWorker:
@@ -347,13 +350,15 @@ class TradingWorker:
             except Exception as exc:
                 logger.debug("set_regime skipped: %s", exc)
 
-        # 3. Clean expired cooldowns
+        # 3. Clean expired cooldowns (in-process + durable Desk-shared book).
         now = datetime.now(timezone.utc)
         self._cooldown = {
             t: ts for t, ts in self._cooldown.items()
             if (now - ts).total_seconds() < COOLDOWN_HOURS * 3600
         }
-        cooldown_tickers = list(self._cooldown.keys())
+        cooldown_tickers = list(
+            {str(t).upper() for t in self._cooldown} | set(active_cooldown_tickers(now=now))
+        )
 
         # 4. Check exits for open positions
         open_positions = {p.symbol: p for p in account.positions}
@@ -401,6 +406,7 @@ class TradingWorker:
                 )
                 if sell_reached_venue(sell_result):
                     self._cooldown[symbol] = now
+                    mark_cooldown(symbol, when=now)
                     self._trailing_highs.pop(symbol, None)
                     self._position_meta.pop(symbol, None)
                     summary_rows.append({"ticker": symbol, "action": f"EXIT:{exit_sig.reason}",
@@ -950,7 +956,9 @@ class TradingWorker:
                 t: ts for t, ts in self._cooldown.items()
                 if (now - ts).total_seconds() < COOLDOWN_HOURS * 3600
             }
-            cooldown_tickers = list(self._cooldown.keys())
+            cooldown_tickers = list(
+                {str(t).upper() for t in self._cooldown} | set(active_cooldown_tickers(now=now))
+            )
             price_history: Dict[str, pd.DataFrame] = {}
             needed = {row.symbol for row in store.list(status="active", limit=1000)}
             for pos in getattr(account, "positions", None) or []:
@@ -1468,6 +1476,8 @@ class TradingWorker:
             result.id,
             result.status.value if hasattr(result.status, "value") else str(result.status),
         )
+        if sell_reached_venue(result):
+            mark_cooldown(symbol)
         logger.info("SELL submitted: %s ×%.0f @ %.4f (%s)", symbol, quantity, approval_price, reason)
         return result
 

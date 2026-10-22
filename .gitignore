@@ -28,6 +28,12 @@ backend/data/mandate_daily_orders.json
 backend/data/mandate_daily_orders.json.lock
 backend/data/mandate_daily_orders.json.tmp
 backend/data/mandate_daily_orders.json.fail
+backend/data/risk_day_start.json
+backend/data/risk_day_start.json.lock
+backend/data/risk_day_start.json.tmp
+backend/data/risk_cooldown.json
+backend/data/risk_cooldown.json.lock
+backend/data/risk_cooldown.json.tmp
 backend/data/audit/
 backend/trading/safety/KILL_SWITCH
 data/portfolio_state.json
