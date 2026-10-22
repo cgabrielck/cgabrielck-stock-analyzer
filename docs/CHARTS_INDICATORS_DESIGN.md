@@ -181,6 +181,7 @@ Intent→M8／H1–H3 **仍 OPEN**；圖表頁**唔**變成 Intent writer 或 M8
 | Desk TradingView-style 圖表產品 | **OPEN（未交付）** | 現況＝收盤 sparkline |
 | Streamlit Plotly K 線 | lab 既有；**唔係**產品交付 | 維持 lab／legacy |
 | 參考訊號 schema（ADR-003 D7） | **planning／OPEN** | 本頁唔定稿 |
+| 參考訊號設計頁 | Draft（ns-2） | Desk 參考／advisory 範圍；見 [`REFERENCE_SIGNALS_DESIGN.md`](REFERENCE_SIGNALS_DESIGN.md)；唔凍結 D7 |
 | Intent→M8／H1–H3／完整 M8 StrategyBase | **OPEN** | 唔由本頁排期 |
 | D7-DESIGN | **OPEN** | 雙目錄未合併（同名刀 ≠ 參考訊號 D7） |
 | Desk flatten product exception（G2） | **OPEN** | 唔升格 |
@@ -231,6 +232,8 @@ Intent→M8／H1–H3 **仍 OPEN**；圖表頁**唔**變成 Intent writer 或 M8
 6. **LAB_PRODUCT_M7_BINDING**（lab≠M7；lab 圖唔接執行）  
 7. **本頁**（ns-1 圖表／指標產品範圍；Owner 接受後）  
 8. 舊 roadmap／runbook（frozen；**ADR-002 is VOID**）
+
+相關 Draft（唔升格）：[`REFERENCE_SIGNALS_DESIGN.md`](REFERENCE_SIGNALS_DESIGN.md)（ns-2 參考訊號；D7 schema 仍 planning）。Issue #10 stays OPEN.
 
 本頁**不改變** live RiskEngine／Kelly／mandate／kill 設定或交易 runtime。
 
