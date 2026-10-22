@@ -3,7 +3,7 @@
 Manual Desk stays a separate path from IntentStore / H1 / SignalProcessor
 (R1-PATH, DESIGN — not wired here). This module still enforces, in order:
 
-    kill (buy-only, existing R6) → Mandate (fail-closed) → RiskEngine
+    kill (buy and sell — D-sell-kill) → Mandate (fail-closed) → RiskEngine
     → OrderManager + journal/audit  (or shadow simulate + journal)
 
 so accepted and rejected orders are traceable. FastAPI ``POST /api/orders``
@@ -14,8 +14,9 @@ no third evaluate-skip path. ``/api/ops`` and this path share
 S3: ``account is None`` (or a failed/empty snapshot) is a reject. Never
 stamp ``RISK_APPROVED`` / ``FILLED`` / verified / live without evaluate.
 
-TODO(D-sell-kill): Desk sells currently skip the kill switch, matching worker
-buy-only halt. Suggested HARD control-plane item — not in the R1-SAFE buy list.
+Kill on this path blocks sell as well as buy (409 + halt reason). Worker
+flatten-through-kill is a leftover implementation note, not a binding
+Desk product rule (ADR-003 / MODULAR / AUDIT do not require it).
 
 TODO(R4): max_daily_orders is process-local on this gate. Desk and worker do
 not yet share a durable daily counter.
@@ -49,6 +50,7 @@ logger = logging.getLogger(__name__)
 DESK_ACTOR = "desk"
 DESK_STRATEGY_ID = "desk_manual"
 KILL_BUY_DETAIL = "Kill switch is on — new buys blocked."
+KILL_SELL_DETAIL = "Kill switch is on — sells blocked."
 NO_CONSTRAINING_PRICE_DETAIL = (
     "Cannot approve order without a positive price that constrains "
     "the submitted order."
@@ -347,14 +349,15 @@ def place_desk_order(
     snapshot = inspect_mandate(mandate_path)
     mode = str(execution_mode or "paper").lower()
 
-    # 1. Kill — buy-only, existing R6 behaviour / message.
-    # TODO(D-sell-kill): sells skip this check; leave as-is (not R1-SAFE).
-    if kill_switch.is_halted() and side == "buy":
+    # 1. Kill — Desk buy (R6) and sell (D-sell-kill). Same honesty: 409,
+    # no broker submit, clear halt reason. Not flatten-through-kill.
+    if kill_switch.is_halted():
+        detail = KILL_SELL_DETAIL if side == "sell" else KILL_BUY_DETAIL
         audit_id = audit.log_event(
             "kill_switch_check",
             {
                 "halted": True,
-                "reason": kill_switch.get_reason() or KILL_BUY_DETAIL,
+                "reason": kill_switch.get_reason() or detail,
                 "symbol": order.symbol,
                 "side": side,
             },
@@ -365,7 +368,7 @@ def place_desk_order(
             order,
             store=store,
             http_status=409,
-            detail=KILL_BUY_DETAIL,
+            detail=detail,
             gate="kill",
             audit_id=audit_id,
             mandate_status=snapshot.status,

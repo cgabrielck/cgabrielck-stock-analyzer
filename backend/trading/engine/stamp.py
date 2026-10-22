@@ -27,7 +27,8 @@ What must NOT be stamped ``RISK_APPROVED``
 - Streamlit lab dashboard (S3) — closed via ``place_desk_order`` /
   ``place_lab_manual_order`` (``account is None`` → reject, no stamp).
 - Intent / M8 / R1-PATH — remains OPEN; not this module.
-- D-sell-kill — remains OPEN; not this module.
+- Worker flatten-through-kill — remains OPEN; Desk POST kill-on-sell
+  is ``place_desk_order``, not this module.
 
 Failure is ``REJECTED`` (or never submitted). Never invent ``FILLED``,
 verified, or live from a skipped evaluate.
