@@ -129,20 +129,30 @@ def resolve_reference_price(
     """Positive price for notional: constraining limit, else mark, else quote.
 
     Never prefers an unconstrained ``limit_price`` (market/stop, or limit<=0).
+
+    Sell limit/stop-limit: the limit is a floor (fill at limit or better). A
+    tiny client limit must not understate vs mark/quote — use
+    ``max(limit, mark/quote)``. Without a mark/quote, return None (fail closed)
+    rather than treating the tiny limit as honest sell exposure.
     """
     bound = constraining_order_price(order)
-    if bound is not None:
+    sell = _side_value(order) == "sell"
+    if bound is not None and not sell:
         return bound
     symbol = str(order.symbol or "").upper()
     mark = _mark_price(account, symbol)
     if mark is not None:
-        return mark
-    fn = quote_fn or default_quote_price
-    try:
-        return positive_price(fn(symbol))
-    except Exception:
-        logger.debug("desk quote_fn failed for %s", symbol, exc_info=True)
-        return None
+        market_px = mark
+    else:
+        fn = quote_fn or default_quote_price
+        try:
+            market_px = positive_price(fn(symbol))
+        except Exception:
+            logger.debug("desk quote_fn failed for %s", symbol, exc_info=True)
+            market_px = None
+    if bound is not None:
+        return max(bound, market_px) if market_px is not None else None
+    return market_px
 
 
 def desk_mandate_snapshot(path: Any = None) -> MandateSnapshot:
@@ -397,8 +407,14 @@ def place_desk_order(
     otype_key = _order_type_key(order)
     # Limit/stop-limit on the wire must carry a positive limit; a quote does
     # not constrain LimitOrderRequest. Market/stop need mark/quote instead.
+    # Sell limit/stop-limit: limit is a floor — tiny limit understates vs mark.
     if otype_key in _LIMIT_BOUND_ORDER_TYPES:
-        approval_price = bound
+        if bound is None:
+            approval_price = None
+        elif side == "sell":
+            approval_price = positive_price(ref_price)
+        else:
+            approval_price = bound
     else:
         approval_price = positive_price(ref_price)
     if approval_price is None:
@@ -419,7 +435,8 @@ def place_desk_order(
 
     eval_order = order.model_copy()
     # RiskEngine reads order.limit_price; stamp the honest approval price so a
-    # dummy market limit cannot understate notional at the kernel.
+    # dummy market/stop limit or a tiny sell-limit floor cannot understate
+    # notional at the kernel.
     eval_order.limit_price = approval_price
     ref_price = approval_price
 
