@@ -1,11 +1,12 @@
-"""Desk honesty-display helpers (Slice D D4–D6).
+"""Desk honesty-display helpers (Slice D D4–D7).
 
 Labels must match evidence. Do not invent product meaning:
 account loaded ≠ worker running; local-store book ≠ broker book;
-paper KPIs ≠ backtest KPIs.
+paper KPIs ≠ backtest KPIs; Kelly/lab ``data/`` ≠ Desk broker ``backend/data/``.
 """
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from backend.trading.fill_honesty import honest_order_row, recorded_fill_price
@@ -14,6 +15,24 @@ from backend.trading.risk.gates import positive_price
 UNPRICED_FILL_LABEL = "unpriced — not a fill"
 KPI_EMPTY_CUE = "empty paper book — not backtest"
 LOCAL_ORDER_CUE = "local/unverified"
+# D7: product-facing relative labels. Not live/verified stamps.
+LAB_BOOK_DIR_LABEL = "data/"
+BROKER_BOOK_DIR_LABEL = "backend/data/"
+DUAL_BOOK_CUE = (
+    "Two books, two directories. Desk broker journal/ledger is backend/data/. "
+    "Streamlit Kelly/lab portfolio is data/. They are not the same book."
+)
+DUAL_BOOK_CUE_ZH = (
+    "兩本帳、兩個目錄。Desk 券商日誌／帳本在 backend/data/。"
+    "Streamlit Kelly／實驗室組合在 data/。兩者不是同一本帳。"
+)
+DUAL_BOOK_UNIFIED_CUE = (
+    "Lab Kelly and Desk broker paths currently resolve to the same directory. "
+    "This is not a live or verified stamp."
+)
+DUAL_BOOK_UNIFIED_CUE_ZH = (
+    "Kelly／實驗室與 Desk 券商路徑目前指向同一目錄。這不是 live 或 verified 標記。"
+)
 _JOURNAL_FILL_STATUSES = frozenset({"filled", "partially_filled"})
 _FILL_ITEM_PRICE_KEYS = ("price", "filled_avg_price", "fill_price", "filled_price")
 _DEAD_PROCESS_EVIDENCE = frozenset({"", "none", "pid_dead", "heartbeat_unverified"})
@@ -32,6 +51,46 @@ _OPEN_ORDER_STATUSES = frozenset(
         "held",
     }
 )
+
+
+def lab_book_dir() -> Path:
+    """Repo-root ``data/`` — Streamlit Kelly / ``portfolio_manager`` book.
+
+    Matches ``backend/agents/portfolio_manager.py`` (``dirname(__file__)/../.. /data``).
+    Do not import that module here (heavy research deps). Fail-cases compare both.
+    """
+    return (Path(__file__).resolve().parents[2] / "data").resolve()
+
+
+def broker_book_dir() -> Path:
+    """``backend/data/`` — Desk journal / ledger / worker (``constants.DATA_DIR``)."""
+    from backend.utils.constants import DATA_DIR
+
+    return Path(DATA_DIR).resolve()
+
+
+def dual_books_split() -> bool:
+    """True while lab Kelly and Desk broker still use different directories."""
+    return lab_book_dir() != broker_book_dir()
+
+
+def dual_book_envelope() -> Dict[str, Any]:
+    """D7-HONESTY envelope. ``design_open`` stays true while dirs remain split.
+
+    Never stamps verified/live. Dual dirs are an intentional lab vs broker split
+    (D7-DESIGN); this payload only labels them.
+    """
+    split = dual_books_split()
+    return {
+        "dual_books": split,
+        "design_open": split,
+        "lab_book_dir": LAB_BOOK_DIR_LABEL,
+        "broker_book_dir": BROKER_BOOK_DIR_LABEL,
+        "disclaimer": DUAL_BOOK_CUE if split else DUAL_BOOK_UNIFIED_CUE,
+        "disclaimer_zh": DUAL_BOOK_CUE_ZH if split else DUAL_BOOK_UNIFIED_CUE_ZH,
+        "verified": False,
+        "live": False,
+    }
 
 
 def worker_process_on(status: Optional[Dict[str, Any]] = None) -> bool:

@@ -16,6 +16,8 @@ from agents.reflection_agent import (
 )
 
 
+# Lab Kelly book (repo data/). Desk broker journal/ledger is backend/data/
+# (utils.constants.DATA_DIR). Dual dirs are intentional — do not silently merge.
 DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "data")
 JOURNAL_PATH = os.path.join(DATA_DIR, "trade_journal.json")
 PORTFOLIO_PATH = os.path.join(DATA_DIR, "portfolio_state.json")

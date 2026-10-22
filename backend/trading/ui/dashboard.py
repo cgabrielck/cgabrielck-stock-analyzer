@@ -98,6 +98,7 @@ def render_trading_dashboard(
         f"<span class='banner-dot'></span>{html.escape(banner_text)}</div>",
         unsafe_allow_html=True,
     )
+    st.warning(t("trading.dual_book", lang))
 
     # ── Tab layout ───────────────────────────────────────────────────────────
     tab_auto, tab_manual, tab_ledger, tab_reconcile = st.tabs([
