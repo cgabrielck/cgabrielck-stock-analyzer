@@ -90,6 +90,8 @@ button, input, select, textarea { font: inherit; color: inherit; }
   background: var(--card); border: 1px solid var(--line); border-radius: 999px;
   padding: 8px 12px; font-size: 13px; color: var(--muted);
 }
+.chip.on { border-color: var(--cyan); color: var(--cyan); }
+.chip.warn { border-color: #e7c36a; color: #e7c36a; }
 .content { padding: 20px 22px 32px; }
 .kpis { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
 .card {
