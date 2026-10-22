@@ -518,23 +518,38 @@ function WatchAdd({ onAdd }: { onAdd: (s: string) => void }) {
 
 function ChartPage({ symbol, setSymbol }: { symbol: string; setSymbol: (s: string) => void }) {
   const [bars, setBars] = useState<any[]>([]);
+  const [meta, setMeta] = useState<{ vendor?: string; asof?: string | null; fallback?: boolean }>({});
   const [err, setErr] = useState("");
   useEffect(() => {
-    api.chart(symbol).then((d) => setBars(d.bars || [])).catch((e) => setErr(e.message));
+    setErr("");
+    api.chart(symbol).then((d) => {
+      setBars(Array.isArray(d.bars) ? d.bars : []);
+      setMeta({ vendor: d.vendor, asof: d.asof, fallback: d.fallback });
+    }).catch((e) => {
+      setBars([]);
+      setMeta({});
+      setErr(e.message);
+    });
   }, [symbol]);
-  const max = Math.max(...bars.map((b) => b.c), 1);
-  const min = Math.min(...bars.map((b) => b.c), 0);
+  const closes = bars.map((b) => b.c).filter((n) => typeof n === "number" && Number.isFinite(n));
+  const max = Math.max(...closes, 1);
+  const min = Math.min(...closes, 0);
   const span = max - min || 1;
+  const vendor = meta.vendor || "none";
+  const asof = meta.asof || "—";
+  const fallback = meta.fallback ? " · Yahoo labeled fallback" : "";
   return (
     <div className="card">
       <div className="row"><h3>Chart</h3><input value={symbol} onChange={(e) => setSymbol(e.target.value.toUpperCase())} /></div>
       {err && <p className="err">{err}</p>}
+      {!err && !closes.length && <p className="muted">No history for this symbol — not a filled series.</p>}
       <div className="bars" style={{ marginTop: 16 }}>
-        {bars.slice(-80).map((b, i) => (
+        {closes.length ? bars.slice(-80).map((b, i) => (
           <div key={i} className="bar" title={`${b.t} ${b.c}`} style={{ height: `${((b.c - min) / span) * 100}%` }} />
-        ))}
+        )) : null}
       </div>
-      <p className="muted">Daily closes · Yahoo. Full drawing tools can come later.</p>
+      <p className="muted">{vendor} · as-of {asof}{fallback}. Daily snapshot. Not live / not verified.</p>
+      <p className="muted">Secondary React page — TradingView-style candles ship on Desk web/static. Not an official TradingView widget. Indicators do not place orders.</p>
     </div>
   );
 }

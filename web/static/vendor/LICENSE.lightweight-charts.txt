@@ -1,0 +1,8 @@
+lightweight-charts v4.2.3
+https://github.com/tradingview/lightweight-charts
+Copyright (c) TradingView, Inc.
+Licensed under the Apache License, Version 2.0
+https://www.apache.org/licenses/LICENSE-2.0
+
+Vendored for Desk Chart (ns-1 v0). Using this Apache-2.0 library is not
+an official TradingView widget, account, or brand integration.
