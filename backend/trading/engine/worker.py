@@ -574,24 +574,26 @@ class TradingWorker:
                 note(ticker, "kill_switch")
                 continue
 
-            # Mandate gate (authorization check before committing capital)
-            # Draft order for notional calc
+            # Mandate symbol / side / daily before sizing. Quantity=1 is only
+            # a pre-check: its notional is NOT the order. A pass here must not
+            # be logged as approval — the sized evaluate below owns that claim.
+            entry_px = positive_price(signal.entry_price)
             draft_for_mandate = Order(
                 id=f"draft-{ticker}",
                 symbol=ticker,
                 side=OrderSide.BUY,
                 order_type=OrderType.LIMIT,
-                quantity=1,  # placeholder — real qty computed next via Kelly
-                limit_price=signal.entry_price,
+                quantity=1,
+                limit_price=entry_px,
                 idempotency_key=f"mandate-check-{ticker}",
             )
-            mandate_decision = self.mandate_gate.evaluate(draft_for_mandate, signal.entry_price)
-            audit.log_mandate_decision(
-                ticker, "buy", mandate_decision.approved, mandate_decision.reason,
-                notional=signal.entry_price,
-            )
+            mandate_decision = self.mandate_gate.evaluate(draft_for_mandate, entry_px)
             if not mandate_decision.approved:
                 reason = mandate_decision.reason or "Mandate rejected this order."
+                audit.log_mandate_decision(
+                    ticker, "buy", False, reason,
+                    notional=entry_px,
+                )
                 if self.mandate_gate.unavailable_reason:
                     self._journal_mandate_file_reject(draft_for_mandate, reason)
                 logger.info("BLOCKED %s: %s", ticker, reason)
@@ -601,6 +603,8 @@ class TradingWorker:
                 continue
 
             # Kelly cap, then ATR / 1R risk units (same formula as backtest).
+            # Invalid stop (missing, <=0, or >= entry) sizes to 0 — do not
+            # invent a 5% stop and submit anyway.
             vix_mult = self.risk_engine.vix_size_multiplier(vix_level)
             qty_kelly = shares_to_buy(
                 portfolio_value=account.portfolio_value * vix_mult,
@@ -613,23 +617,56 @@ class TradingWorker:
                 min_shares=1,
             )
             cash_now = float(getattr(account, "cash", 0.0) or getattr(account, "buying_power", 0.0) or 0.0)
+            try:
+                stop_for_risk = float(signal.stop_loss_price)
+            except (TypeError, ValueError):
+                stop_for_risk = 0.0
             qty_risk = size_shares_by_risk(
                 equity=float(account.portfolio_value) * vix_mult,
                 cash=cash_now,
                 fill_price=float(signal.entry_price),
-                stop_price=float(signal.stop_loss_price or signal.entry_price * 0.95),
+                stop_price=stop_for_risk,
                 risk_pct=float(os.getenv("WORKER_RISK_PCT", "0.01") or 0.01),
                 max_position_pct=float(self.risk_engine.limits.max_position_concentration),
             )
             qty = min(qty_kelly, qty_risk) if qty_kelly > 0 and qty_risk > 0 else 0
-            qty = cap_shares_to_notional(
-                qty,
-                float(signal.entry_price),
-                float(self.risk_engine.limits.max_order_notional),
-            )
+            if entry_px is not None:
+                qty = cap_shares_to_notional(
+                    qty,
+                    float(entry_px),
+                    float(self.risk_engine.limits.max_order_notional),
+                )
+            else:
+                qty = 0
 
             if qty <= 0:
                 note(ticker, "kelly_zero")
+                continue
+
+            # Real qty × entry. A cap that 1 share slips under must still
+            # reject the sized order. Do not hand it to RiskEngine / broker.
+            sized_notional = float(qty) * float(entry_px)
+            sized_for_mandate = Order(
+                id=f"draft-sized-{ticker}",
+                symbol=ticker,
+                side=OrderSide.BUY,
+                order_type=OrderType.LIMIT,
+                quantity=float(qty),
+                limit_price=entry_px,
+                idempotency_key=f"mandate-sized-{ticker}",
+            )
+            sized_decision = self.mandate_gate.evaluate(sized_for_mandate, entry_px)
+            audit.log_mandate_decision(
+                ticker, "buy", sized_decision.approved, sized_decision.reason,
+                notional=sized_notional,
+            )
+            if not sized_decision.approved:
+                reason = sized_decision.reason or "Mandate rejected this order."
+                logger.info("BLOCKED %s: %s", ticker, reason)
+                summary_rows.append({
+                    "ticker": ticker, "action": "BLOCKED", "reason": reason,
+                })
+                note(ticker, "mandate")
                 continue
 
             # Inject extra args for RiskEngine 2.0 via SignalProcessor
@@ -696,7 +733,7 @@ class TradingWorker:
                 if not slot.approved:
                     logger.info("BLOCKED %s: %s", ticker, slot.reason)
                     audit.log_mandate_decision(
-                        ticker, "buy", False, slot.reason, notional=signal.entry_price,
+                        ticker, "buy", False, slot.reason, notional=sized_notional,
                     )
                     summary_rows.append({
                         "ticker": ticker, "action": "BLOCKED",
