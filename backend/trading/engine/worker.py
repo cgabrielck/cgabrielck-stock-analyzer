@@ -26,11 +26,13 @@ from backend.trading.broker import BrokerAdapter
 from backend.trading.engine.order_manager import OrderManager, OrderStore
 from backend.trading.engine.shadow import ShadowTradingEngine
 from backend.trading.engine.signal_processor import JournalWriteError, SignalProcessor
-from backend.trading.engine.stamp import sell_reached_venue, stamp_risk_approved
+from backend.trading.engine.stamp import VENUE_STATUSES, sell_reached_venue, stamp_risk_approved
 from backend.trading.engine.sticky_idempotency import (
+    StickyLookupUnproven,
     clear_sticky,
     detach_if_would_clobber_sticky,
     find_sticky_order,
+    mark_acceptance_unknown,
     pin_sticky,
 )
 from backend.trading.models import Order, OrderSide, OrderStatus, OrderType
@@ -639,11 +641,19 @@ class TradingWorker:
                 and signal.stop_loss_price is not None
                 and signal.take_profit_price is not None
             )
-            sticky_buy = (
-                None
-                if self.execution_mode == "shadow"
-                else find_sticky_order(self.store, symbol=ticker, side="buy")
-            )
+            try:
+                sticky_buy = (
+                    None
+                    if self.execution_mode == "shadow"
+                    else find_sticky_order(self.store, symbol=ticker, side="buy")
+                )
+            except StickyLookupUnproven:
+                logger.error(
+                    "Sticky lookup unproven for %s buy; refusing broker submit.",
+                    ticker,
+                )
+                note(ticker, "sticky_unproven")
+                continue
             if sticky_buy is not None:
                 # Safe retry reuses the 502 key. A new minute-key would be a
                 # second independent submit.
@@ -1265,11 +1275,29 @@ class TradingWorker:
         import uuid
 
         approval_price = positive_price(price)
-        sticky_sell = (
-            None
-            if self.execution_mode == "shadow"
-            else find_sticky_order(self.store, symbol=symbol, side="sell")
-        )
+        try:
+            sticky_sell = (
+                None
+                if self.execution_mode == "shadow"
+                else find_sticky_order(self.store, symbol=symbol, side="sell")
+            )
+        except StickyLookupUnproven as exc:
+            logger.error(
+                "Sticky lookup unproven for %s sell; refusing broker submit.",
+                symbol,
+            )
+            refused = Order(
+                id=str(uuid.uuid4()),
+                symbol=symbol,
+                side=OrderSide.SELL,
+                order_type=OrderType.LIMIT,
+                quantity=quantity,
+                limit_price=approval_price,
+                idempotency_key=f"sell-{symbol}-unproven-{uuid.uuid4()}",
+            )
+            mark_acceptance_unknown(refused, exc)
+            pin_sticky(self.store, refused)
+            return refused
         if sticky_sell is not None:
             idem = sticky_sell.idempotency_key
             sell_id = sticky_sell.id
@@ -1376,7 +1404,19 @@ class TradingWorker:
                     pin_sticky(self.store, result)
             raise JournalWriteError(str(exc), order=result) from exc
 
-        if self.execution_mode != "shadow" and result.status != OrderStatus.ACCEPTANCE_UNKNOWN:
+        replay_landed = (
+            sticky_sell is not None
+            and bool(getattr(sticky_sell, "idempotency_sticky", False))
+            and sticky_sell.status in VENUE_STATUSES
+        )
+        if (
+            self.execution_mode != "shadow"
+            and result.status != OrderStatus.ACCEPTANCE_UNKNOWN
+            and not replay_landed
+        ):
+            # A confirmed venue status from this call may drop the pin.
+            # Replaying an already-landed sticky order must keep it: journal
+            # success is not proof a new key may broker-submit.
             clear_sticky(self.store, result)
 
         audit.log_order_submission(

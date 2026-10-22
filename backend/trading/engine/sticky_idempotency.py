@@ -21,8 +21,12 @@ logger = logging.getLogger(__name__)
 DO_NOT_BLIND_RETRY = "do_not_blind_retry"
 
 # Statuses that mean the HTTP response (or the lack of one) does not prove
-# accept or reject. 409/422 and other 4xx client errors are definite rejects.
+# accept or reject. Other 4xx client errors are definite rejects, except a
+# 422 whose body says client_order_id is already taken: Alpaca does not
+# return the original order, but the id did land.
 UNKNOWN_HTTP_STATUSES = frozenset({408, 500, 502, 503, 504})
+
+_CLIENT_ORDER_CONFLICT_TOKENS = ("unique", "duplicate", "already")
 
 _UNKNOWN_TYPE_TOKENS = (
     "timeout",
@@ -58,6 +62,39 @@ def order_side_value(order: Order) -> str:
     side = getattr(order, "side", "")
     raw = side.value if hasattr(side, "value") else side
     return str(raw or "").lower()
+
+
+class StickyLookupUnproven(RuntimeError):
+    """The store cannot prove that no sticky idempotency key is open.
+
+    A recent-N window is not proof of absence. Callers must not broker-submit
+    a new key when this is raised.
+    """
+
+
+def message_is_client_order_id_conflict(text: Optional[str]) -> bool:
+    """True when the body is Alpaca's duplicate ``client_order_id`` reject.
+
+    Other 422s (insufficient qty, buying power) stay definite rejects.
+    """
+    low = str(text or "").lower()
+    if "client_order_id" not in low:
+        return False
+    return any(token in low for token in _CLIENT_ORDER_CONFLICT_TOKENS)
+
+
+def is_client_order_id_conflict(exc: BaseException) -> bool:
+    """422 unique after a place that may already have landed.
+
+    Alpaca responds ``client_order_id must be unique`` and does not hand
+    back the original order. That is evidence the id was accepted, not a
+    clean reject. A missing status code still matches on the body so a
+    wrapped mid-retry error is not treated as a definite reject.
+    """
+    code = _exception_status_code(exc)
+    if code is not None and code != 422:
+        return False
+    return message_is_client_order_id_conflict(str(exc))
 
 
 def is_acceptance_unknown_exception(exc: BaseException) -> bool:
@@ -209,19 +246,20 @@ def unknown_accept_detail(order: Order, *, journaled: bool = False) -> dict:
 
 
 def _iter_orders(store: Any) -> Iterable[Order]:
-    found = {}
+    """Every order the store can see. Never a recent-N window.
+
+    ``get_recent_orders(1000)`` hides an older sticky row and lets a new
+    key submit again. If the store cannot scan the whole ledger, raise
+    ``StickyLookupUnproven`` so callers fail closed.
+    """
+    scanner = getattr(store, "iter_all_orders", None)
+    if callable(scanner):
+        rows = scanner()
+        return [order for order in (rows or []) if isinstance(order, Order)]
     memory = getattr(store, "_orders_by_id", None)
     if isinstance(memory, dict):
-        for order in memory.values():
-            if isinstance(order, Order):
-                found[order.id] = order
-    getter = getattr(store, "get_recent_orders", None)
-    if callable(getter):
-        try:
-            rows = getter(limit=1000)
-        except TypeError:
-            rows = getter()
-        for order in rows or []:
-            if isinstance(order, Order):
-                found[order.id] = order
-    return list(found.values())
+        return [order for order in memory.values() if isinstance(order, Order)]
+    raise StickyLookupUnproven(
+        "Order store cannot prove a sticky idempotency key is absent "
+        "(no full-ledger scan). Refusing to treat a recent-N window as empty."
+    )

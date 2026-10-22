@@ -35,9 +35,12 @@ from backend.trading.engine.order_manager import OrderManager, OrderStore
 from backend.trading.engine.stamp import VENUE_STATUSES, stamp_risk_approved
 from backend.trading.engine.sticky_idempotency import (
     DO_NOT_BLIND_RETRY,
+    StickyLookupUnproven,
     clear_sticky,
     detach_if_would_clobber_sticky,
     find_sticky_order,
+    is_sticky_open,
+    mark_acceptance_unknown,
     pin_sticky,
     unknown_accept_detail,
 )
@@ -353,10 +356,14 @@ def _replay_sticky_venue(
     store: OrderStore,
     snapshot: MandateSnapshot,
 ) -> DeskPlaceResult:
-    """Journal an already-accepted sticky order. Do not call the broker."""
+    """Journal an already-accepted sticky order. Do not call the broker.
+
+    HTTP 200 here means the journal caught up. The pin stays: clearing it
+    would let a later new key broker-submit a second independent order.
+    """
     journaled, journal_err = _journal_order(sticky, audit_id=None)
     if journaled:
-        clear_sticky(store, sticky)
+        pin_sticky(store, sticky)
         return DeskPlaceResult(
             order=sticky,
             blocked=False,
@@ -434,7 +441,38 @@ def place_desk_order(
     # kill/mandate so the response stays "do not blind-retry", not a new reject.
     safe_unknown_retry = False
     if mode != "shadow":
-        sticky_hold = find_sticky_order(store, symbol=order.symbol, side=side)
+        try:
+            sticky_hold = find_sticky_order(store, symbol=order.symbol, side=side)
+        except StickyLookupUnproven as exc:
+            existing = None
+            getter = getattr(store, "get_order_by_idempotency_key", None)
+            if callable(getter):
+                try:
+                    existing = getter(order.idempotency_key)
+                except Exception:
+                    logger.exception("Sticky key lookup failed for %s", order.idempotency_key)
+                    existing = None
+            if existing is not None and is_sticky_open(existing):
+                sticky_hold = existing
+            else:
+                logger.error(
+                    "Sticky lookup unproven for %s %s; refusing broker submit of %s.",
+                    order.symbol,
+                    side,
+                    order.idempotency_key,
+                )
+                mark_acceptance_unknown(order, exc)
+                pin_sticky(store, order)
+                return DeskPlaceResult(
+                    order=order,
+                    blocked=False,
+                    http_status=502,
+                    detail=unknown_accept_detail(order),
+                    gate="broker",
+                    mandate_status=snapshot.status,
+                    mandate_path=snapshot.path,
+                    journaled=False,
+                )
         if sticky_hold is not None and sticky_hold.idempotency_key != order.idempotency_key:
             return _sticky_blind_result(sticky_hold, store=store, snapshot=snapshot)
         if sticky_hold is not None and sticky_hold.idempotency_key == order.idempotency_key:

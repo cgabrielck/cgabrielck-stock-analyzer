@@ -177,6 +177,48 @@ class TestAlpacaBroker(unittest.TestCase):
         self.assertIsNone(result.filled_avg_price)
         self.assertIn("do not blind-retry", (result.error_message or "").lower())
 
+    def test_ensure_connected_drops_504_from_retry_codes(self):
+        self.mock_api._retry_codes = [429, 504]
+        _ = self.broker.api
+        self.assertEqual(self.broker._api._retry_codes, [429])
+        self.assertNotIn(504, self.broker._api._retry_codes)
+
+    def test_submit_order_422_unique_is_unknown_and_does_not_copy_fill(self):
+        """A mid-retry 422 unique is the first error the adapter sees."""
+        order_to_submit = Order(
+            id="internal_id_422",
+            symbol="AAPL",
+            side=OrderSide.BUY,
+            order_type=OrderType.MARKET,
+            quantity=1,
+            idempotency_key="landed-422",
+        )
+
+        class _Resp:
+            status_code = 422
+
+        class _HTTP:
+            response = _Resp()
+
+        self.broker.api.submit_order.side_effect = APIError(
+            '{"code":42210000,"message":"client_order_id must be unique"}',
+            http_error=_HTTP(),
+        )
+        self.broker.api.get_order_by_client_id.return_value = create_mock_alpaca_object({
+            "id": "broker-landed",
+            "status": "filled",
+            "filled_avg_price": "188.5",
+        })
+        result = self.broker.submit_order(order_to_submit)
+        self.assertEqual(result.status, OrderStatus.ACCEPTANCE_UNKNOWN)
+        self.assertNotEqual(result.status, OrderStatus.REJECTED)
+        self.assertNotEqual(result.status, OrderStatus.FILLED)
+        self.assertTrue(result.idempotency_sticky)
+        self.assertEqual(result.id, "broker-landed")
+        self.assertIsNone(result.filled_avg_price)
+        self.assertIsNone(result.filled_at)
+        self.broker.api.get_order_by_client_id.assert_called_once_with("landed-422")
+
     def test_get_order_found(self):
         """Test retrieving an existing order."""
         now = datetime.now()

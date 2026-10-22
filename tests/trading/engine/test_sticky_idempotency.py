@@ -9,15 +9,28 @@ These tests fail on that main: the new key must not reach the broker.
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
 
 import pytest
+import requests
+from alpaca.common.exceptions import APIError
+from alpaca.trading.client import TradingClient
+from alpaca.trading.enums import OrderSide as AlpacaOrderSide
+from alpaca.trading.enums import TimeInForce
+from alpaca.trading.requests import MarketOrderRequest
 
+from backend.trading.alpaca_broker import disable_unsafe_place_retries
 from backend.trading.engine.desk_orders import place_desk_order, reset_desk_mandate_gate
 from backend.trading.engine.order_manager import InMemoryOrderStore, OrderManager
-from backend.trading.engine.sticky_idempotency import DO_NOT_BLIND_RETRY
+from backend.trading.engine.sticky_idempotency import (
+    DO_NOT_BLIND_RETRY,
+    StickyLookupUnproven,
+    find_sticky_order,
+)
 from backend.trading.models import AccountSummary, Order, OrderSide, OrderStatus, OrderType
 from backend.trading.safety import audit, kill_switch
+from backend.trading.storage import SQLiteOrderStore
 from backend.utils.provenance import journal_store
 
 
@@ -31,9 +44,17 @@ TIGHT = {
 
 
 class Gateway502(Exception):
-    def __init__(self, message: str = "502 Bad Gateway"):
+    def __init__(self, message: str = "502 Bad Gateway", status_code: int = 502):
         super().__init__(message)
-        self.status_code = 502
+        self.status_code = status_code
+
+
+class Unique422(Exception):
+    """Alpaca does not hand back the original order on this body."""
+
+    def __init__(self):
+        super().__init__('{"code":42210000,"message":"client_order_id must be unique"}')
+        self.status_code = 422
 
 
 def _order(**kwargs) -> Order:
@@ -284,3 +305,320 @@ def test_desk_same_key_after_broker_502_is_the_safe_retry(isolated):
     assert second.http_status == 200
     assert second.order.idempotency_key == "fresh-1"
     assert second.order.idempotency_sticky is False
+
+
+def _place(store, broker, mandate, **order_kwargs):
+    return place_desk_order(
+        _order(status=OrderStatus.DRAFT, **order_kwargs),
+        broker=broker,
+        store=store,
+        mandate_path=mandate,
+        quote_fn=lambda _s: 150.0,
+    )
+
+
+@pytest.mark.parametrize("status_code,message", [(502, "502 Bad Gateway"), (504, "504 Gateway Timeout")])
+def test_desk_unknown_then_422_unique_keeps_sticky_and_blocks_fresh_key(isolated, status_code, message):
+    """5f21c71 treated same-key 422 unique as rejected and cleared sticky.
+
+    Desk repro (max_daily_orders=50): 502 → same key → HTTP 400 → fresh-2 HTTP 200,
+    and the broker saw three client_order_ids. The 422 must stay unknown.
+    """
+    keys = []
+
+    def _submit(order):
+        keys.append(order.idempotency_key)
+        if keys.count(order.idempotency_key) == 1:
+            raise Gateway502(message, status_code=status_code)
+        raise Unique422()
+
+    broker = MagicMock()
+    broker.get_account_summary.return_value = _account()
+    broker.submit_order.side_effect = _submit
+    store = InMemoryOrderStore()
+    path = isolated["mandate"]
+
+    first = _place(store, broker, path)
+    assert first.http_status == 502
+    assert first.order.idempotency_sticky is True
+
+    second = _place(store, broker, path, idempotency_key="fresh-1")
+    assert second.http_status == 502
+    assert second.http_status != 400
+    assert second.order.status == OrderStatus.ACCEPTANCE_UNKNOWN
+    assert second.order.status != OrderStatus.REJECTED
+    assert second.order.idempotency_sticky is True
+    assert second.order.filled_avg_price is None
+    assert second.detail["retry"] == DO_NOT_BLIND_RETRY
+    assert second.detail["acceptance"] == "unknown"
+    assert second.detail["idempotency_key"] == "fresh-1"
+
+    third = _place(store, broker, path, id="id-fresh-2", idempotency_key="fresh-2")
+    assert third.http_status == 502
+    assert third.http_status != 200
+    assert "fresh-2" not in keys
+    assert set(keys) == {"fresh-1"}
+    assert third.order.idempotency_key == "fresh-1"
+    assert third.detail["retry"] == DO_NOT_BLIND_RETRY
+    broker.submit_order.assert_called()
+    assert broker.submit_order.call_count == 2
+
+
+def test_first_seen_422_unique_pins_sticky_without_a_prior_502():
+    """alpaca-py can retry a 504 into 422 before we observe the timeout."""
+    keys = []
+
+    def _submit(order):
+        keys.append(order.idempotency_key)
+        if order.idempotency_key == "fresh-1":
+            raise Unique422()
+        order.status = OrderStatus.SUBMITTED
+        return order
+
+    broker = MagicMock()
+    broker.submit_order.side_effect = _submit
+    manager = OrderManager(broker=broker, store=InMemoryOrderStore())
+    first = manager.submit_new_order(_order())
+    assert first.status == OrderStatus.ACCEPTANCE_UNKNOWN
+    assert first.idempotency_sticky is True
+    assert first.filled_avg_price is None
+    second = manager.submit_new_order(_order(id="id-fresh-2", idempotency_key="fresh-2"))
+    assert "fresh-2" not in keys
+    assert second.idempotency_key == "fresh-1"
+    assert broker.submit_order.call_count == 1
+
+
+def test_other_422_is_still_a_definite_reject():
+    keys = []
+
+    def _submit(order):
+        keys.append(order.idempotency_key)
+        err = RuntimeError('{"message": "insufficient qty available"}')
+        err.status_code = 422
+        raise err
+
+    broker = MagicMock()
+    broker.submit_order.side_effect = _submit
+    manager = OrderManager(broker=broker, store=InMemoryOrderStore())
+    first = manager.submit_new_order(_order())
+    assert first.status == OrderStatus.REJECTED
+    assert first.idempotency_sticky is False
+    second = manager.submit_new_order(_order(id="id-fresh-2", idempotency_key="fresh-2"))
+    assert keys == ["fresh-1", "fresh-2"]
+    assert second.status == OrderStatus.REJECTED
+
+
+def test_returned_reject_body_for_unique_client_order_id_stays_sticky():
+    keys = []
+
+    def _submit(order):
+        keys.append(order.idempotency_key)
+        order.status = OrderStatus.REJECTED
+        order.error_message = '{"code":42210000,"message":"client_order_id must be unique"}'
+        return order
+
+    broker = MagicMock()
+    broker.submit_order.side_effect = _submit
+    manager = OrderManager(broker=broker, store=InMemoryOrderStore())
+    first = manager.submit_new_order(_order())
+    assert first.status == OrderStatus.ACCEPTANCE_UNKNOWN
+    assert first.idempotency_sticky is True
+    second = manager.submit_new_order(_order(id="id-fresh-2", idempotency_key="fresh-2"))
+    assert "fresh-2" not in keys
+    assert second.idempotency_key == "fresh-1"
+
+
+def test_desk_journal_late_success_keeps_sticky_so_new_key_cannot_second_submit(isolated, monkeypatch):
+    """Journal catch-up may be HTTP 200 with no broker call. Sticky must stay."""
+    calls = {"n": 0}
+
+    def _journal(*_a, **_k):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("disk full")
+        return {"id": "journal-ok"}
+
+    monkeypatch.setattr("backend.trading.engine.desk_orders.record_from_order", _journal)
+    keys = []
+
+    def _submit(order):
+        keys.append(order.idempotency_key)
+        order.status = OrderStatus.SUBMITTED
+        order.id = "broker-1"
+        return order
+
+    broker = MagicMock()
+    broker.get_account_summary.return_value = _account()
+    broker.submit_order.side_effect = _submit
+    store = InMemoryOrderStore()
+    path = isolated["mandate"]
+
+    first = _place(store, broker, path)
+    assert first.http_status == 502
+    assert first.order.idempotency_sticky is True
+    assert broker.submit_order.call_count == 1
+
+    caught_up = _place(store, broker, path, id="id-fresh-2", idempotency_key="fresh-2")
+    assert caught_up.http_status == 200
+    assert caught_up.order.idempotency_sticky is True
+    assert caught_up.order.idempotency_key == "fresh-1"
+    assert broker.submit_order.call_count == 1
+
+    later = _place(store, broker, path, id="id-fresh-3", idempotency_key="fresh-3")
+    assert broker.submit_order.call_count == 1
+    assert keys == ["fresh-1"]
+    assert later.order.idempotency_key == "fresh-1"
+    assert later.order.idempotency_sticky is True
+    assert "fresh-2" not in keys and "fresh-3" not in keys
+
+
+def test_sqlite_sticky_survives_more_than_1000_newer_orders(tmp_path):
+    base = datetime(2020, 1, 1, tzinfo=timezone.utc)
+    store = SQLiteOrderStore(filepath=str(tmp_path / "orders.sqlite3"))
+    sticky = _order(
+        id="sticky-1",
+        idempotency_key="sticky-key",
+        status=OrderStatus.ACCEPTANCE_UNKNOWN,
+        idempotency_sticky=True,
+    )
+    sticky.updated_at = base
+    sticky.created_at = base
+    store.save_order(sticky)
+    for i in range(1001):
+        other = _order(
+            id=f"other-{i}",
+            symbol="MSFT",
+            idempotency_key=f"other-{i}",
+            status=OrderStatus.SUBMITTED,
+            idempotency_sticky=False,
+        )
+        stamp = base + timedelta(seconds=i + 1)
+        other.updated_at = stamp
+        other.created_at = stamp
+        store.save_order(other)
+
+    recent = store.get_recent_orders(1000)
+    assert all(order.idempotency_key != "sticky-key" for order in recent)
+    found = find_sticky_order(store, symbol="AAPL", side="buy")
+    assert found is not None
+    assert found.idempotency_key == "sticky-key"
+
+    keys = []
+
+    def _submit(order):
+        keys.append(order.idempotency_key)
+        order.status = OrderStatus.SUBMITTED
+        return order
+
+    broker = MagicMock()
+    broker.submit_order.side_effect = _submit
+    manager = OrderManager(broker=broker, store=store)
+    blocked = manager.submit_new_order(
+        _order(id="id-fresh-2", idempotency_key="fresh-2", status=OrderStatus.RISK_APPROVED)
+    )
+    assert keys == []
+    broker.submit_order.assert_not_called()
+    assert blocked.idempotency_key == "sticky-key"
+    store.close()
+
+
+def test_recent_window_store_fails_closed_instead_of_submitting():
+    class RecentOnly:
+        def __init__(self):
+            self.saved = []
+
+        def get_recent_orders(self, limit=50):
+            return []
+
+        def get_order_by_idempotency_key(self, key):
+            return None
+
+        def save_order(self, order):
+            self.saved.append(order)
+
+    broker = MagicMock()
+    manager = OrderManager(broker=broker, store=RecentOnly())
+    result = manager.submit_new_order(_order())
+    broker.submit_order.assert_not_called()
+    assert result.status == OrderStatus.ACCEPTANCE_UNKNOWN
+    assert result.idempotency_sticky is True
+    assert isinstance(result.error_message, str)
+    with pytest.raises(StickyLookupUnproven):
+        find_sticky_order(RecentOnly(), symbol="AAPL", side="buy")
+
+
+def test_desk_unproven_lookup_does_not_broker_submit(isolated):
+    class RecentOnly:
+        def __init__(self):
+            self.saved = []
+
+        def get_recent_orders(self, limit=50):
+            return []
+
+        def get_order_by_idempotency_key(self, key):
+            return None
+
+        def save_order(self, order):
+            self.saved.append(order)
+
+    broker = MagicMock()
+    broker.get_account_summary.return_value = _account()
+    result = _place(RecentOnly(), broker, isolated["mandate"])
+    assert result.http_status == 502
+    assert result.order.idempotency_sticky is True
+    assert result.detail["retry"] == DO_NOT_BLIND_RETRY
+    broker.submit_order.assert_not_called()
+
+
+def _http_response(status_code: int, text: str):
+    class _Resp:
+        def __init__(self):
+            self.status_code = status_code
+            self.text = text
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise requests.HTTPError(response=self)
+
+        def json(self):
+            return {}
+
+    return _Resp()
+
+
+def test_alpaca_py_retries_504_into_422_until_place_retry_is_disabled(monkeypatch):
+    """Installed client auto-POSTs 504. The follow-up can be 422 unique."""
+    monkeypatch.setattr("alpaca.common.rest.time.sleep", lambda *_a, **_k: None)
+    client = TradingClient("k", "s", paper=True)
+    assert 504 in client._retry_codes
+    assert 429 in client._retry_codes
+    posts = {"n": 0}
+
+    def _request(method, url, **_opts):
+        posts["n"] += 1
+        if posts["n"] == 1:
+            return _http_response(504, "gateway timeout")
+        return _http_response(422, '{"code":42210000,"message":"client_order_id must be unique"}')
+
+    monkeypatch.setattr(client._session, "request", _request)
+    req = MarketOrderRequest(
+        symbol="AAPL",
+        qty=1,
+        side=AlpacaOrderSide.BUY,
+        time_in_force=TimeInForce.DAY,
+        client_order_id="landed-1",
+    )
+    with pytest.raises(APIError) as caught:
+        client.submit_order(order_data=req)
+    assert posts["n"] == 2
+    assert caught.value.status_code == 422
+    assert "client_order_id" in str(caught.value)
+
+    posts["n"] = 0
+    disable_unsafe_place_retries(client)
+    assert 504 not in client._retry_codes
+    assert 429 in client._retry_codes
+    with pytest.raises(APIError) as once:
+        client.submit_order(order_data=req)
+    assert posts["n"] == 1
+    assert once.value.status_code == 504

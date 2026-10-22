@@ -153,6 +153,21 @@ class SignalProcessor:
 
         logger.info("Signal Risk-Approved. Forwarding to Order Manager.")
         # Keep RISK_APPROVED from the evaluate above. OrderManager must not invent it.
+        prior = None
+        getter = getattr(self.order_manager.store, "get_order_by_idempotency_key", None)
+        if callable(getter):
+            try:
+                prior = getter(draft_order.idempotency_key)
+            except Exception:
+                logger.exception(
+                    "Sticky prior lookup failed for %s", draft_order.idempotency_key
+                )
+                prior = None
+        replay_landed = (
+            prior is not None
+            and bool(getattr(prior, "idempotency_sticky", False))
+            and prior.status in VENUE_STATUSES
+        )
         result = self.order_manager.submit_new_order(draft_order)
         try:
             self._record_journal(result, signal)
@@ -163,7 +178,9 @@ class SignalProcessor:
             if status_key != "rejected":
                 pin_sticky(self.order_manager.store, result)
             raise
-        if result.status in VENUE_STATUSES:
+        if result.status in VENUE_STATUSES and not replay_landed:
+            # Journal catching up on an already-landed sticky order must not
+            # clear the pin. A fresh venue accept on this call still may.
             clear_sticky(self.order_manager.store, result)
         return result
 

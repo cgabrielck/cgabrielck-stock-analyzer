@@ -82,6 +82,10 @@ class JSONOrderStore:
             sorted_orders = sorted(self._orders_by_id.values(), key=lambda o: o.created_at, reverse=True)
             return sorted_orders[:limit]
 
+    def iter_all_orders(self) -> List[Order]:
+        with self._lock:
+            return list(self._orders_by_id.values())
+
     def export_dicts(self) -> List[dict]:
         with self._lock:
             return [o.model_dump(mode="json") for o in self._orders_by_id.values()]
@@ -163,6 +167,12 @@ class SQLiteOrderStore:
                 "SELECT payload FROM orders ORDER BY updated_at DESC LIMIT ?",
                 (int(limit),),
             ).fetchall()
+        return [Order.model_validate(json.loads(r["payload"])) for r in rows]
+
+    def iter_all_orders(self) -> List[Order]:
+        """Full ledger scan. Sticky lookup must not stop at the recent-N window."""
+        with self._lock:
+            rows = self._conn.execute("SELECT payload FROM orders").fetchall()
         return [Order.model_validate(json.loads(r["payload"])) for r in rows]
 
     def export_dicts(self) -> List[dict]:
@@ -265,6 +275,15 @@ class PostgresOrderStore:
                         """,
                         (int(limit),),
                     )
+                    rows = cur.fetchall()
+        return [Order.model_validate(r[0]) for r in rows]
+
+    def iter_all_orders(self) -> List[Order]:
+        """Full ledger scan. Sticky lookup must not stop at the recent-N window."""
+        with self._lock:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT payload FROM trading_orders")
                     rows = cur.fetchall()
         return [Order.model_validate(r[0]) for r in rows]
 
