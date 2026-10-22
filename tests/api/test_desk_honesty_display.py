@@ -8,8 +8,14 @@ import pytest
 from fastapi.testclient import TestClient
 
 from backend.api.desk_display import (
+    UNPRICED_FILL_LABEL,
     compose_performance_kpis,
     display_chips,
+    is_priced_fill,
+    journal_display_row,
+    journal_status_class,
+    journal_status_label,
+    journal_summary_label,
     orders_book,
     paper_vs_spy_risk,
     strategy_fallback_row,
@@ -430,6 +436,7 @@ def test_plan12e_copy_aligned_between_product_html_and_app_tsx():
         "positiveFillPrice",
         "orderStatusLabel",
         "journalStatusLabel",
+        "journalSummaryLabel",
     ):
         assert phrase in html, phrase
         assert phrase in tsx, phrase
@@ -438,16 +445,122 @@ def test_plan12e_copy_aligned_between_product_html_and_app_tsx():
 def test_plan12e_unpriced_fill_is_not_shown_as_filled_in_ui():
     html = INDEX.read_text(encoding="utf-8")
     tsx = APP_TSX.read_text(encoding="utf-8")
-    assert "function orderStatusLabel" in html
-    assert "function orderStatusLabel" in tsx
-    assert "function positiveFillPrice" in html
-    assert "function positiveFillPrice" in tsx
-    assert 'st==="filled"' in html or 'st === "filled"' in html
-    assert 'st === "filled"' in tsx
-    assert UNPRICED_FILL in html
-    assert UNPRICED_FILL in tsx
-    assert "jnl-status submitted" in html
-    assert "journalStatusLabel" in tsx
+    html_priced = html[html.index("function isPricedFill") : html.index("function orderStatusLabel")]
+    tsx_priced = tsx[tsx.index("function isPricedFill") : tsx.index("function orderStatusLabel")]
+    assert "fills.length" not in html_priced
+    assert "fills.length" not in tsx_priced
+    assert "positiveFillPrice" in html_priced
+    assert "positiveFillPrice" in tsx_priced
+    assert "journalSummaryLabel" in html
+    assert "journalSummaryLabel" in tsx
+
+
+def _unpriced_journal_rows():
+    return [
+        {
+            "schema_version": "trade_log.v0",
+            "log_id": "tl-zero-price",
+            "symbol": "AAPL",
+            "ts": "2026-10-22T12:00:00+00:00",
+            "status": "filled",
+            "kind": "fill",
+            "side": "buy",
+            "qty": 1,
+            "fills": [{"price": 0, "qty": 1}],
+            "user_visible_summary": "filled buy 1 AAPL",
+        },
+        {
+            "schema_version": "trade_log.v0",
+            "log_id": "tl-qty-only",
+            "symbol": "MSFT",
+            "ts": "2026-10-22T12:01:00+00:00",
+            "status": "filled",
+            "kind": "fill",
+            "side": "buy",
+            "qty": 1,
+            "fills": [{"qty": 1}],
+            "user_visible_summary": "filled buy 1 MSFT",
+        },
+        {
+            "schema_version": "trade_log.v0",
+            "log_id": "tl-limit-only",
+            "symbol": "NVDA",
+            "ts": "2026-10-22T12:02:00+00:00",
+            "status": "filled",
+            "kind": "fill",
+            "side": "buy",
+            "qty": 2,
+            "fills": [{"limit_price": 100, "qty": 2}],
+            "user_visible_summary": "filled buy 2 NVDA",
+        },
+        {
+            "schema_version": "trade_log.v0",
+            "log_id": "tl-empty-fills",
+            "symbol": "GOOG",
+            "ts": "2026-10-22T12:03:00+00:00",
+            "status": "filled",
+            "kind": "fill",
+            "side": "buy",
+            "qty": 1,
+            "fills": [],
+            "user_visible_summary": "filled buy 1 GOOG",
+        },
+    ]
+
+
+def test_plan12e_unpriced_fills_array_is_not_journal_filled():
+    """Fail-case: zero / missing / limit-only fills[] must not render as filled."""
+    for raw in _unpriced_journal_rows():
+        assert is_priced_fill(raw) is False
+        shown = journal_display_row(raw)
+        assert journal_status_label(raw) == UNPRICED_FILL_LABEL
+        assert shown["display_status"] == UNPRICED_FILL_LABEL
+        assert shown["display_status"] != "filled"
+        assert journal_status_class(raw) == "submitted"
+        assert shown["display_status_class"] == "submitted"
+        assert shown["display_status_class"] != "filled"
+        assert "filled" not in shown["user_visible_summary"].lower()
+        assert UNPRICED_FILL_LABEL in shown["user_visible_summary"]
+        assert shown.get("kind") != "fill"
+        assert journal_summary_label(raw) == UNPRICED_FILL_LABEL
+
+
+def test_plan12e_priced_fills_array_still_shows_filled():
+    raw = {
+        "status": "filled",
+        "kind": "fill",
+        "fills": [{"price": 12.5, "qty": 1}],
+        "user_visible_summary": "filled buy 1 AAPL",
+    }
+    shown = journal_display_row(raw)
+    assert is_priced_fill(raw) is True
+    assert shown["display_status"] == "filled"
+    assert shown["display_status_class"] == "filled"
+    assert shown["user_visible_summary"] == "filled buy 1 AAPL"
+    assert shown.get("kind") == "fill"
+
+
+def test_plan12e_journal_api_unpriced_fills_not_shown_filled(honesty_api, tmp_path, monkeypatch):
+    import json
+
+    from backend.utils.provenance import journal_store
+
+    path = tmp_path / "trade_journal.json"
+    path.write_text(json.dumps({"schema_version": "trade_log.v0", "entries": _unpriced_journal_rows()}), encoding="utf-8")
+    monkeypatch.setattr(journal_store, "JOURNAL_PATH", path)
+    res = honesty_api["client"].get("/api/journal")
+    assert res.status_code == 200, res.text
+    body = res.json()
+    by_id = {row.get("log_id"): row for row in body["entries"]}
+    for raw in _unpriced_journal_rows():
+        row = by_id.get(raw["log_id"])
+        assert row is not None, raw["log_id"]
+        assert row["display_status"] == UNPRICED_FILL_LABEL
+        assert row["display_status_class"] == "submitted"
+        assert "filled" not in str(row.get("user_visible_summary") or "").lower()
+        assert row.get("kind") != "fill"
+        assert row.get("verified") is not True
+        assert (row.get("provenance") or {}).get("live") is not True
 
 
 def test_plan12e_guide_api_desk_is_paper_book_not_live(honesty_api):

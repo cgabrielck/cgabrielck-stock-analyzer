@@ -73,6 +73,9 @@ def build_journal_response(
         if looks_like_verified_fake(entry.get("provenance")):
             entry["provenance"]["verified"] = False
             entry["provenance"]["live"] = False
+    from backend.api.desk_display import journal_display_row
+
+    entries = [journal_display_row(entry) for entry in entries]
     return {
         "schema_version": TRADE_LOG_SCHEMA,
         "entries": entries,

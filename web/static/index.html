@@ -689,19 +689,33 @@ function workerProcessOn(w){
   if(w.display && w.display.auto_on===false) return false;
   return !!w.running;
 }
-function positiveFillPrice(o){
-  if(!o) return null;
-  const raw = o.filled_avg_price ?? o.fill_price ?? o.filled_price;
+function fillItemPrice(item){
+  if(!item || typeof item!=="object") return null;
+  const raw = item.price ?? item.filled_avg_price ?? item.fill_price ?? item.filled_price;
+  if(typeof raw==="boolean") return null;
   const n = Number(raw);
   return (raw!=null && raw!=="" && !isNaN(n) && n>0) ? n : null;
 }
+function positiveFillPrice(o){
+  if(!o) return null;
+  const raw = o.filled_avg_price ?? o.fill_price ?? o.filled_price;
+  if(typeof raw!=="boolean"){
+    const n = Number(raw);
+    if(raw!=null && raw!=="" && !isNaN(n) && n>0) return n;
+  }
+  const fills = (o.fills)||[];
+  for(const item of fills){
+    const px = fillItemPrice(item);
+    if(px!=null) return px;
+  }
+  return null;
+}
 function isPricedFill(e){
-  const fills = (e && e.fills) || [];
-  return fills.length>0 || positiveFillPrice(e)!=null;
+  return positiveFillPrice(e)!=null;
 }
 function orderStatusLabel(o){
   const st = String(o && o.status || "").toLowerCase();
-  if((st==="filled" || st==="partially_filled") && positiveFillPrice(o)==null){
+  if((st==="filled" || st==="partially_filled") && !isPricedFill(o)){
     return t("orders.unpriced");
   }
   return (o && o.status) ? String(o.status) : "—";
@@ -721,6 +735,16 @@ function journalStatusClass(e){
   const st = String(e && e.status || "").toLowerCase();
   if((st==="filled" || st==="partially_filled") && !isPricedFill(e)) return "jnl-status submitted";
   return "jnl-status "+String(e && e.status || "");
+}
+function journalSummaryLabel(e){
+  const summary = String((e && (e.user_visible_summary||e.note)) || "").trim();
+  const st = String(e && e.status || "").toLowerCase();
+  if((st!=="filled" && st!=="partially_filled") || isPricedFill(e)) return summary || "—";
+  if(!summary) return t("orders.unpriced");
+  const low = summary.toLowerCase();
+  if(low.indexOf("unpriced")>=0) return summary;
+  if(low.indexOf("filled")>=0) return t("orders.unpriced");
+  return summary+" · "+t("orders.unpriced");
 }
 function mandateGap(ops){
   const st = ops && ops.mandate_status;
@@ -1820,7 +1844,7 @@ async function journal(kind){
         <td>${e.qty?esc(String(e.qty)): "—"}</td>
         <td class="${esc(journalStatusClass(e))}">${esc(journalStatusLabel(e))}</td>
         <td><div class="jnl-codes">${(e.reason_codes||[]).map(c=>`<span class="jnl-code">${esc(c)}</span>`).join("")||"—"}</div></td>
-        <td>${esc(e.user_visible_summary||e.note||"—")}</td>
+        <td>${esc(journalSummaryLabel(e))}</td>
         <td>${journalProvChip(e.provenance)}</td>
         <td>${journalAuditLink(e)}</td>
       </tr>`).join("");

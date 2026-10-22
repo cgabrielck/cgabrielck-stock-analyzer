@@ -66,18 +66,32 @@ function kpiSourceLabel(perf: any) {
 function ordersBookDirty(book: any) {
   return !!(book?.degraded || book?.unverified || book?.source === "local_store");
 }
-function positiveFillPrice(o: any): number | null {
-  const raw = o?.filled_avg_price ?? o?.fill_price ?? o?.filled_price;
+function fillItemPrice(item: any): number | null {
+  if (!item || typeof item !== "object") return null;
+  const raw = item.price ?? item.filled_avg_price ?? item.fill_price ?? item.filled_price;
+  if (typeof raw === "boolean") return null;
   const n = Number(raw);
   return raw != null && raw !== "" && !Number.isNaN(n) && n > 0 ? n : null;
 }
+function positiveFillPrice(o: any): number | null {
+  if (!o) return null;
+  const raw = o.filled_avg_price ?? o.fill_price ?? o.filled_price;
+  if (typeof raw !== "boolean") {
+    const n = Number(raw);
+    if (raw != null && raw !== "" && !Number.isNaN(n) && n > 0) return n;
+  }
+  for (const item of o.fills || []) {
+    const px = fillItemPrice(item);
+    if (px != null) return px;
+  }
+  return null;
+}
 function isPricedFill(e: any) {
-  const fills = e?.fills || [];
-  return fills.length > 0 || positiveFillPrice(e) != null;
+  return positiveFillPrice(e) != null;
 }
 function orderStatusLabel(o: any) {
   const st = String(o?.status || "").toLowerCase();
-  if ((st === "filled" || st === "partially_filled") && positiveFillPrice(o) == null) {
+  if ((st === "filled" || st === "partially_filled") && !isPricedFill(o)) {
     return "unpriced — not a fill";
   }
   return o?.status ? String(o.status) : "—";
@@ -92,6 +106,18 @@ function journalStatusLabel(e: any) {
     return "unpriced — not a fill";
   }
   return e?.status ? String(e.status) : "—";
+}
+function journalSummaryLabel(e: any) {
+  const summary = String(e?.user_visible_summary || e?.note || "").trim();
+  const st = String(e?.status || "").toLowerCase();
+  if ((st !== "filled" && st !== "partially_filled") || isPricedFill(e)) {
+    return summary || "—";
+  }
+  if (!summary) return "unpriced — not a fill";
+  const low = summary.toLowerCase();
+  if (low.includes("unpriced")) return summary;
+  if (low.includes("filled")) return "unpriced — not a fill";
+  return `${summary} · unpriced — not a fill`;
 }
 function mandateGap(ops: any) {
   const st = ops?.mandate_status;
@@ -614,7 +640,7 @@ function Journal() {
               <td>{e.qty || "—"}</td>
               <td>{journalStatusLabel(e)}</td>
               <td>{(e.reason_codes || []).join(" · ") || "—"}</td>
-              <td>{e.user_visible_summary || e.note || "—"}</td>
+              <td>{journalSummaryLabel(e)}</td>
               <td>{e.provenance?.source || "unknown"} · unverified</td>
               <td>{e.links?.audit_ref ? "open" : "—"}</td>
             </tr>

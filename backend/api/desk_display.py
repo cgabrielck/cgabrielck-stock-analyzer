@@ -8,7 +8,12 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from backend.trading.fill_honesty import honest_order_row
+from backend.trading.fill_honesty import honest_order_row, recorded_fill_price
+from backend.trading.risk.gates import positive_price
+
+UNPRICED_FILL_LABEL = "unpriced — not a fill"
+_JOURNAL_FILL_STATUSES = frozenset({"filled", "partially_filled"})
+_FILL_ITEM_PRICE_KEYS = ("price", "filled_avg_price", "fill_price", "filled_price")
 
 
 def display_chips(status: Optional[Dict[str, Any]] = None, *, account_loaded: bool = False) -> Dict[str, Any]:
@@ -160,3 +165,88 @@ def strategy_fallback_row(perf: Optional[Dict[str, Any]]) -> Optional[Dict[str, 
             "max_dd": backtest.get("max_drawdown_pct"),
         }
     return None
+
+
+def _fill_item_price(item: Any) -> Optional[float]:
+    """Price on one fills[] object. Never reads limit_price / entry / mark."""
+    if not isinstance(item, dict):
+        return None
+    for key in _FILL_ITEM_PRICE_KEYS:
+        raw = item.get(key)
+        if isinstance(raw, bool):
+            continue
+        px = positive_price(raw)
+        if px is not None:
+            return px
+    return None
+
+
+def display_fill_price(row: Optional[Dict[str, Any]]) -> Optional[float]:
+    """Same contract as the Desk JS ``positiveFillPrice``.
+
+    Top-level recorded fill, else any ``fills[].price`` > 0. Zero, missing,
+    and ``limit_price`` are not a fill.
+    """
+    if not row:
+        return None
+    px = recorded_fill_price(row)
+    if px is not None:
+        return px
+    for item in row.get("fills") or []:
+        nested = _fill_item_price(item)
+        if nested is not None:
+            return nested
+    return None
+
+
+def is_priced_fill(row: Optional[Dict[str, Any]]) -> bool:
+    """Non-empty ``fills`` is not enough. Requires a numeric price > 0."""
+    return display_fill_price(row) is not None
+
+
+def journal_status_label(row: Optional[Dict[str, Any]]) -> str:
+    row = row or {}
+    st = str(row.get("status") or "").lower()
+    if st in _JOURNAL_FILL_STATUSES and not is_priced_fill(row):
+        return UNPRICED_FILL_LABEL
+    return str(row.get("status") or "—")
+
+
+def journal_status_class(row: Optional[Dict[str, Any]]) -> str:
+    """CSS token after ``jnl-status``. Unpriced fills must not be mint ``filled``."""
+    row = row or {}
+    st = str(row.get("status") or "").lower()
+    if st in _JOURNAL_FILL_STATUSES and not is_priced_fill(row):
+        return "submitted"
+    return st
+
+
+def journal_summary_label(row: Optional[Dict[str, Any]]) -> str:
+    """Do not leave summary saying filled while status shows unpriced."""
+    row = row or {}
+    summary = str(row.get("user_visible_summary") or row.get("note") or "").strip()
+    st = str(row.get("status") or "").lower()
+    if st not in _JOURNAL_FILL_STATUSES or is_priced_fill(row):
+        return summary
+    if not summary:
+        return UNPRICED_FILL_LABEL
+    low = summary.lower()
+    if "unpriced" in low:
+        return summary
+    if "filled" in low:
+        return UNPRICED_FILL_LABEL
+    return f"{summary} · {UNPRICED_FILL_LABEL}"
+
+
+def journal_display_row(row: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Display overlay for GET /api/journal. Does not write the fill ledger."""
+    data = dict(row or {})
+    priced = is_priced_fill(data)
+    st = str(data.get("status") or "").lower()
+    unpriced_fill = st in _JOURNAL_FILL_STATUSES and not priced
+    data["display_status"] = journal_status_label(data)
+    data["display_status_class"] = journal_status_class(data)
+    data["user_visible_summary"] = journal_summary_label(data)
+    if unpriced_fill:
+        data["kind"] = "order"
+    return data
