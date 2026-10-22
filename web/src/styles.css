@@ -82,6 +82,15 @@ button, input, select, textarea { font: inherit; color: inherit; }
   display: flex; align-items: center; gap: 12px;
   padding: 16px 22px; border-bottom: 1px solid var(--line);
 }
+.books-banner {
+  margin: 0;
+  padding: 8px 22px;
+  border-bottom: 1px solid rgba(231, 195, 106, 0.45);
+  background: rgba(231, 195, 106, 0.08);
+  color: #e8b86d;
+  font-size: 12px;
+  line-height: 1.45;
+}
 .search {
   flex: 1; max-width: 520px; background: var(--card); border: 1px solid var(--line);
   border-radius: 999px; padding: 10px 16px;

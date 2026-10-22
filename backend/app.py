@@ -431,6 +431,7 @@ def build_sidebar() -> Dict[str, Any]:
         st.sidebar.caption(t("sidebar.llm_hint", selected_lang))
 
     st.sidebar.markdown(f'<div class="sidebar-section">{t("portfolio.title", selected_lang)}</div>', unsafe_allow_html=True)
+    st.sidebar.caption(t("portfolio.dual_book", selected_lang))
     portfolio_capital = st.sidebar.number_input(
         t("portfolio.capital", selected_lang),
         min_value=1000, max_value=10_000_000, value=100_000, step=10_000,
@@ -2165,6 +2166,7 @@ def render_home_tab(lang: str) -> None:
         if st.button(t("landing.trading_action", lang), type="secondary", width="stretch", key="landing_trading"):
             st.session_state.app_route = "trading"
             st.rerun()
+    st.warning(t("portfolio.dual_book", lang))
     st.markdown(
         f"<div class='proof-strip'><div class='proof-item'><div class='proof-value'>{len(STOCK_UNIVERSE)}</div><div class='proof-label'>{t('landing.stocks', lang)}</div></div>"
         f"<div class='proof-item'><div class='proof-value'>14</div><div class='proof-label'>{t('landing.sectors', lang)}</div></div>"
@@ -2819,6 +2821,7 @@ def render_backtest_tab(selected_tickers: Optional[List[str]] = None) -> None:
 
 def render_portfolio_tab() -> None:
     lang = st.session_state.get("lang", "zh_tw")
+    st.warning(t("portfolio.dual_book", lang))
     portfolio = st.session_state.get("portfolio", {})
     if not portfolio or not portfolio.get("positions"):
         st.info(t("portfolio.no_data", lang))
@@ -3009,6 +3012,7 @@ def render_trading_page(lang: str) -> None:
             f"{html.escape(t('trading.not_configured.hint', lang))}</div></div>",
             unsafe_allow_html=True,
         )
+        st.warning(t("trading.dual_book", lang))
         return
 
     try:

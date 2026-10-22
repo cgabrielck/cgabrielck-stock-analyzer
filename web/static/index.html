@@ -91,6 +91,10 @@
     .banner.off { border-color:rgba(231,195,106,.35); background:rgba(231,195,106,.08); }
     .banner.warn { border-color:rgba(231,195,106,.6); }
     .banner h2 { margin:0 0 6px; font-size:16px; }
+    .books-banner {
+      margin:0; padding:8px 16px; border-bottom:1px solid rgba(231,195,106,.45);
+      background:rgba(231,195,106,.08); color:#e8b86d; font-size:12px; line-height:1.45;
+    }
     .status-dot { width:8px; height:8px; border-radius:50%; display:inline-block; margin-right:6px; background:var(--muted); }
     .status-dot.on { background:var(--mint); box-shadow:0 0 8px var(--mint); }
     .guide-step { border:1px solid var(--line); border-radius:14px; padding:14px; margin-bottom:10px; background:#0b1820; }
@@ -232,6 +236,7 @@
       <button class="icon-btn" id="helpBtn" title="Guide">?</button>
       <button class="btn ghost" id="refresh" data-i18n="btn.refresh">Refresh</button>
     </header>
+    <div class="books-banner" id="booksBanner" data-i18n="desk.books">Two books, two directories. Desk broker journal/ledger is backend/data/. Streamlit Kelly/lab portfolio is data/. They are not the same book.</div>
     <div class="content" id="root"><p class="muted">Loading Cgab…</p></div>
   </section>
 </div>
@@ -375,6 +380,7 @@ const I18N = {
     "research.no_order":"Not an order. LLM cannot bypass RiskEngine.",
     "desk.holdings":"Holdings — broker inventory",
     "desk.holdings.hint":"Alpaca Paper real book (not a model portfolio)",
+    "desk.books":"Two books, two directories. Desk broker journal/ledger is backend/data/. Streamlit Kelly/lab portfolio is data/. They are not the same book.",
     "desk.empty":"No positions yet — paper auto only fills when a signal passes every gate.",
     "desk.ticket":"Trade ticket",
     "desk.open":"Open orders",
@@ -428,7 +434,7 @@ const I18N = {
     "t1.t":"Three sidebar groups",
     "t1.b":"Navigation is the daily workspace. Apps is where you start the AI worker. More has the trade journal and written guide.",
     "t2.t":"Desk is the paper book",
-    "t2.b":"Equity and holdings come from Alpaca paper. An empty table means no fills yet — not a broken screen.",
+    "t2.b":"Equity and holdings come from Alpaca paper. An empty table means no fills yet — not a broken screen. Two books, two directories. Desk broker journal/ledger is backend/data/. Streamlit Kelly/lab portfolio is data/. They are not the same book.",
     "t3.t":"Start paper auto in AI Mode",
     "t3.b":"Saving sliders does not start the bot. Press Start paper auto. AUTO ON means the worker process is running (live pid, heartbeat not stale) — not an unverified heartbeat.",
     "t4.t":"Why you may see no trades",
@@ -574,6 +580,7 @@ const I18N = {
     "research.no_order":"不是下單。LLM 不能繞過風控。",
     "desk.holdings":"持倉 — 券商帳本",
     "desk.holdings.hint":"Alpaca 模擬盤真實持倉（不是模型組合）",
+    "desk.books":"兩本帳、兩個目錄。Desk 券商日誌／帳本在 backend/data/。Streamlit Kelly／實驗室組合在 data/。兩者不是同一本帳。",
     "desk.empty":"尚無持倉 — 紙上自動交易只有訊號通過所有關卡才會成交。",
     "desk.ticket":"下單",
     "desk.open":"未成交訂單",
@@ -627,7 +634,7 @@ const I18N = {
     "t1.t":"側欄三個分組",
     "t1.b":"導覽是日常工作區。應用用來啟動 AI 工作行程。更多裡面有交易日誌與完整教學。",
     "t2.t":"工作台是模擬帳本",
-    "t2.b":"權益與持倉來自 Alpaca 模擬帳戶。表格空白代表還沒成交，不是畫面壞掉。",
+    "t2.b":"權益與持倉來自 Alpaca 模擬帳戶。表格空白代表還沒成交，不是畫面壞掉。兩本帳、兩個目錄。Desk 券商日誌／帳本在 backend/data/。Streamlit Kelly／實驗室組合在 data/。兩者不是同一本帳。",
     "t3.t":"在 AI 模式啟動自動交易",
     "t3.b":"只儲存參數不會啟動機器人。請按「啟動紙上自動交易」。AUTO ON 代表工作行程進程在跑（有活 PID 且心跳未過期），不是未驗證心跳。",
     "t4.t":"為什麼可能沒有成交",
@@ -1000,6 +1007,7 @@ async function desk(){
       <div class="card">
         <h3>${t("desk.holdings")}</h3>
         <p class="muted">${t("desk.holdings.hint")}</p>
+        <p class="muted">${t("desk.books")}</p>
         <table><thead><tr><th>Symbol</th><th>Qty</th><th>Avg</th><th>Last</th><th>Mkt</th><th>Unreal</th><th>Wgt</th><th></th></tr></thead>
         <tbody>${pos.length?pos.map(p=>{
           const w=eq&&p.market_value?((100*p.market_value/eq).toFixed(1)+"%"):"—";
@@ -1088,6 +1096,7 @@ async function orders(){
   const rows = d.orders||[];
   const dirty = !!(d.degraded || d.unverified || d.source==="local_store");
   root.innerHTML = `<div class="card"><h3>${t("page.orders")}</h3>
+    <p class="muted">${t("desk.books")}</p>
     <p class="muted">${t("desk.open.hint")}</p>
     ${dirty?`<p class="muted" style="color:#e8b86d">${t("orders.degraded",{source: d.source||"local_store"})}</p>`:""}
     <table><thead><tr><th>Symbol</th><th>Side</th><th>Qty</th><th>Limit</th><th>${t("orders.fill")}</th><th>Type</th><th>Status</th></tr></thead>
@@ -1869,6 +1878,7 @@ async function journal(kind){
         <td>${journalAuditLink(e)}</td>
       </tr>`).join("");
   root.innerHTML = `<div class="card"><h3>${t("page.journal")}</h3>
+    <p class="muted">${esc(t("desk.books"))}</p>
     <p class="muted">${esc(disc)}</p>
     <div class="row" style="margin:10px 0">${filters}</div>
     <div class="row"><input id="js" value="AAPL" style="width:90px" /><input id="jn" placeholder="${t("journal.note_ph")}" style="flex:1" /><button class="btn" id="ja">${t("journal.add")}</button></div>

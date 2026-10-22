@@ -1,4 +1,4 @@
-"""Slice D D4–D6: fail-cases for dishonest Desk labels and silent fallback."""
+"""Slice D D4–D7: fail-cases for dishonest Desk labels and silent fallback."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -8,18 +8,26 @@ import pytest
 from fastapi.testclient import TestClient
 
 from backend.api.desk_display import (
+    BROKER_BOOK_DIR_LABEL,
+    DUAL_BOOK_CUE,
+    DUAL_BOOK_CUE_ZH,
     KPI_EMPTY_CUE,
+    LAB_BOOK_DIR_LABEL,
     LOCAL_ORDER_CUE,
     UNPRICED_FILL_LABEL,
+    broker_book_dir,
     compose_performance_kpis,
     desk_kpi_source_label,
     display_chips,
+    dual_book_envelope,
+    dual_books_split,
     is_priced_fill,
     journal_display_audit,
     journal_display_row,
     journal_status_class,
     journal_status_label,
     journal_summary_label,
+    lab_book_dir,
     order_display_status,
     orders_book,
     paper_vs_spy_risk,
@@ -34,6 +42,11 @@ ROOT = Path(__file__).resolve().parents[2]
 INDEX = ROOT / "web" / "static" / "index.html"
 APP_TSX = ROOT / "web" / "src" / "App.tsx"
 USER_GUIDE = ROOT / "docs" / "CGAB_USER_GUIDE.md"
+I18N = ROOT / "backend" / "i18n.py"
+STREAMLIT_APP = ROOT / "backend" / "app.py"
+DASHBOARD = ROOT / "backend" / "trading" / "ui" / "dashboard.py"
+PORTFOLIO_MANAGER = ROOT / "backend" / "agents" / "portfolio_manager.py"
+CONSTANTS = ROOT / "backend" / "utils" / "constants.py"
 
 
 # --- D4: Worker linked chip -------------------------------------------------
@@ -758,6 +771,7 @@ def test_plan12e_copy_aligned_between_product_html_and_app_tsx():
     tsx = APP_TSX.read_text(encoding="utf-8")
     for phrase in (
         HOLDINGS_HINT,
+        DUAL_BOOK_CUE,
         EMPTY_POSITIONS,
         OPEN_ORDERS_HINT,
         UNPRICED_FILL,
@@ -1381,3 +1395,121 @@ def test_plan12e_journal_disclaimer_matches_ui_lead(honesty_api):
     assert "recorded fill price" in body["disclaimer"].lower()
     assert body.get("verified") is not True
     assert body.get("live") is not True
+
+
+# --- D7: dual-book honesty (Kelly/lab data/ ≠ Desk broker backend/data/) ---
+
+
+def test_d7_source_dirs_remain_split():
+    """D7-DESIGN still OPEN: two writers, two directories."""
+    from backend.agents.portfolio_manager import DATA_DIR as lab
+    from backend.utils.constants import DATA_DIR as broker
+
+    assert Path(lab).resolve() != Path(broker).resolve()
+    assert lab_book_dir() == Path(lab).resolve()
+    assert broker_book_dir() == Path(broker).resolve()
+    assert dual_books_split() is True
+    pm = PORTFOLIO_MANAGER.read_text(encoding="utf-8")
+    const = CONSTANTS.read_text(encoding="utf-8")
+    assert '"..", "..", "data"' in pm
+    assert 'os.path.dirname(os.path.dirname(__file__)), "data"' in const
+    assert "do not silently merge" in pm.lower()
+
+
+def test_d7_holdings_hint_is_not_the_dual_book_banner():
+    """D14 PASS copy must not be treated as D7-HONESTY."""
+    assert "backend/data/" not in HOLDINGS_HINT
+    assert HOLDINGS_HINT != DUAL_BOOK_CUE
+    assert "two directories" not in HOLDINGS_HINT.lower()
+    assert "not the same book" not in HOLDINGS_HINT.lower()
+
+
+def test_d7_honesty_surface_cannot_disappear_while_dirs_split():
+    """Fail-case: removing the dual-book warning while dirs remain split."""
+    assert dual_books_split() is True
+    html = INDEX.read_text(encoding="utf-8")
+    tsx = APP_TSX.read_text(encoding="utf-8")
+    i18n = I18N.read_text(encoding="utf-8")
+    guide = USER_GUIDE.read_text(encoding="utf-8")
+    streamlit = STREAMLIT_APP.read_text(encoding="utf-8")
+    dash = DASHBOARD.read_text(encoding="utf-8")
+    for blob, label in (
+        (html, "index.html"),
+        (tsx, "App.tsx"),
+        (i18n, "i18n.py"),
+        (guide, "CGAB_USER_GUIDE.md"),
+    ):
+        assert DUAL_BOOK_CUE in blob, label
+        assert LAB_BOOK_DIR_LABEL.rstrip("/") in blob, label
+        assert BROKER_BOOK_DIR_LABEL in blob, label
+        assert "not the same book" in blob.lower(), label
+    assert 'id="booksBanner"' in html
+    assert 'id="booksBanner"' in tsx
+    assert 'data-i18n="desk.books"' in html
+    assert html.index('id="booksBanner"') < html.index('id="root"')
+    assert tsx.index('id="booksBanner"') < tsx.index('{page === "desk"')
+    assert DUAL_BOOK_CUE_ZH in html
+    assert DUAL_BOOK_CUE_ZH in i18n
+    assert DUAL_BOOK_CUE_ZH in guide
+    assert 't("portfolio.dual_book"' in streamlit
+    assert "st.warning(t(\"portfolio.dual_book\"" in streamlit
+    assert "st.warning(t(\"trading.dual_book\"" in streamlit
+    assert "st.warning(t(\"trading.dual_book\"" in dash
+    assert i18n.count('"portfolio.dual_book"') == 3
+    assert i18n.count('"trading.dual_book"') == 3
+
+
+def test_d7_api_envelope_when_dirs_split(honesty_api):
+    env = dual_book_envelope()
+    assert env["dual_books"] is True
+    assert env["design_open"] is True
+    assert env["lab_book_dir"] == LAB_BOOK_DIR_LABEL
+    assert env["broker_book_dir"] == BROKER_BOOK_DIR_LABEL
+    assert env["disclaimer"] == DUAL_BOOK_CUE
+    assert env["disclaimer_zh"] == DUAL_BOOK_CUE_ZH
+    assert env["verified"] is False
+    assert env["live"] is False
+
+    ops = honesty_api["client"].get("/api/ops")
+    assert ops.status_code == 200, ops.text
+    books = ops.json()["books"]
+    assert books["dual_books"] is True
+    assert books["disclaimer"] == DUAL_BOOK_CUE
+    assert books.get("verified") is not True
+    assert books.get("live") is not True
+    assert ops.json().get("verified") is not True
+    assert ops.json().get("live") is not True
+
+    journal = honesty_api["client"].get("/api/journal")
+    assert journal.status_code == 200, journal.text
+    body = journal.json()
+    assert body["books"]["dual_books"] is True
+    assert body["books"]["disclaimer"] == DUAL_BOOK_CUE
+    assert body.get("verified") is not True
+    assert body.get("live") is not True
+
+    guide = honesty_api["client"].get("/api/guide")
+    assert guide.status_code == 200, guide.text
+    steps = guide.json()["steps"]
+    books_step = next(step for step in steps if step["id"] == "books")
+    assert DUAL_BOOK_CUE in books_step["en"]["body"]
+    assert DUAL_BOOK_CUE_ZH in books_step["zh"]["body"]
+    desk = next(step for step in steps if step["id"] == "desk")
+    assert DUAL_BOOK_CUE in desk["en"]["body"]
+    assert DUAL_BOOK_CUE_ZH in desk["zh"]["body"]
+
+
+def test_d7_unified_dirs_must_not_keep_claiming_two_books(monkeypatch, tmp_path):
+    """If dirs later merge, the envelope must stop claiming a split."""
+    from backend.api import desk_display as dd
+
+    monkeypatch.setattr(dd, "lab_book_dir", lambda: tmp_path.resolve())
+    monkeypatch.setattr(dd, "broker_book_dir", lambda: tmp_path.resolve())
+    assert dd.dual_books_split() is False
+    env = dd.dual_book_envelope()
+    assert env["dual_books"] is False
+    assert env["design_open"] is False
+    assert env["disclaimer"] != DUAL_BOOK_CUE
+    assert "not the same book" not in env["disclaimer"].lower()
+    assert env["verified"] is False
+    assert env["live"] is False

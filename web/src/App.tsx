@@ -149,6 +149,7 @@ function mandateGap(ops: any) {
   return `Mandate ${st} — Desk and paper worker fail-closed until mandate.json loads.`;
 }
 
+const DUAL_BOOK_CUE = "Two books, two directories. Desk broker journal/ledger is backend/data/. Streamlit Kelly/lab portfolio is data/. They are not the same book.";
 const HOLDINGS_HINT = "Alpaca Paper real book (not a model portfolio)";
 const EMPTY_POSITIONS = "No positions yet — paper auto only fills when a signal passes every gate.";
 const OPEN_ORDERS_HINT = "new / accepted = sent to the broker, not filled yet. The limit must trade before shares hit the book.";
@@ -236,6 +237,7 @@ export default function App() {
           <span className="chip">{money(account?.equity || account?.portfolio_value)}</span>
           <button className="btn ghost" onClick={refreshAccount}>Refresh</button>
         </header>
+        <p className="books-banner" id="booksBanner">{DUAL_BOOK_CUE}</p>
         <div className="content">
           {error && <p className="err">{error}</p>}
           {page === "desk" && <Desk account={account} onTrade={(s) => { setSymbol(s); }} onRefresh={refreshAccount} />}
@@ -310,6 +312,7 @@ function Desk({ account, onTrade, onRefresh }: { account: any; onTrade: (s: stri
         <div className="card">
           <h3>Holdings — broker inventory</h3>
           <p className="muted">{HOLDINGS_HINT}</p>
+          <p className="muted">{DUAL_BOOK_CUE}</p>
           <table className="table">
             <thead><tr><th>Symbol</th><th>Qty</th><th>Avg</th><th>Last</th><th>Mkt</th><th>Unreal</th><th>Wgt</th><th></th></tr></thead>
             <tbody>
@@ -396,6 +399,7 @@ function Orders() {
           <button className={`tab ${filter === "open" ? "on" : ""}`} onClick={() => setFilter("open")}>Open</button>
         </div>
       </div>
+      <p className="muted">{DUAL_BOOK_CUE}</p>
       <p className="muted">{OPEN_ORDERS_HINT}</p>
       {dirty && <p className="muted">Orders source={book.source || "local_store"} · degraded · unverified — not a clean broker book.</p>}
       <table className="table">
@@ -647,6 +651,7 @@ function Journal() {
   return (
     <div className="card">
       <h3>Trade journal</h3>
+      <p className="muted">{DUAL_BOOK_CUE}</p>
       <p className="muted">{disclaimer}</p>
       <div className="row" style={{ margin: "10px 0" }}>
         {["all", "reject", "order", "note"].map((k) => (

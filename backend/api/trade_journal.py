@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional
 
-from backend.api.desk_display import journal_display_audit, journal_display_row
+from backend.api.desk_display import dual_book_envelope, journal_display_audit, journal_display_row
 from backend.utils.provenance import journal_store
 from backend.utils.provenance.trade_log import (
     TRADE_LOG_SCHEMA,
@@ -75,6 +75,7 @@ def build_journal_response(
             entry["provenance"]["verified"] = False
             entry["provenance"]["live"] = False
     entries = [journal_display_row(entry) for entry in entries]
+    books = dual_book_envelope()
     return {
         "schema_version": TRADE_LOG_SCHEMA,
         "entries": entries,
@@ -82,6 +83,7 @@ def build_journal_response(
         "empty_reason": "no_recorded_events" if not entries else None,
         "disclaimer": DISCLAIMER,
         "disclaimer_zh": DISCLAIMER_ZH,
+        "books": books,
         "sources_used": sources_used,
         "verified": False,
         "live": False,

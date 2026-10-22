@@ -25,7 +25,7 @@ ensure_backend_on_path()
 from backend.api import intents as intents_api
 from backend.api import research_jobs, worker_ctl
 from backend.api.desk_auth import is_operator, require_operator
-from backend.api.desk_display import compose_performance_kpis, orders_book
+from backend.api.desk_display import compose_performance_kpis, dual_book_envelope, orders_book
 from backend.trading.fill_honesty import recorded_fill_price
 from backend.trading import telegram_inbox
 from backend.trading.alpaca_broker import AlpacaBroker
@@ -243,7 +243,13 @@ def positions(_auth: None = Depends(_require_paper_operator)) -> Dict[str, Any]:
     for row in rows:
         mv = float(row.get("market_value") or 0)
         row["weight_pct"] = round(100.0 * mv / equity, 2) if equity else 0.0
-    return {"positions": rows, "count": len(rows)}
+    return {
+        "positions": rows,
+        "count": len(rows),
+        "books": dual_book_envelope(),
+        "verified": False,
+        "live": False,
+    }
 
 
 @app.get("/api/orders")
@@ -318,6 +324,9 @@ def ops(_auth: None = Depends(require_operator)) -> Dict[str, Any]:
         "paper": True,
     }
     payload.update(ops_mandate_payload())
+    payload["books"] = dual_book_envelope()
+    payload["verified"] = False
+    payload["live"] = False
     return payload
 
 
@@ -472,11 +481,22 @@ def guide() -> Dict[str, Any]:
                 "id": "desk",
                 "en": {
                     "title": "Desk is the paper book",
-                    "body": "Equity, cash, and holdings come from your Alpaca paper account. An empty table means no fills yet — not that the desk is broken.",
+                    "body": "Equity, cash, and holdings come from your Alpaca paper account. An empty table means no fills yet — not that the desk is broken. Two books, two directories. Desk broker journal/ledger is backend/data/. Streamlit Kelly/lab portfolio is data/. They are not the same book.",
                 },
                 "zh": {
                     "title": "工作台是模擬持倉",
-                    "body": "權益、現金與持倉來自 Alpaca 模擬帳戶。表格空白代表還沒成交，不是畫面壞掉。",
+                    "body": "權益、現金與持倉來自 Alpaca 模擬帳戶。表格空白代表還沒成交，不是畫面壞掉。兩本帳、兩個目錄。Desk 券商日誌／帳本在 backend/data/。Streamlit Kelly／實驗室組合在 data/。兩者不是同一本帳。",
+                },
+            },
+            {
+                "id": "books",
+                "en": {
+                    "title": "Two books, two directories",
+                    "body": "Two books, two directories. Desk broker journal/ledger is backend/data/. Streamlit Kelly/lab portfolio is data/. They are not the same book.",
+                },
+                "zh": {
+                    "title": "兩本帳、兩個目錄",
+                    "body": "兩本帳、兩個目錄。Desk 券商日誌／帳本在 backend/data/。Streamlit Kelly／實驗室組合在 data/。兩者不是同一本帳。",
                 },
             },
             {

@@ -33,6 +33,7 @@ First visit: a short tour appears. Replay it from **More → Guide** or the **?*
 - **Desk** shows the real Alpaca paper book: equity, cash, positions, manual ticket.
 - **AI Mode** is the only place to pick the strategy and **Start / Stop paper auto**.
 - Saving sliders does **not** start the bot. You must press **Start paper auto**.
+- Two books, two directories. Desk broker journal/ledger is backend/data/. Streamlit Kelly/lab portfolio is data/. They are not the same book. Holdings “not a model portfolio” is still true; it is not enough by itself — the two directories are separate writers.
 
 The top bar **AUTO ON** means the worker process is running (live pid evidence, heartbeat not stale). It does **not** mean the account is loaded, and it does **not** light from an unverified or stale heartbeat. **AUTO OFF** / **AUTO STALE** means it is not a live worker.
 
@@ -105,6 +106,7 @@ Bind the FastAPI Desk so phones on the same Wi-Fi can open the **same** UI as lo
 - **工作台**顯示 Alpaca 模擬帳戶的真實帳本：權益、現金、持倉、手動下單。
 - **AI 模式**才是選擇策略並 **啟動 / 停止紙上自動交易** 的地方。
 - 只儲存參數 **不會** 啟動機器人，必須再按啟動。
+- 兩本帳、兩個目錄。Desk 券商日誌／帳本在 backend/data/。Streamlit Kelly／實驗室組合在 data/。兩者不是同一本帳。持倉「不是模型組合」仍然正確，但單靠那句不夠——兩個目錄是分開的帳本。
 
 頂欄 **AUTO ON** 代表工作行程進程在跑（有活 PID 證據且心跳未過期），不是帳戶已載入，也不是未驗證心跳或過期 PID。**AUTO OFF**／**AUTO STALE** 代表不是活著的 worker。
 
