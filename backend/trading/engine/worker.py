@@ -37,6 +37,7 @@ from backend.trading.engine.sticky_idempotency import (
 )
 from backend.trading.models import Order, OrderSide, OrderStatus, OrderType
 from backend.trading.reconciliation.service import ReconciliationService
+from backend.trading.fill_honesty import fill_notify_price
 from backend.trading.risk.gates import RiskEngine, RiskLimits, positive_price
 from backend.trading.risk.position_sizer import cap_shares_to_notional, shares_to_buy
 from backend.trading.strategies.base import StrategyBase
@@ -767,13 +768,14 @@ class TradingWorker:
                 order_id=result.id,
                 status=result.status.value,
             )
-            if result.status == OrderStatus.FILLED:
+            fill_px = fill_notify_price(result)
+            if result.status == OrderStatus.FILLED and fill_px is not None:
                 self._notify_trade(
                     "fill",
                     symbol=ticker,
                     side="buy",
                     quantity=qty,
-                    price=float(result.filled_avg_price or signal.entry_price),
+                    price=fill_px,
                     stop_loss=signal.stop_loss_price or result.stop_loss_price,
                     take_profit=signal.take_profit_price or result.take_profit_price,
                     strategy=signal.strategy_id,
@@ -829,20 +831,25 @@ class TradingWorker:
         except Exception:
             return
         for order in orders:
-            if order.status in active_states:
+            unpriced_fill = (
+                order.status in (OrderStatus.FILLED, OrderStatus.PARTIALLY_FILLED)
+                and fill_notify_price(order) is None
+            )
+            if order.status in active_states or unpriced_fill:
                 try:
                     updated = self.manager.sync_order_status(order.id)
                 except Exception as exc:
                     logger.debug("sync_order_status failed for %s: %s", order.id, exc)
                     continue
-                if updated and updated.status == OrderStatus.FILLED:
+                fill_px = fill_notify_price(updated)
+                if updated and updated.status == OrderStatus.FILLED and fill_px is not None:
                     meta = self._position_meta.get(updated.symbol, {})
                     self._notify_trade(
                         "fill",
                         symbol=updated.symbol,
                         side=updated.side.value,
                         quantity=updated.quantity,
-                        price=float(updated.filled_avg_price or updated.limit_price or 0),
+                        price=fill_px,
                         stop_loss=updated.stop_loss_price or meta.get("stop_loss_price"),
                         take_profit=updated.take_profit_price or meta.get("take_profit_price"),
                         strategy=meta.get("strategy_id"),
@@ -1430,20 +1437,16 @@ class TradingWorker:
     def _fetch_next_bar(self, symbol: str, ref_price: float) -> Optional[pd.DataFrame]:
         """Next US equity session bar for shadow fill (not wall-clock 24h / BTC).
 
-        Live next-open is not known yet, so we use the last complete NYSE session
-        bar as a conservative estimate — weekend/crypto dates are dropped.
+        *ref_price* is unused: it must not synthesize a bar. Empty OHLCV
+        returns None so shadow cannot fill at entry/limit (O1/O8).
+        Weekend/crypto dates are dropped; no session bars → no fill.
         """
         from backend.utils.us_equity_calendar import filter_us_equity_daily_bars
 
         df = self._fetch_ohlcv(symbol, period="5d")
         session_bars = filter_us_equity_daily_bars(df)
         if session_bars is None or session_bars.empty:
-            return pd.DataFrame({
-                "Open": [ref_price],
-                "High": [ref_price * 1.002],
-                "Low": [ref_price * 0.998],
-                "Close": [ref_price],
-            })
+            return None
         return session_bars.tail(1)
 
 

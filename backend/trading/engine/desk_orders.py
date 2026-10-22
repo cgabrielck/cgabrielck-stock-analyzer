@@ -68,8 +68,8 @@ NO_CONSTRAINING_PRICE_DETAIL = (
 )
 ACCOUNT_MISSING_DETAIL = "Cannot evaluate risk: account snapshot missing."
 SHADOW_NO_POSITIVE_FILL_DETAIL = (
-    "Cannot shadow-fill without a positive fill price. "
-    "Market/stop orders have no constraining limit; a $0 fill is not a fill."
+    "Cannot shadow-fill without a positive fill proven by bars. "
+    "Limit is not a fill; a $0 fill is not a fill."
 )
 _ACCOUNT_UNSET = object()
 _LAB_EXECUTION_MODES = frozenset({"paper", "shadow"})
@@ -317,6 +317,8 @@ def _block(
     order.status = OrderStatus.REJECTED
     order.error_message = detail
     order.failed_at = datetime.now(timezone.utc)
+    order.filled_avg_price = None
+    order.filled_at = None
     persisted, persist_err = _persist_trace(order, store, audit_id=audit_id)
     if not persisted:
         return DeskPlaceResult(
@@ -684,10 +686,9 @@ def place_desk_order(
         actor=DESK_ACTOR,
     )
 
-    # Shadow market/stop: Mandate/Risk used mark/quote on a copy. The wire
-    # order still has no constraining limit. No-bar ShadowTradingEngine then
-    # fills at ``limit_price or 0.0`` — a fake FILLED. Reject instead of
-    # inventing $0. Limit no-bar instant-fill (O1–O6) is unchanged.
+    # Shadow without bars cannot prove a fill. Mandate/Risk may have used
+    # mark/quote on a copy; that is not a fill. Reject rather than storing
+    # FILLED @ limit or $0 (O1/O8).
     if mode == "shadow" and positive_price(order.limit_price) is None:
         audit_id = audit.log_risk_decision(
             order.symbol,
@@ -749,7 +750,7 @@ def place_desk_order(
         submitted = ShadowTradingEngine(manager).simulate_submission(order)
         fill_px = positive_price(getattr(submitted, "filled_avg_price", None))
         status_key = str(getattr(submitted.status, "value", submitted.status)).lower()
-        if status_key == "filled" and fill_px is None:
+        if status_key != "filled" or fill_px is None:
             audit_id = audit.log_risk_decision(
                 order.symbol,
                 side,

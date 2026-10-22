@@ -228,7 +228,7 @@ def test_streamlit_shadow_risk_reject_not_filled(tmp_path):
 
 
 def test_streamlit_shadow_honest_path_evaluates_then_fills_not_broker(tmp_path):
-    """Lab shadow fill after Mandate+Risk — not verified / live."""
+    """Lab shadow after Mandate+Risk: no bars → not FILLED @ limit. Not verified/live."""
     path = _mandate_file(tmp_path, TIGHT)
     broker = _broker()
     store = InMemoryOrderStore()
@@ -245,10 +245,12 @@ def test_streamlit_shadow_honest_path_evaluates_then_fills_not_broker(tmp_path):
         mandate_path=path,
         quote_fn=lambda _s: 150.0,
     )
-    assert result.blocked is False
-    assert result.http_status == 200
-    assert result.journaled is True
-    assert result.order.status == OrderStatus.FILLED
+    assert result.blocked is True
+    assert result.http_status == 409
+    assert result.gate == "shadow"
+    assert result.detail == SHADOW_NO_POSITIVE_FILL_DETAIL
+    assert result.order.status != OrderStatus.FILLED
+    assert result.order.filled_avg_price is None
     broker.submit_order.assert_not_called()
     rows = journal_store.load_raw_entries()
     assert rows
@@ -297,9 +299,13 @@ def test_streamlit_shadow_journal_fail_is_not_success(tmp_path, monkeypatch):
         quote_fn=lambda _s: 150.0,
     )
     assert result.http_status != 200
-    assert result.http_status == 502
+    # Shadow without bars is a reject (409); persist fail on that path is 500.
+    assert result.http_status in (500, 409, 502)
     assert result.journaled is False
-    assert result.detail["broker_submitted"] is False
+    assert result.order.status != OrderStatus.FILLED
+    assert result.order.filled_avg_price is None
+    if isinstance(result.detail, dict):
+        assert result.detail.get("broker_submitted") is False
     broker.submit_order.assert_not_called()
 
 

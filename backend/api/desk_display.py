@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
+from backend.trading.fill_honesty import honest_order_row
+
 
 def display_chips(status: Optional[Dict[str, Any]] = None, *, account_loaded: bool = False) -> Dict[str, Any]:
     """D4: account presence and process evidence are separate chips.
@@ -52,9 +54,10 @@ def orders_book(
     local = src == "local_store"
     degraded_flag = bool(degraded) or local
     unverified_flag = bool(unverified) or local
+    honest_rows = [honest_order_row(row) for row in (rows or [])]
     return {
-        "orders": list(rows or []),
-        "count": len(rows or []),
+        "orders": honest_rows,
+        "count": len(honest_rows),
         "source": src,
         "degraded": degraded_flag,
         "unverified": unverified_flag,

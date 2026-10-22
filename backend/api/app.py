@@ -26,6 +26,7 @@ from backend.api import intents as intents_api
 from backend.api import research_jobs, worker_ctl
 from backend.api.desk_auth import is_operator, require_operator
 from backend.api.desk_display import compose_performance_kpis, orders_book
+from backend.trading.fill_honesty import recorded_fill_price
 from backend.trading import telegram_inbox
 from backend.trading.alpaca_broker import AlpacaBroker
 from backend.trading.engine.cadence import normalize_cadence
@@ -265,7 +266,7 @@ def orders(status: str = "all", limit: int = 50, _auth: None = Depends(_require_
                     "qty": float(o.qty or 0),
                     "status": getattr(o.status, "value", o.status),
                     "limit_price": float(o.limit_price) if o.limit_price else None,
-                    "filled_avg_price": float(o.filled_avg_price) if o.filled_avg_price else None,
+                    "filled_avg_price": recorded_fill_price(o),
                     "submitted_at": str(o.submitted_at) if o.submitted_at else None,
                 }
             )

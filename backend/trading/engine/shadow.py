@@ -7,6 +7,9 @@ Upgrade from 1.0 (instant fill at limit price):
   - Limit sell fills only if a later bar's High >= limit price.
   - Records filled_avg_price and slippage_pct on the Order for later P&L review.
   - Supports partial fills via the quantity_touched parameter (useful for backtest reuse).
+  - No bars / no positive fill price → not FILLED (O1/O8). Never store
+    FILLED @ $0 or @ limit_price. Limit in filled_avg_price is treated as a
+    real fill by Desk/journal/notify — so it must come from bars, not a placeholder.
 """
 from __future__ import annotations
 
@@ -18,6 +21,8 @@ import pandas as pd
 
 from backend.trading.models import Order, OrderStatus
 from backend.trading.engine.order_manager import OrderManager
+from backend.trading.fill_honesty import SHADOW_NO_POSITIVE_FILL, recorded_fill_price
+from backend.trading.risk.gates import positive_price
 
 logger = logging.getLogger(__name__)
 
@@ -53,8 +58,8 @@ class ShadowTradingEngine:
             order:           A RISK_APPROVED order to simulate.
             next_bars:       OHLCV DataFrame of bars AFTER the signal bar.
                              Columns must include Open, High, Low, Close (and
-                             optionally Time). If None, falls back to an
-                             immediate fill at limit_price (legacy behavior).
+                             optionally Time). If None or empty, the order is
+                             not filled — limit_price is not a fill.
             quantity_touched: If provided, only fill this many shares (partial).
                              Defaults to the full order quantity.
 
@@ -77,22 +82,28 @@ class ShadowTradingEngine:
             except Exception:
                 pass
 
-        # No forward US-session bars -> legacy instant fill at limit price.
+        # No forward bars that can prove a trade: do not store FILLED.
+        # Limit/stop_limit must not land in filled_avg_price (Desk/journal/notify
+        # would treat that as a real fill).
         if next_bars is None or len(next_bars) == 0:
-            self._mark_filled(order, fill_price=order.limit_price or 0.0, slippage=0.0)
-            logger.info("[SHADOW] Instant fill %s @ %s (no forward bars)",
-                        order.symbol, order.limit_price)
+            self._refuse_unpriced_fill(order)
             return order
 
         fill_price = self._resolve_fill_price(order, next_bars)
         if fill_price is None:
-            # Limit never crossed within the look-ahead window.
-            order.status = OrderStatus.CANCELLED
-            order.cancelled_at = datetime.now(timezone.utc)
-            order.error_message = "Shadow: limit price not touched within provided bars."
-            self._save(order)
-            logger.info("[SHADOW] %s order NOT filled for %s (limit %s never crossed)",
-                        order.symbol, order.side, order.limit_price)
+            otype = str(getattr(order.order_type, "value", order.order_type) or "").lower()
+            if otype in ("limit", "stop_limit") and positive_price(order.limit_price) is not None:
+                # Limit never crossed within the look-ahead window.
+                order.status = OrderStatus.CANCELLED
+                order.cancelled_at = datetime.now(timezone.utc)
+                order.filled_avg_price = None
+                order.filled_at = None
+                order.error_message = "Shadow: limit price not touched within provided bars."
+                self._save(order)
+                logger.info("[SHADOW] %s order NOT filled for %s (limit %s never crossed)",
+                            order.symbol, order.side, order.limit_price)
+                return order
+            self._refuse_unpriced_fill(order)
             return order
 
         qty = quantity_touched if quantity_touched is not None else order.quantity
@@ -113,11 +124,25 @@ class ShadowTradingEngine:
     # Internal helpers
     # ------------------------------------------------------------------
 
+    def _refuse_unpriced_fill(self, order: Order) -> None:
+        """O1: no real fill price → not stored as filled. Fills stay empty."""
+        order.status = OrderStatus.CANCELLED
+        order.cancelled_at = datetime.now(timezone.utc)
+        order.filled_at = None
+        order.filled_avg_price = None
+        order.error_message = SHADOW_NO_POSITIVE_FILL
+        self._save(order)
+        logger.info("[SHADOW] %s not filled (no positive fill price)", order.symbol)
+
     def _mark_filled(self, order: Order, fill_price: float, slippage: float,
                      quantity: Optional[float] = None) -> None:
+        px = recorded_fill_price({"filled_avg_price": fill_price})
+        if px is None:
+            self._refuse_unpriced_fill(order)
+            return
         order.status = OrderStatus.FILLED
         order.filled_at = datetime.now(timezone.utc)
-        order.filled_avg_price = round(float(fill_price), 6)
+        order.filled_avg_price = round(float(px), 6)
         order.slippage_pct = round(float(slippage), 6)
         if quantity is not None and quantity != order.quantity:
             order.quantity = float(quantity)
@@ -146,17 +171,21 @@ class ShadowTradingEngine:
                       conservative (never assume better than our limit).
         - LIMIT sell: first bar whose High >= limit_price; fill at limit price.
         """
-        first_open = float(next_bars["Open"].iloc[0]) if "Open" in next_bars.columns else 0.0
+        first_open = None
+        if "Open" in next_bars.columns:
+            first_open = positive_price(next_bars["Open"].iloc[0])
 
         if order.order_type.value == "market" or order.order_type.value == "stop":
+            if first_open is None:
+                return None
             slip = self.slippage_bps / 10000.0
             if order.side.value == "buy":
-                return first_open * (1.0 + slip) if first_open else order.limit_price
-            return first_open * (1.0 - slip) if first_open else order.limit_price
+                return first_open * (1.0 + slip)
+            return first_open * (1.0 - slip)
 
-        # Limit orders
+        # Limit orders: missing limit is not a fill from limit_price=None.
         if order.limit_price is None:
-            return first_open or None
+            return first_open
 
         if "Low" in next_bars.columns and order.side.value == "buy":
             for low in next_bars["Low"]:

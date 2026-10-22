@@ -26,12 +26,11 @@ class TestShadowTradingEngine(unittest.TestCase):
         
         simulated = self.shadow_engine.simulate_submission(order)
         
-        self.assertEqual(simulated.status, OrderStatus.FILLED)
+        # No bars → not a fill. Limit must not become filled_avg_price.
+        self.assertNotEqual(simulated.status, OrderStatus.FILLED)
+        self.assertIsNone(simulated.filled_avg_price)
         self.assertIsNotNone(simulated.submitted_at)
-        self.assertIsNotNone(simulated.filled_at)
-        # Store should have been called twice (once for submission, once for fill)
         self.assertEqual(self.mock_store.save_order.call_count, 2)
-        # Real broker should NOT have been called
         self.mock_broker.submit_order.assert_not_called()
 
     def test_simulate_submission_wrong_state(self):

@@ -232,6 +232,7 @@ class TestAlpacaBroker(unittest.TestCase):
             'status': 'filled',
             'limit_price': '300.50',
             'stop_price': None,
+            'filled_avg_price': '301.10',
             'submitted_at': now,
             'filled_at': now,
             'canceled_at': None,
@@ -245,6 +246,9 @@ class TestAlpacaBroker(unittest.TestCase):
         self.assertEqual(order.id, 'broker_order_id_789')
         self.assertEqual(order.status, OrderStatus.FILLED)
         self.assertEqual(order.symbol, 'MSFT')
+        self.assertEqual(order.filled_avg_price, 301.10)
+        self.assertEqual(order.limit_price, 300.50)
+        self.assertNotEqual(order.filled_avg_price, order.limit_price)
 
     def test_get_order_not_found(self):
         """Test retrieving a non-existent order."""

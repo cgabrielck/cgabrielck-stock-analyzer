@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from backend.trading.models import Order, OrderStatus
 from backend.trading.broker import BrokerAdapter
 from backend.trading.engine.stamp import VENUE_STATUSES
+from backend.trading.fill_honesty import apply_recorded_fill, is_fill_status, recorded_fill_price
 from backend.trading.engine.sticky_idempotency import (
     StickyLookupUnproven,
     find_sticky_order,
@@ -17,6 +18,23 @@ from backend.trading.engine.sticky_idempotency import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _honestly_terminal(order: Order) -> bool:
+    """True only when a terminal status is backed by evidence.
+
+    ``FILLED`` with no real avg is not terminal — sync must re-fetch or demote
+    so the ledger is not display-only honest.
+    """
+    if order.status in (
+        OrderStatus.CANCELLED,
+        OrderStatus.REJECTED,
+        OrderStatus.EXPIRED,
+    ):
+        return True
+    if order.status == OrderStatus.FILLED and recorded_fill_price(order) is not None:
+        return True
+    return False
 
 class OrderStore(Protocol):
     """Protocol for durable storage of orders and fills."""
@@ -173,6 +191,7 @@ class OrderManager:
                 submitted_order.filled_avg_price = None
             self.store.save_order(submitted_order)
             return submitted_order
+        apply_recorded_fill(submitted_order)
         if submitted_order.status in VENUE_STATUSES:
             self.store.save_order(submitted_order)
             return submitted_order
@@ -201,27 +220,49 @@ class OrderManager:
              logger.warning(f"Order {internal_order_id} not found in local store during sync.")
              return None
         
-        if local_order.status in [OrderStatus.FILLED, OrderStatus.CANCELLED, OrderStatus.REJECTED, OrderStatus.EXPIRED]:
-             # Terminal states, no need to sync
+        if _honestly_terminal(local_order):
              return local_order
             
         broker_order = self.broker.get_order(local_order.id)
         
         if broker_order:
-            # Update local state
-            if broker_order.status != local_order.status:
-                logger.info(f"Order {local_order.id} status changed: {local_order.status} -> {broker_order.status}")
-                local_order.status = broker_order.status
-                local_order.filled_at = broker_order.filled_at
+            fill_px = recorded_fill_price(broker_order)
+            if is_fill_status(broker_order.status) and fill_px is None:
+                logger.warning(
+                    "Broker reported %s for %s without a positive fill price; "
+                    "not promoting to filled (limit is not a fill).",
+                    broker_order.status,
+                    local_order.id,
+                )
                 local_order.cancelled_at = broker_order.cancelled_at
                 local_order.failed_at = broker_order.failed_at
                 local_order.error_message = broker_order.error_message
+                # Keep a non-fill local status. Do not copy limit as avg fill.
+                if is_fill_status(local_order.status):
+                    local_order.status = OrderStatus.SUBMITTED
+                local_order.filled_avg_price = None
+                local_order.filled_at = None
+                self.store.save_order(local_order)
+                return local_order
+            if (
+                broker_order.status != local_order.status
+                or fill_px != local_order.filled_avg_price
+            ):
+                logger.info(f"Order {local_order.id} status changed: {local_order.status} -> {broker_order.status}")
+                local_order.status = broker_order.status
+                local_order.cancelled_at = broker_order.cancelled_at
+                local_order.failed_at = broker_order.failed_at
+                local_order.error_message = broker_order.error_message
+                apply_recorded_fill(local_order, broker_order)
                 self.store.save_order(local_order)
             return local_order
         else:
              logger.error(f"Order {local_order.id} exists locally but not found on broker during sync.")
-             # We don't mark as error immediately, it could be a propagation delay on the broker side.
-             # A robust system would retry or escalate.
+             if is_fill_status(local_order.status) and recorded_fill_price(local_order) is None:
+                 local_order.status = OrderStatus.SUBMITTED
+                 local_order.filled_avg_price = None
+                 local_order.filled_at = None
+                 self.store.save_order(local_order)
              return local_order
 
     def cancel_active_order(self, internal_order_id: str) -> Optional[Order]:
@@ -233,7 +274,7 @@ class OrderManager:
              logger.warning(f"Cannot cancel: Order {internal_order_id} not found.")
              return None
             
-        if local_order.status in [OrderStatus.FILLED, OrderStatus.CANCELLED, OrderStatus.REJECTED, OrderStatus.EXPIRED]:
+        if _honestly_terminal(local_order):
             logger.info(f"Order {internal_order_id} is already in terminal state: {local_order.status}")
             return local_order
 
