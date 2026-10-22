@@ -45,7 +45,8 @@ Keep ADR-003; revise docs before build. Risk if skip: Python rule kernel + docs 
    - closed veto codes v0  
    - counterfactual vs pure rules  
    - account-level AI scope vs single-name strategy（管戶 vs 單票）  
-   - `lab/advisory_debate` ≠ 產品 M7；**禁止**將 lab debate 接到 OrderManager／落單路徑。
+   - `lab/advisory_debate` ≠ 產品 M7；**禁止**將 lab debate 接到 OrderManager／落單路徑。  
+   - Draft path: [`docs/BOUNDED_INTELLIGENCE_ACCEPTANCE.md`](BOUNDED_INTELLIGENCE_ACCEPTANCE.md) — **Draft** pending Owner/PM; **not yet Accepted**.
 
 ---
 
