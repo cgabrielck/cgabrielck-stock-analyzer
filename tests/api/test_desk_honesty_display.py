@@ -540,6 +540,18 @@ def test_plan12e_priced_fills_array_still_shows_filled():
     assert shown.get("kind") == "fill"
 
 
+def _assert_journal_row_not_priced_filled(row: dict) -> None:
+    assert row["display_status"] == UNPRICED_FILL_LABEL
+    assert row["display_status"] != "filled"
+    assert row["display_status_class"] == "submitted"
+    assert row["display_status_class"] != "filled"
+    assert "filled" not in str(row.get("user_visible_summary") or "").lower()
+    assert UNPRICED_FILL_LABEL in str(row.get("user_visible_summary") or "")
+    assert row.get("kind") != "fill"
+    assert row.get("verified") is not True
+    assert (row.get("provenance") or {}).get("live") is not True
+
+
 def test_plan12e_journal_api_unpriced_fills_not_shown_filled(honesty_api, tmp_path, monkeypatch):
     import json
 
@@ -555,12 +567,29 @@ def test_plan12e_journal_api_unpriced_fills_not_shown_filled(honesty_api, tmp_pa
     for raw in _unpriced_journal_rows():
         row = by_id.get(raw["log_id"])
         assert row is not None, raw["log_id"]
-        assert row["display_status"] == UNPRICED_FILL_LABEL
-        assert row["display_status_class"] == "submitted"
-        assert "filled" not in str(row.get("user_visible_summary") or "").lower()
-        assert row.get("kind") != "fill"
-        assert row.get("verified") is not True
-        assert (row.get("provenance") or {}).get("live") is not True
+        _assert_journal_row_not_priced_filled(row)
+
+
+def test_plan12e_journal_entry_api_unpriced_fills_not_shown_filled(honesty_api, tmp_path, monkeypatch):
+    """Fail-case: click-through GET /api/journal/entry/{log_id} must use the list overlay."""
+    import json
+
+    from backend.utils.provenance import journal_store
+
+    path = tmp_path / "trade_journal.json"
+    path.write_text(json.dumps({"schema_version": "trade_log.v0", "entries": _unpriced_journal_rows()}), encoding="utf-8")
+    monkeypatch.setattr(journal_store, "JOURNAL_PATH", path)
+    for raw in _unpriced_journal_rows():
+        res = honesty_api["client"].get(f"/api/journal/entry/{raw['log_id']}")
+        assert res.status_code == 200, res.text
+        payload = res.json()
+        entry = payload.get("entry") or {}
+        assert entry.get("log_id") == raw["log_id"]
+        _assert_journal_row_not_priced_filled(entry)
+        dumped = json.dumps(payload).lower()
+        assert '"kind": "fill"' not in dumped
+        assert "filled buy" not in dumped
+        assert payload.get("verified") is not True
 
 
 def test_plan12e_guide_api_desk_is_paper_book_not_live(honesty_api):

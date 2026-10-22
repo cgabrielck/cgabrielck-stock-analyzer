@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional
 
+from backend.api.desk_display import journal_display_row
 from backend.utils.provenance import journal_store
 from backend.utils.provenance.trade_log import (
     TRADE_LOG_SCHEMA,
@@ -73,8 +74,6 @@ def build_journal_response(
         if looks_like_verified_fake(entry.get("provenance")):
             entry["provenance"]["verified"] = False
             entry["provenance"]["live"] = False
-    from backend.api.desk_display import journal_display_row
-
     entries = [journal_display_row(entry) for entry in entries]
     return {
         "schema_version": TRADE_LOG_SCHEMA,
@@ -112,17 +111,16 @@ def record_from_order(
 
 
 def get_entry(log_id: str, *, order_store: Any = None) -> Optional[Dict[str, Any]]:
+    """Single-entry read for Desk click-through. Display overlay only — not a ledger write."""
     if not log_id:
         return None
     found = journal_store.find_entry(log_id)
     if found:
-        return found
+        return journal_display_row(found)
     payload = build_journal_response(order_store=order_store, limit=400, kind="all")
     for entry in payload.get("entries") or []:
-        if entry.get("log_id") == log_id:
-            return entry
-        if entry.get("order_id") == log_id:
-            return entry
+        if entry.get("log_id") == log_id or entry.get("order_id") == log_id:
+            return journal_display_row(entry)
     return None
 
 
