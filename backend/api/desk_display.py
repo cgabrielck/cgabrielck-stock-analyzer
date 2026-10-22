@@ -271,16 +271,6 @@ def journal_display_row(row: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     return data
 
 
-def _entry_shows_unpriced(entry: Optional[Dict[str, Any]]) -> bool:
-    if not entry:
-        return False
-    st = str(entry.get("status") or "").lower()
-    ds = str(entry.get("display_status") or "").lower()
-    if st == UNPRICED_FILL_LABEL.lower() or ds == UNPRICED_FILL_LABEL.lower():
-        return True
-    return _claims_fill_status(entry) and not is_priced_fill(entry)
-
-
 def _demote_fill_status_fields(obj: Dict[str, Any]) -> None:
     st = str(obj.get("status") or "").lower()
     if st in _JOURNAL_FILL_STATUSES:
@@ -292,14 +282,21 @@ def journal_display_audit(
     *,
     entry: Optional[Dict[str, Any]] = None,
 ) -> Optional[Dict[str, Any]]:
-    """Display overlay for Entry+audit JSON. Does not write audit jsonl."""
+    """Display overlay for Entry+audit JSON. Does not write audit jsonl.
+
+    Demote when the journal row has no fill price > 0 and the attached
+    audit/payload claims filled / partially_filled without a real fill
+    price. ``limit_price`` is not a fill. Do not require the entry status
+    itself to already read unpriced / filled (from_order and audit-jsonl
+    rows often normalize to submitted / proposed first).
+    """
     if not isinstance(audit, dict):
         return audit
     data = dict(audit)
     payload = dict(data["payload"]) if isinstance(data.get("payload"), dict) else None
     if payload is not None:
         data["payload"] = payload
-    if not _entry_shows_unpriced(entry):
+    if is_priced_fill(entry):
         return data
     if is_priced_fill(data) or (payload is not None and is_priced_fill(payload)):
         return data
