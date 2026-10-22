@@ -100,6 +100,8 @@ def record_from_order(
     audit_id: Optional[str] = None,
     strategy_id: Optional[str] = None,
     intent_id: Optional[str] = None,
+    link_intent: bool = True,
+    provenance_extra: Optional[Dict[str, Any]] = None,
 ) -> Optional[Dict[str, Any]]:
     """API facade — recording lives in utils.provenance.journal_store."""
     return journal_store.record_from_order(
@@ -107,6 +109,8 @@ def record_from_order(
         audit_id=audit_id,
         strategy_id=strategy_id,
         intent_id=intent_id,
+        link_intent=link_intent,
+        provenance_extra=provenance_extra,
     )
 
 

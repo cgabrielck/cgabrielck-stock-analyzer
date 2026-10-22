@@ -8,9 +8,12 @@ import pytest
 from fastapi.testclient import TestClient
 
 from backend.trading.engine.desk_orders import (
+    DESK_STRATEGY_ID,
+    DESK_WRITE_POINT,
     KILL_BUY_DETAIL,
     KILL_SELL_DETAIL,
     NO_CONSTRAINING_PRICE_DETAIL,
+    desk_journal_has_path_stamp,
     reset_desk_mandate_gate,
 )
 from backend.trading.engine.order_manager import InMemoryOrderStore
@@ -119,6 +122,36 @@ def test_api_happy_path_still_submits(desk_api):
     desk_api["broker"].submit_order.assert_called_once()
     rows = journal_store.load_raw_entries()
     assert rows, "accepted Desk order must be journaled"
+    stamped = rows[-1]
+    assert desk_journal_has_path_stamp(stamped)
+    assert stamped["strategy_id"] == DESK_STRATEGY_ID
+    assert stamped["intent_id"]
+    assert stamped["links"]["intent_ref"] == ""
+    assert stamped["provenance"]["write_point"] == DESK_WRITE_POINT
+    assert stamped["provenance"]["verified"] is False
+    assert stamped["provenance"]["live"] is False
+
+
+def test_api_success_without_path_stamp_is_not_200(desk_api, monkeypatch):
+    """Fail-case: FastAPI POST /api/orders must not 200 if PATH stamp is skipped."""
+    real = journal_store.record_from_order
+
+    def _omit_stamp(*args, **kwargs):
+        kwargs.pop("intent_id", None)
+        kwargs.pop("provenance_extra", None)
+        kwargs["link_intent"] = False
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr("backend.trading.engine.desk_orders.record_from_order", _omit_stamp)
+    client = desk_api["client"]
+    res = client.post(
+        "/api/orders",
+        json={"symbol": "AAPL", "side": "buy", "quantity": 1, "limit_price": 150, "order_type": "limit"},
+    )
+    assert res.status_code != 200
+    assert res.status_code == 502
+    rows = journal_store.load_raw_entries()
+    assert not any(desk_journal_has_path_stamp(row) for row in rows)
 
 
 def test_api_ops_mandate_matches_order_path(desk_api):

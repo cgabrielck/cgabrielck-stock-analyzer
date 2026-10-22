@@ -1,7 +1,29 @@
-"""Desk / lab manual place-order path (R1-SAFE).
+"""Desk / lab manual place-order path (R1-SAFE + R1-PATH write-point).
 
-Manual Desk stays a separate path from IntentStore / H1 / SignalProcessor
-(R1-PATH, DESIGN — not wired here). This module still enforces, in order:
+Manual Desk stays a separate money path from IntentStore / H1 /
+SignalProcessor. It does **not** call ``upsert_active_intent``, H1
+``claim_for_consume``, or the M8 sizer — operator qty is kept, then
+Mandate + RiskEngine still have to approve.
+
+R1-PATH write-point (journal, not IntentStore)
+---------------------------------------------
+Every journaled Desk order (HTTP 200 accept *and* gated reject) is
+stamped via ``record_from_order`` with:
+
+    strategy_id = desk_manual
+    intent_id   = durable UUID (journal correlation id)
+    provenance.write_point = place_desk_order
+    links.intent_ref = ""   # not an IntentStore document
+
+Intent v0 (§5.6) cannot honestly hold this L2 ticket: Desk has qty /
+limit and no sizer conviction_tier / pct stop. Writing ``active`` would
+let H1 consume a second order. Writing ``consumed`` would claim M8
+hand-off that did not happen. So the durable provenance/intent stamp
+lives on TradeLogEntry (existing ``intent_id`` / ``strategy_id`` fields),
+not ``JSONIntentStore``. A broker accept whose journal row is missing
+that stamp is not HTTP 200.
+
+This module still enforces, in order:
 
     kill (buy and sell — D-sell-kill) → Mandate (fail-closed) → RiskEngine
     → OrderManager + journal/audit  (or shadow simulate + journal)
@@ -60,6 +82,8 @@ logger = logging.getLogger(__name__)
 
 DESK_ACTOR = "desk"
 DESK_STRATEGY_ID = "desk_manual"
+# Documented R1-PATH write-point name on journal provenance (not IntentStore).
+DESK_WRITE_POINT = "place_desk_order"
 KILL_BUY_DETAIL = "Kill switch is on — new buys blocked."
 KILL_SELL_DETAIL = "Kill switch is on — sells blocked."
 NO_CONSTRAINING_PRICE_DETAIL = (
@@ -94,6 +118,7 @@ class DeskPlaceResult:
     mandate_path: Optional[str] = None
     audit_id: Optional[str] = None
     journaled: bool = False
+    intent_id: Optional[str] = None
 
 
 def default_quote_price(symbol: str) -> Optional[float]:
@@ -232,16 +257,56 @@ def _side_value(order: Order) -> str:
     return side.lower()
 
 
-def _journal_order(order: Order, *, audit_id: Optional[str]) -> Tuple[bool, Optional[str]]:
-    """Write a TradeLogEntry. None or raise = not journaled (never swallow)."""
+def desk_journal_has_path_stamp(entry: Optional[Dict[str, Any]]) -> bool:
+    """True when a journal row carries the R1-PATH Desk write-point.
+
+    Fail-case tests use this: a Desk HTTP 200 whose row is missing
+    ``intent_id`` / ``strategy_id=desk_manual`` / ``write_point`` (or that
+    points ``intent_ref`` at a non-existent IntentStore document) is not
+    an honest success.
+    """
+    if not isinstance(entry, dict):
+        return False
+    intent_id = str(entry.get("intent_id") or "").strip()
+    if not intent_id:
+        return False
+    if str(entry.get("strategy_id") or "").strip() != DESK_STRATEGY_ID:
+        return False
+    intent_ref = str((entry.get("links") or {}).get("intent_ref") or "").strip()
+    if intent_ref:
+        return False
+    provenance = entry.get("provenance") if isinstance(entry.get("provenance"), dict) else {}
+    if str(provenance.get("write_point") or "").strip() != DESK_WRITE_POINT:
+        return False
+    if provenance.get("verified") is True or provenance.get("live") is True:
+        return False
+    return True
+
+
+def _journal_order(order: Order, *, audit_id: Optional[str]) -> Tuple[bool, Optional[str], Optional[str]]:
+    """Write a TradeLogEntry with the PATH stamp. None or raise = not journaled."""
+    stamp_id = str(uuid.uuid4())
     try:
-        entry = record_from_order(order, audit_id=audit_id, strategy_id=DESK_STRATEGY_ID)
+        entry = record_from_order(
+            order,
+            audit_id=audit_id,
+            strategy_id=DESK_STRATEGY_ID,
+            intent_id=stamp_id,
+            link_intent=False,
+            provenance_extra={"write_point": DESK_WRITE_POINT},
+        )
     except Exception as exc:
         logger.exception("Desk journal record failed for %s", order.symbol)
-        return False, f"journal: {exc}"
+        return False, f"journal: {exc}", None
     if not entry:
-        return False, "journal: record_from_order returned no entry"
-    return True, None
+        return False, "journal: record_from_order returned no entry", None
+    if not desk_journal_has_path_stamp(entry):
+        return (
+            False,
+            "journal: Desk PATH stamp missing (intent_id / strategy_id / write_point)",
+            None,
+        )
+    return True, None, str(entry.get("intent_id") or stamp_id)
 
 
 def _persist_trace(
@@ -249,9 +314,10 @@ def _persist_trace(
     store: Optional[OrderStore],
     *,
     audit_id: Optional[str],
-) -> Tuple[bool, Optional[str]]:
+) -> Tuple[bool, Optional[str], Optional[str]]:
     """Persist reject/accept trace. Failures are returned, not swallowed."""
     errors = []
+    intent_id: Optional[str] = None
     if store is not None:
         detach_if_would_clobber_sticky(store, order)
         try:
@@ -259,12 +325,12 @@ def _persist_trace(
         except Exception as exc:
             logger.exception("Desk order-store save failed for %s", order.symbol)
             errors.append(f"order_store: {exc}")
-    journaled, journal_err = _journal_order(order, audit_id=audit_id)
+    journaled, journal_err, intent_id = _journal_order(order, audit_id=audit_id)
     if not journaled and journal_err:
         errors.append(journal_err)
     if errors:
-        return False, "; ".join(errors)
-    return True, None
+        return False, "; ".join(errors), intent_id
+    return True, None, intent_id
 
 
 def _reject_not_persisted_detail(reason: str, persist_err: str, gate: str) -> Dict[str, Any]:
@@ -319,7 +385,7 @@ def _block(
     order.failed_at = datetime.now(timezone.utc)
     order.filled_avg_price = None
     order.filled_at = None
-    persisted, persist_err = _persist_trace(order, store, audit_id=audit_id)
+    persisted, persist_err, intent_id = _persist_trace(order, store, audit_id=audit_id)
     if not persisted:
         return DeskPlaceResult(
             order=order,
@@ -331,6 +397,7 @@ def _block(
             mandate_path=mandate_path,
             audit_id=audit_id,
             journaled=False,
+            intent_id=intent_id,
         )
     return DeskPlaceResult(
         order=order,
@@ -342,6 +409,7 @@ def _block(
         mandate_path=mandate_path,
         audit_id=audit_id,
         journaled=True,
+        intent_id=intent_id,
     )
 
 
@@ -363,7 +431,7 @@ def _replay_sticky_venue(
     HTTP 200 here means the journal caught up. The pin stays: clearing it
     would let a later new key broker-submit a second independent order.
     """
-    journaled, journal_err = _journal_order(sticky, audit_id=None)
+    journaled, journal_err, intent_id = _journal_order(sticky, audit_id=None)
     if journaled:
         pin_sticky(store, sticky)
         return DeskPlaceResult(
@@ -374,6 +442,7 @@ def _replay_sticky_venue(
             mandate_status=snapshot.status,
             mandate_path=snapshot.path,
             journaled=True,
+            intent_id=intent_id,
         )
     pin_sticky(store, sticky)
     detail = _sticky_replay_detail_suffix_ok(
@@ -389,6 +458,7 @@ def _replay_sticky_venue(
         mandate_status=snapshot.status,
         mandate_path=snapshot.path,
         journaled=False,
+        intent_id=intent_id,
     )
 
 
@@ -426,8 +496,9 @@ def place_desk_order(
 ) -> DeskPlaceResult:
     """Evaluate a manual Desk/lab order, then paper-submit or shadow-simulate.
 
-    Does not call SignalProcessor / IntentStore. User-supplied quantity is
-    kept (no Kelly resize) but still has to pass Mandate + RiskEngine.
+    Does not call SignalProcessor / IntentStore / upsert_active_intent.
+    User-supplied quantity is kept (no Kelly resize) but still has to pass
+    Mandate + RiskEngine. PATH stamp is the trade journal, not Intent v0.
 
     ``account is None`` (explicit) or a failed/empty snapshot → reject (S3).
     FastAPI omits ``account`` so this path fetches from the broker.
@@ -780,7 +851,7 @@ def place_desk_order(
         submitted.status.value if hasattr(submitted.status, "value") else str(submitted.status),
         actor=DESK_ACTOR,
     )
-    journaled, journal_err = _journal_order(
+    journaled, journal_err, intent_id = _journal_order(
         submitted, audit_id=submit_audit or risk_audit
     )
     if submitted.status == OrderStatus.ACCEPTANCE_UNKNOWN:
@@ -797,6 +868,7 @@ def place_desk_order(
             mandate_path=snapshot.path,
             audit_id=submit_audit or risk_audit,
             journaled=journaled,
+            intent_id=intent_id,
         )
     blocked_accept = str(getattr(submitted.status, "value", submitted.status)).lower() == "rejected"
     if not journaled:
@@ -818,6 +890,7 @@ def place_desk_order(
                 mandate_path=snapshot.path,
                 audit_id=submit_audit or risk_audit,
                 journaled=False,
+                intent_id=intent_id,
             )
         fail_detail = _journal_failed_after_broker_detail(
             submitted, journal_err or "journal write failed"
@@ -846,6 +919,7 @@ def place_desk_order(
             mandate_path=snapshot.path,
             audit_id=submit_audit or risk_audit,
             journaled=False,
+            intent_id=intent_id,
         )
     if blocked_accept:
         if reserved or safe_unknown_retry:
@@ -860,6 +934,7 @@ def place_desk_order(
             mandate_path=snapshot.path,
             audit_id=submit_audit or risk_audit,
             journaled=True,
+            intent_id=intent_id,
         )
     # Cap path already reserved before broker. No-cap still persists the count.
     if side == "buy" and mode != "shadow" and not reserved and not safe_unknown_retry:
@@ -875,6 +950,7 @@ def place_desk_order(
         mandate_path=snapshot.path,
         audit_id=submit_audit or risk_audit,
         journaled=True,
+        intent_id=intent_id,
     )
 
 

@@ -9,10 +9,12 @@ import pytest
 
 from backend.trading.engine.desk_orders import (
     DESK_STRATEGY_ID,
+    DESK_WRITE_POINT,
     KILL_BUY_DETAIL,
     KILL_SELL_DETAIL,
     NO_CONSTRAINING_PRICE_DETAIL,
     constraining_order_price,
+    desk_journal_has_path_stamp,
     ops_mandate_payload,
     place_desk_order,
     reset_desk_mandate_gate,
@@ -596,6 +598,147 @@ def test_happy_path_submits_via_order_manager(tmp_path):
     assert result.mandate_status == "loaded"
     rows = journal_store.load_raw_entries()
     assert any(row.get("strategy_id") == DESK_STRATEGY_ID for row in rows)
+    stamped = next(row for row in rows if row.get("strategy_id") == DESK_STRATEGY_ID)
+    assert desk_journal_has_path_stamp(stamped)
+    assert result.intent_id == stamped["intent_id"]
+    assert stamped["links"]["intent_ref"] == ""
+    assert stamped["provenance"]["write_point"] == DESK_WRITE_POINT
+
+
+def test_desk_success_missing_intent_id_is_not_http_200(tmp_path, monkeypatch):
+    """Fail-case: a Desk accept whose journal omits intent_id must not be 200.
+
+    Pre-PATH: record_from_order(strategy_id=desk_manual) without intent_id
+    still returned HTTP 200. That skip is the R1-PATH honesty hole.
+    """
+    path = _mandate_file(tmp_path, TIGHT)
+    real = journal_store.record_from_order
+
+    def _drop_intent(*args, **kwargs):
+        kwargs.pop("intent_id", None)
+        kwargs["link_intent"] = False
+        entry = real(*args, **kwargs)
+        return entry
+
+    monkeypatch.setattr("backend.trading.engine.desk_orders.record_from_order", _drop_intent)
+    broker = _broker()
+    result = place_desk_order(
+        _order(),
+        broker=broker,
+        store=InMemoryOrderStore(),
+        mandate_path=path,
+    )
+    assert result.http_status != 200
+    assert result.http_status == 502
+    assert result.journaled is False
+    assert result.gate == "journal"
+    broker.submit_order.assert_called_once()
+    rows = journal_store.load_raw_entries()
+    assert rows, "row may exist on disk but PATH stamp must be missing"
+    assert not any(desk_journal_has_path_stamp(row) for row in rows)
+
+
+def test_desk_success_missing_write_point_is_not_http_200(tmp_path, monkeypatch):
+    """Fail-case: journal row without provenance.write_point is not HTTP 200."""
+    path = _mandate_file(tmp_path, TIGHT)
+    real = journal_store.record_from_order
+
+    def _drop_write_point(*args, **kwargs):
+        kwargs.pop("provenance_extra", None)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(
+        "backend.trading.engine.desk_orders.record_from_order", _drop_write_point
+    )
+    result = place_desk_order(
+        _order(id="path-wp", idempotency_key="path-wp"),
+        broker=_broker(),
+        store=InMemoryOrderStore(),
+        mandate_path=path,
+    )
+    assert result.http_status == 502
+    assert result.journaled is False
+    assert result.gate == "journal"
+
+
+def test_desk_success_dangling_intent_ref_is_not_http_200(tmp_path, monkeypatch):
+    """Fail-case: inventing /api/intents/{id} without IntentStore is not 200."""
+    path = _mandate_file(tmp_path, TIGHT)
+    real = journal_store.record_from_order
+
+    def _force_link(*args, **kwargs):
+        kwargs["link_intent"] = True
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr("backend.trading.engine.desk_orders.record_from_order", _force_link)
+    result = place_desk_order(
+        _order(id="path-ref", idempotency_key="path-ref"),
+        broker=_broker(),
+        store=InMemoryOrderStore(),
+        mandate_path=path,
+    )
+    assert result.http_status == 502
+    assert result.journaled is False
+    row = journal_store.load_raw_entries()[-1]
+    assert row["links"]["intent_ref"].startswith("/api/intents/")
+    assert not desk_journal_has_path_stamp(row)
+
+
+def test_desk_gated_reject_journals_path_stamp(tmp_path):
+    """Write-point is _journal_order: gated rejects are stamped too."""
+    path = _mandate_file(tmp_path, TIGHT)
+    result = place_desk_order(
+        _order(symbol="GME", id="path-rej", idempotency_key="path-rej"),
+        broker=_broker(),
+        store=InMemoryOrderStore(),
+        mandate_path=path,
+    )
+    assert result.blocked is True
+    assert result.journaled is True
+    assert result.intent_id
+    rows = journal_store.load_raw_entries()
+    assert desk_journal_has_path_stamp(rows[-1])
+
+
+def test_desk_success_does_not_write_intent_store(tmp_path, monkeypatch):
+    """Desk money path must not upsert/save Intent v0 (H1 would consume it)."""
+    path = _mandate_file(tmp_path, TIGHT)
+    save = MagicMock(name="JSONIntentStore.save")
+    upsert = MagicMock(name="upsert_active_intent")
+    monkeypatch.setattr("backend.trading.intents.store.JSONIntentStore.save", save)
+    monkeypatch.setattr("backend.trading.intents.writer.upsert_active_intent", upsert)
+    result = place_desk_order(
+        _order(id="path-no-is", idempotency_key="path-no-is"),
+        broker=_broker(),
+        store=InMemoryOrderStore(),
+        mandate_path=path,
+    )
+    assert result.http_status == 200
+    assert result.journaled is True
+    assert result.intent_id
+    save.assert_not_called()
+    upsert.assert_not_called()
+
+
+def test_desk_sell_success_journals_path_stamp(tmp_path):
+    path = _mandate_file(tmp_path, TIGHT)
+    result = place_desk_order(
+        _order(
+            id="path-sell",
+            idempotency_key="path-sell",
+            side=OrderSide.SELL,
+            quantity=1,
+            limit_price=150.0,
+        ),
+        broker=_broker(),
+        store=InMemoryOrderStore(),
+        mandate_path=path,
+        quote_fn=lambda _s: 150.0,
+    )
+    assert result.http_status == 200, result.detail
+    rows = journal_store.load_raw_entries()
+    assert desk_journal_has_path_stamp(rows[-1])
+    assert rows[-1]["side"] == "sell"
 
 
 def test_journal_raise_after_accept_is_not_http_200(tmp_path, monkeypatch):

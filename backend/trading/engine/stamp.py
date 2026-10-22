@@ -26,7 +26,9 @@ What must NOT be stamped ``RISK_APPROVED``
 - Shadow/paper convenience before submit.
 - Streamlit lab dashboard (S3) — closed via ``place_desk_order`` /
   ``place_lab_manual_order`` (``account is None`` → reject, no stamp).
-- Intent / M8 / R1-PATH — remains OPEN; not this module.
+- Intent / M8 — remains OPEN; this module does not write IntentStore.
+  R1-PATH Desk write-point is the trade journal (``place_desk_order`` →
+  ``record_from_order``), not a ``RISK_APPROVED`` stamp.
 - Worker flatten-through-kill — remains OPEN; Desk POST kill-on-sell
   is ``place_desk_order``, not this module.
 
