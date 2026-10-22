@@ -9,6 +9,7 @@ import pytest
 from backend.trading.engine.desk_orders import (
     DESK_STRATEGY_ID,
     KILL_BUY_DETAIL,
+    KILL_SELL_DETAIL,
     NO_CONSTRAINING_PRICE_DETAIL,
     constraining_order_price,
     ops_mandate_payload,
@@ -707,8 +708,11 @@ def test_kill_buy_still_409(tmp_path):
     broker.submit_order.assert_not_called()
 
 
-def test_sell_skips_kill_d_sell_kill_backlog(tmp_path):
-    """D-sell-kill: sell-without-kill is left as-is (not R1-SAFE)."""
+def test_kill_sell_409_d_sell_kill(tmp_path):
+    """D-sell-kill fail-case: kill ON + Desk sell must not succeed.
+
+    Pre-fix main asserted ``blocked is False`` + ``submit_order`` once.
+    """
     path = _mandate_file(tmp_path, TIGHT)
     kill_switch.engage("unit test halt")
     broker = _broker()
@@ -719,8 +723,13 @@ def test_sell_skips_kill_d_sell_kill_backlog(tmp_path):
         mandate_path=path,
         quote_fn=lambda _s: 150.0,
     )
-    assert result.blocked is False
-    broker.submit_order.assert_called_once()
+    assert result.blocked is True
+    assert result.http_status == 409
+    assert result.http_status != 200
+    assert result.detail == KILL_SELL_DETAIL
+    assert result.gate == "kill"
+    broker.get_account_summary.assert_not_called()
+    broker.submit_order.assert_not_called()
 
 
 def test_ops_payload_matches_inspect_source(tmp_path):

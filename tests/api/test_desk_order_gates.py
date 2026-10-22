@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 
 from backend.trading.engine.desk_orders import (
     KILL_BUY_DETAIL,
+    KILL_SELL_DETAIL,
     NO_CONSTRAINING_PRICE_DETAIL,
     reset_desk_mandate_gate,
 )
@@ -381,4 +382,45 @@ def test_api_kill_buy_409(desk_api):
     )
     assert res.status_code == 409
     assert res.json()["detail"] == KILL_BUY_DETAIL
+    desk_api["broker"].submit_order.assert_not_called()
+
+
+def test_api_kill_sell_409_d_sell_kill(desk_api):
+    """D-sell-kill fail-case: kill ON + Desk POST sell must not be 200/success.
+
+    Pre-fix main (R1-SAFE buy-only kill) submitted this sell.
+    """
+    kill_switch.engage("api test")
+    client = desk_api["client"]
+    res = client.post(
+        "/api/orders",
+        json={
+            "symbol": "AAPL",
+            "side": "sell",
+            "quantity": 1,
+            "order_type": "limit",
+            "limit_price": 150,
+        },
+    )
+    assert res.status_code == 409, res.text
+    assert res.status_code != 200
+    body = res.json()
+    assert body["detail"] == KILL_SELL_DETAIL
+    assert "success" not in str(body).lower()
+    desk_api["broker"].get_account_summary.assert_not_called()
+    desk_api["broker"].submit_order.assert_not_called()
+    assert journal_store.load_raw_entries(), "rejected kill-sell must still journal"
+
+
+def test_api_kill_market_sell_409_d_sell_kill(desk_api):
+    """Same fail-case for market sell — kill must not be buy-only."""
+    kill_switch.engage("api test")
+    client = desk_api["client"]
+    res = client.post(
+        "/api/orders",
+        json={"symbol": "AAPL", "side": "sell", "quantity": 1, "order_type": "market"},
+    )
+    assert res.status_code == 409, res.text
+    assert res.status_code != 200
+    assert res.json()["detail"] == KILL_SELL_DETAIL
     desk_api["broker"].submit_order.assert_not_called()
