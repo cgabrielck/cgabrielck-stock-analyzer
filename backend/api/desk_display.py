@@ -111,3 +111,49 @@ def compose_performance_kpis(
         "verified": False,
         "live": False,
     }
+
+
+def paper_vs_spy_risk(paper: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Paper vs SPY card: only paper.risk.*. Empty book → em-dash, never backtest."""
+    paper = paper or {}
+    if not paper or paper.get("empty_book"):
+        return {"sharpe_ratio": None, "max_drawdown_pct": None}
+    risk = paper.get("risk") or {}
+    return {
+        "sharpe_ratio": risk.get("sharpe_ratio"),
+        "max_drawdown_pct": risk.get("max_drawdown_pct"),
+    }
+
+
+def strategy_fallback_row(perf: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Bakeoff-failure fallback. Paper labels use paper fields only; backtest uses backtest.*."""
+    perf = perf or {}
+    paper = perf.get("paper") or {}
+    backtest = perf.get("backtest") or {}
+    if perf.get("kpi_source") == "paper" and paper and not paper.get("empty_book"):
+        risk = paper.get("risk") or {}
+        pnl = paper.get("pnl") or {}
+        trading = paper.get("trading") or {}
+        bench = paper.get("benchmark") or {}
+        return {
+            "strategy": "paper snapshot",
+            "sizing": "—",
+            "return_pct": pnl.get("total_return_pct"),
+            "spy_pct": bench.get("spy_return_pct"),
+            "alpha_net": bench.get("alpha_net_of_costs_pct"),
+            "trades": trading.get("num_trades"),
+            "sharpe": risk.get("sharpe_ratio"),
+            "max_dd": risk.get("max_drawdown_pct"),
+        }
+    if backtest.get("source") and backtest.get("source") != "none":
+        return {
+            "strategy": "stable backtest",
+            "sizing": "—",
+            "return_pct": backtest.get("total_return_pct"),
+            "spy_pct": None,
+            "alpha_net": None,
+            "trades": backtest.get("num_trades"),
+            "sharpe": backtest.get("sharpe_ratio"),
+            "max_dd": backtest.get("max_drawdown_pct"),
+        }
+    return None

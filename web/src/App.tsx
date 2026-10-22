@@ -200,8 +200,8 @@ function Desk({ account, onTrade, onRefresh }: { account: any; onTrade: (s: stri
       </div>
       <div className="grid3" style={{ marginBottom: 14 }}>
         <div className="card kpi"><div className="lbl">Win rate ({kpiSourceLabel(perf)})</div><div className="val">{perf?.win_rate_pct ?? "—"}%</div></div>
-        <div className="card kpi"><div className="lbl">Profit factor</div><div className="val">{perf?.profit_factor ?? "—"}</div></div>
-        <div className="card kpi"><div className="lbl">Max DD</div><div className="val">{perf?.max_drawdown_pct ?? "—"}%</div></div>
+        <div className="card kpi"><div className="lbl">Profit factor ({kpiSourceLabel(perf)})</div><div className="val">{perf?.profit_factor ?? "—"}</div></div>
+        <div className="card kpi"><div className="lbl">Max DD ({kpiSourceLabel(perf)})</div><div className="val">{perf?.max_drawdown_pct ?? "—"}</div></div>
       </div>
       <div className="layout">
         <div className="card">

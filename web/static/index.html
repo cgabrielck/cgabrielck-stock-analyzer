@@ -856,10 +856,14 @@ async function desk(){
   const eq = account?.equity||account?.portfolio_value||0;
   const day = account?.day_pnl||0;
   const paper = perf.paper || {};
+  const paperEmpty = !!paper.empty_book;
+  const paperRisk = paper.risk || {};
+  const paperSharpe = paperEmpty ? null : paperRisk.sharpe_ratio;
+  const paperMaxDd = paperEmpty ? null : paperRisk.max_drawdown_pct;
   const bench = paper.benchmark || {};
   const beats = bench.beats_spy_net;
   const alphaNet = bench.alpha_net_of_costs_pct;
-  const spyRet = bench.spy_return_pct ?? perf.spy_return_pct;
+  const spyRet = bench.spy_return_pct;
   const alphaLine = beats === false
     ? `<p class="muted" style="color:#e8b86d;margin:8px 0 0">${t("desk.no_alpha")}</p>`
     : "";
@@ -879,8 +883,8 @@ async function desk(){
         <span class="chip">${esc(paper.source||perf.source||"—")}</span>
       </div>
       <div class="grid3" style="margin-top:10px">
-        <div class="stat"><div class="lbl">Sharpe</div><div class="val">${perf.sharpe_ratio!=null?num(perf.sharpe_ratio,2):"—"}</div></div>
-        <div class="stat"><div class="lbl">Max DD</div><div class="val">${perf.max_drawdown_pct!=null?num(perf.max_drawdown_pct,1)+"%":"—"}</div></div>
+        <div class="stat"><div class="lbl">Sharpe</div><div class="val">${paperSharpe!=null?num(paperSharpe,2):"—"}</div></div>
+        <div class="stat"><div class="lbl">Max DD</div><div class="val">${paperMaxDd!=null?num(paperMaxDd,1)+"%":"—"}</div></div>
         <div class="stat"><div class="lbl">Turnover</div><div class="val">${(paper.trading&&paper.trading.turnover_pct)!=null?num(paper.trading.turnover_pct,1)+"%":"—"}</div></div>
         <div class="stat"><div class="lbl">SPY</div><div class="val ${cls(spyRet)}">${spyRet!=null?num(spyRet,2)+"%":"—"}</div></div>
         <div class="stat"><div class="lbl">${t("desk.alpha_net")}</div><div class="val ${cls(alphaNet)}">${alphaNet!=null?num(alphaNet,2)+"%":"—"}</div></div>
@@ -1669,15 +1673,35 @@ async function strategies(){
     if(paperControls){
       try {
         const p = await api("/api/performance");
-        rows = [{
-          strategy: "paper snapshot",
-          sizing: "—",
-          return_pct: p.total_return_pct,
-          spy_pct: p.spy_return_pct,
-          alpha_net: p.alpha_net_of_costs_pct,
-          trades: p.num_trades,
-          sharpe: p.sharpe_ratio,
-        }];
+        const paper = p.paper || {};
+        const bt = p.backtest || {};
+        if (p.kpi_source === "paper" && paper && !paper.empty_book) {
+          const risk = paper.risk || {};
+          const pnl = paper.pnl || {};
+          const trading = paper.trading || {};
+          const bench = paper.benchmark || {};
+          rows = [{
+            strategy: "paper snapshot",
+            sizing: "—",
+            return_pct: pnl.total_return_pct,
+            spy_pct: bench.spy_return_pct,
+            alpha_net: bench.alpha_net_of_costs_pct,
+            trades: trading.num_trades,
+            sharpe: risk.sharpe_ratio,
+            max_dd: risk.max_drawdown_pct,
+          }];
+        } else if (bt.source && bt.source !== "none") {
+          rows = [{
+            strategy: "stable backtest",
+            sizing: "—",
+            return_pct: bt.total_return_pct,
+            spy_pct: null,
+            alpha_net: null,
+            trades: bt.num_trades,
+            sharpe: bt.sharpe_ratio,
+            max_dd: bt.max_drawdown_pct,
+          }];
+        }
       } catch {}
     }
   }

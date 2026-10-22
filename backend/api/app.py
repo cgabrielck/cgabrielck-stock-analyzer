@@ -479,11 +479,11 @@ def guide() -> Dict[str, Any]:
                 "id": "auto",
                 "en": {
                     "title": "How paper auto trading works",
-                    "body": "Open AI Mode → pick a strategy → Start paper auto. The top bar shows AUTO ON only when the worker heartbeat is fresh. The worker scans during US regular hours unless IGNORE_MARKET_HOURS=true.",
+                    "body": "Open AI Mode → pick a strategy → Start paper auto. The top bar shows AUTO ON only when the worker process is running (live pid) — not when the account is loaded and not from an unverified heartbeat. The worker scans during US regular hours unless IGNORE_MARKET_HOURS=true.",
                 },
                 "zh": {
                     "title": "如何開啟紙上自動交易",
-                    "body": "打開 AI 模式 → 選擇策略 → 按「啟動紙上自動交易」。只有工作行程心跳正常時，頂欄才會顯示 AUTO ON。預設只在美股正規交易時段掃描，除非 .env 設 IGNORE_MARKET_HOURS=true。",
+                    "body": "打開 AI 模式 → 選擇策略 → 按「啟動紙上自動交易」。只有工作行程進程在跑（有活 PID）時，頂欄才會顯示 AUTO ON。不是帳戶已載入，也不是未驗證心跳。預設只在美股正規交易時段掃描，除非 .env 設 IGNORE_MARKET_HOURS=true。",
                 },
             },
             {

@@ -7,7 +7,13 @@ from unittest.mock import MagicMock
 import pytest
 from fastapi.testclient import TestClient
 
-from backend.api.desk_display import compose_performance_kpis, display_chips, orders_book
+from backend.api.desk_display import (
+    compose_performance_kpis,
+    display_chips,
+    orders_book,
+    paper_vs_spy_risk,
+    strategy_fallback_row,
+)
 from backend.trading.engine.order_manager import InMemoryOrderStore
 from backend.trading.models import Order, OrderSide, OrderStatus, OrderType
 
@@ -15,6 +21,7 @@ from backend.trading.models import Order, OrderSide, OrderStatus, OrderType
 ROOT = Path(__file__).resolve().parents[2]
 INDEX = ROOT / "web" / "static" / "index.html"
 APP_TSX = ROOT / "web" / "src" / "App.tsx"
+USER_GUIDE = ROOT / "docs" / "CGAB_USER_GUIDE.md"
 
 
 # --- D4: Worker linked chip -------------------------------------------------
@@ -251,5 +258,120 @@ def test_d6_ui_does_not_hardcode_backtest_over_paper_kpis():
     html = INDEX.read_text(encoding="utf-8")
     assert "Win rate (backtest)" not in tsx
     assert "kpiSourceLabel" in tsx
+    assert "Profit factor ({kpiSourceLabel(perf)})" in tsx
+    assert "Max DD ({kpiSourceLabel(perf)})" in tsx
     assert "kpi_source" in html
     assert "Win rate (${esc(kpiSource)})" in html or "Win rate (${esc(kpiSource)}" in html
+
+
+def test_d6_paper_vs_spy_empty_book_does_not_surface_backtest_risk():
+    """Fail-case: empty paper + backtest summary must not fill Paper vs SPY Sharpe/Max DD."""
+    paper = {
+        "empty_book": True,
+        "source": "alpaca_equity_only",
+        "risk": {"sharpe_ratio": None, "max_drawdown_pct": None},
+    }
+    kpis = compose_performance_kpis(
+        paper,
+        {"sharpe_ratio": 2.5, "max_drawdown_pct": 1.0, "win_rate_pct": 90.0},
+    )
+    assert kpis["kpi_source"] == "backtest"
+    assert kpis["sharpe_ratio"] == 2.5
+    card = paper_vs_spy_risk(paper)
+    assert card["sharpe_ratio"] is None
+    assert card["max_drawdown_pct"] is None
+
+
+def test_d6_paper_vs_spy_card_template_reads_paper_risk_only():
+    html = INDEX.read_text(encoding="utf-8")
+    start = html.index("async function desk")
+    end = html.index("async function orders")
+    desk_fn = html[start:end]
+    card_start = desk_fn.index("desk.vs_spy")
+    card_end = desk_fn.index("Win rate (${esc(kpiSource)})")
+    card = desk_fn[card_start:card_end]
+    assert "perf.sharpe_ratio" not in card
+    assert "perf.max_drawdown_pct" not in card
+    assert "paper.risk" in desk_fn
+    assert "paperEmpty" in desk_fn
+    assert "paperSharpe" in card
+    assert "paperMaxDd" in card
+
+
+def test_d6_bakeoff_fallback_does_not_stamp_backtest_as_paper_snapshot():
+    row = strategy_fallback_row(
+        {
+            "kpi_source": "backtest",
+            "sharpe_ratio": 2.5,
+            "total_return_pct": 88.0,
+            "num_trades": 200,
+            "paper": {"empty_book": True, "risk": {}, "pnl": {}, "trading": {}},
+            "backtest": {
+                "source": "stable_strategy_backtest",
+                "sharpe_ratio": 2.5,
+                "total_return_pct": 88.0,
+                "num_trades": 200,
+            },
+        }
+    )
+    assert row is not None
+    assert row["strategy"] != "paper snapshot"
+    assert "paper" not in row["strategy"]
+    assert row["strategy"] == "stable backtest"
+    assert row["sharpe"] == 2.5
+
+
+def test_d6_bakeoff_fallback_paper_uses_paper_fields_only():
+    row = strategy_fallback_row(
+        {
+            "kpi_source": "paper",
+            "sharpe_ratio": 0.2,
+            "total_return_pct": 1.5,
+            "paper": {
+                "empty_book": False,
+                "risk": {"sharpe_ratio": 0.2, "max_drawdown_pct": 5.0},
+                "pnl": {"total_return_pct": 1.5},
+                "trading": {"num_trades": 3},
+                "benchmark": {"spy_return_pct": 2.0, "alpha_net_of_costs_pct": -0.5},
+            },
+            "backtest": {"source": "stable_strategy_backtest", "sharpe_ratio": 9.9, "total_return_pct": 77.0},
+        }
+    )
+    assert row["strategy"] == "paper snapshot"
+    assert row["sharpe"] == 0.2
+    assert row["return_pct"] == 1.5
+    assert row["sharpe"] != 9.9
+
+
+def test_d6_strategies_fallback_template_does_not_stamp_toplevel_as_paper():
+    html = INDEX.read_text(encoding="utf-8")
+    start = html.index("async function strategies")
+    end = html.index("async function calendar")
+    fn = html[start:end]
+    assert "paper snapshot" in fn
+    assert "return_pct: p.total_return_pct" not in fn
+    assert "sharpe: p.sharpe_ratio" not in fn
+    assert "trades: p.num_trades" not in fn
+    assert "kpi_source" in fn
+    assert "stable backtest" in fn
+    assert "bt.sharpe_ratio" in fn or "bt.sharpe" in fn
+
+
+def test_d4_guide_api_does_not_teach_fresh_heartbeat_as_auto_on(honesty_api):
+    res = honesty_api["client"].get("/api/guide")
+    assert res.status_code == 200, res.text
+    auto = next(step for step in res.json()["steps"] if step["id"] == "auto")
+    en = auto["en"]["body"].lower()
+    zh = auto["zh"]["body"]
+    assert "heartbeat is fresh" not in en
+    assert "心跳正常" not in zh
+    assert "live pid" in en or "pid" in en
+    assert "未驗證" in zh and "PID" in zh
+
+
+def test_d4_user_guide_matches_live_pid_chip():
+    text = USER_GUIDE.read_text(encoding="utf-8")
+    assert "heartbeat is fresh" not in text
+    assert "心跳正常" not in text
+    assert "live pid" in text.lower()
+    assert "未驗證心跳" in text
