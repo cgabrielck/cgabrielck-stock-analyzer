@@ -82,6 +82,21 @@ def test_size_shares_by_risk():
     assert qty == 200
 
 
+def test_invalid_stop_does_not_invent_five_percent_risk():
+    """Stop >= entry used to become a silent 5% stop and return the same 200 shares."""
+    valid = size_shares_by_risk(
+        equity=100_000, cash=50_000, fill_price=100, stop_price=95, risk_pct=0.01
+    )
+    assert valid == 200
+    for bad_stop in (100, 110, 0, -5):
+        assert size_shares_by_risk(
+            equity=100_000, cash=50_000, fill_price=100, stop_price=bad_stop, risk_pct=0.01
+        ) == 0
+    assert size_shares_by_risk(
+        equity=100_000, cash=50_000, fill_price=100, stop_price=None, risk_pct=0.01
+    ) == 0
+
+
 def test_kelly_cap_is_tighter_than_wide_stop_risk_qty():
     """Wide stop → large 1R size; Kelly (half of 25% cap) should be the min."""
     from backend.trading.risk.position_sizer import shares_to_buy

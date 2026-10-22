@@ -197,15 +197,30 @@ def size_shares_by_risk(
     risk_pct: float = 0.01,
     max_position_pct: float = 0.25,
 ) -> int:
-    """Van Tharp: shares = (equity * risk_pct) / |entry - stop|, capped by cash and concentration."""
-    if fill_price <= 0 or equity <= 0:
+    """Van Tharp: shares = (equity * risk_pct) / (entry - stop), capped by cash and concentration.
+
+    The stop must be a positive price strictly below entry. A missing, zero,
+    or stop-at-or-above-entry does not define long risk — return 0. Do not
+    invent a 5% stop and size a buy off that fiction.
+    """
+    try:
+        px = float(fill_price)
+        stop = float(stop_price)
+        book = float(equity)
+        purse = float(cash)
+        risk = float(risk_pct)
+        conc = float(max_position_pct)
+    except (TypeError, ValueError):
         return 0
-    risk_per_share = fill_price - stop_price
-    if risk_per_share <= 0:
-        risk_per_share = fill_price * 0.05
-    budget = equity * risk_pct
+    if px <= 0 or book <= 0 or purse < 0 or risk <= 0 or conc <= 0:
+        return 0
+    # Stop must sit strictly below entry. <= 0 or stop >= entry is not 1R.
+    if not (0 < stop < px):
+        return 0
+    risk_per_share = px - stop
+    budget = book * risk
     qty = int(budget / risk_per_share)
-    max_by_conc = int((equity * max_position_pct) / fill_price)
-    max_by_cash = int(cash / fill_price)
+    max_by_conc = int((book * conc) / px)
+    max_by_cash = int(purse / px)
     qty = max(0, min(qty, max_by_conc, max_by_cash))
     return qty
