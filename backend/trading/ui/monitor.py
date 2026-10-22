@@ -30,7 +30,7 @@ import pandas as pd
 from backend.trading.storage import JSONOrderStore
 from backend.trading.models import Order, OrderStatus, OrderSide
 from backend.trading.safety import kill_switch
-from backend.trading.safety.mandate import load_mandate, resolve_mandate_path
+from backend.trading.safety.mandate import inspect_mandate, resolve_mandate_path
 from backend.utils.constants import DATA_DIR
 
 # ============================================================================
@@ -213,7 +213,14 @@ def render_kill_switch_panel():
 
 def render_mandate_panel():
     st.markdown('<div class="sidebar-section">Mandate</div>', unsafe_allow_html=True)
-    mandate = load_mandate(MANDATE_PATH if MANDATE_PATH.exists() else None)
+    snap = inspect_mandate(MANDATE_PATH if MANDATE_PATH.exists() else None)
+    if not snap.is_loaded or snap.mandate is None:
+        st.caption(
+            f"**Mandate:** {snap.status} — orders fail closed"
+            f" ({snap.error or snap.path})"
+        )
+        return
+    mandate = snap.mandate
     if mandate.allowed_symbols:
         st.caption(f"**Allowed symbols:** {len(mandate.allowed_symbols)} tickers")
     else:

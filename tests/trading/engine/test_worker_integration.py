@@ -20,6 +20,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 
 from backend.trading.engine.worker import _build_worker
 from backend.trading.models import OrderStatus
+from backend.trading.safety.mandate import MandateGate, TradingMandate
 
 
 class FakeAccount:
@@ -82,6 +83,10 @@ class TestWorkerIntegration(unittest.TestCase):
                     ticker_universe=["AAPL"],
                     execution_mode="shadow",
                 )
+
+            # Missing config/mandate.json is fail-closed. This harness declares
+            # the explicit no-cap policy so the shadow fill path is still tested.
+            worker.mandate_gate = MandateGate(TradingMandate.permissive())
 
             # Isolate order store to tempdir so orders don't leak between runs
             from backend.trading.storage import SQLiteOrderStore, JSONOrderStore, create_order_store
@@ -189,6 +194,9 @@ class TestWorkerIntegration(unittest.TestCase):
                     ticker_universe=["AAPL"],
                     execution_mode="shadow",
                 )
+
+            # Same explicit no-cap policy as the fill test (missing file ≠ permissive).
+            worker.mandate_gate = MandateGate(TradingMandate.permissive())
 
             # Isolate order store to tempdir
             from backend.trading.storage import create_order_store

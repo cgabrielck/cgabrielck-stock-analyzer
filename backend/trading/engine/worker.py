@@ -45,7 +45,12 @@ from backend.trading.engine.fetch_policy import (
 from backend.trading.strategies import skip_codes
 from backend.pathsetup import ensure_backend_on_path
 from backend.trading.safety import audit, kill_switch
-from backend.trading.safety.mandate import MandateGate, TradingMandate, load_mandate
+from backend.trading.safety.mandate import (
+    MandateGate,
+    MandateLoadError,
+    TradingMandate,
+    load_mandate,
+)
 
 ensure_backend_on_path()
 
@@ -89,9 +94,22 @@ class TradingWorker:
         self.reconciler  = reconciler
         self.strategy: StrategyBase = get_strategy(strategy_id)
         self.risk_engine = RiskEngine(risk_limits or RiskLimits())
-        # Mandate gate: declarative authorization envelope loaded from
-        # config/mandate.json (permissive default preserves legacy behaviour).
-        self.mandate_gate = MandateGate(mandate or load_mandate())
+        # Explicit TradingMandate (including permissive / {}) is a real policy.
+        # A missing or unreadable config/mandate.json is not: fail closed.
+        # Do not install a fake permissive mandate for that file.
+        if mandate is not None:
+            self.mandate_gate = MandateGate(mandate)
+        else:
+            try:
+                self.mandate_gate = MandateGate(load_mandate())
+            except MandateLoadError as exc:
+                logger.error(
+                    "Mandate %s at %s — worker orders fail closed: %s",
+                    exc.snapshot.status,
+                    exc.snapshot.path,
+                    exc.snapshot.error,
+                )
+                self.mandate_gate = MandateGate(unavailable=exc.snapshot)
         # Execution mode: "paper" submits to broker, "shadow" simulates fills locally
         self.execution_mode = execution_mode
         self.shadow_engine = shadow_engine
@@ -564,9 +582,12 @@ class TradingWorker:
                 notional=signal.entry_price,
             )
             if not mandate_decision.approved:
-                logger.info("BLOCKED %s: %s", ticker, mandate_decision.reason)
+                reason = mandate_decision.reason or "Mandate rejected this order."
+                if self.mandate_gate.unavailable_reason:
+                    self._journal_mandate_file_reject(draft_for_mandate, reason)
+                logger.info("BLOCKED %s: %s", ticker, reason)
                 summary_rows.append({"ticker": ticker, "action": "BLOCKED",
-                                    "reason": mandate_decision.reason})
+                                    "reason": reason})
                 note(ticker, "mandate")
                 continue
 
@@ -632,7 +653,8 @@ class TradingWorker:
                 else None
             )
             reserved = False
-            if self.mandate_gate.mandate.max_daily_orders is not None:
+            loaded_mandate = self.mandate_gate.mandate
+            if loaded_mandate is not None and loaded_mandate.max_daily_orders is not None:
                 slot = self.mandate_gate.try_reserve()
                 if not slot.approved:
                     logger.info("BLOCKED %s: %s", ticker, slot.reason)
@@ -1140,6 +1162,35 @@ class TradingWorker:
         except Exception as exc:
             logger.debug("deep plan lookup failed for %s: %s", ticker, exc)
             return None
+
+    def _journal_mandate_file_reject(self, order: Order, detail: str) -> Order:
+        """Persist a REJECTED order when the mandate file is missing or unreadable.
+
+        The order is not submitted. Same durable trace as a rejected sell:
+        order store + trade journal. Does not stamp RISK_APPROVED.
+        """
+        order.status = OrderStatus.REJECTED
+        order.error_message = detail
+        order.failed_at = datetime.now(timezone.utc)
+        try:
+            self.store.save_order(order)
+        except Exception:
+            logger.exception("Failed to persist mandate reject for %s", order.symbol)
+        try:
+            from backend.utils.provenance.journal_store import record_from_order
+
+            entry = record_from_order(
+                order,
+                strategy_id=getattr(self.strategy, "strategy_id", None),
+            )
+            if not entry:
+                logger.error(
+                    "Mandate reject for %s was not journaled (no entry).",
+                    order.symbol,
+                )
+        except Exception:
+            logger.exception("Failed to journal mandate reject for %s", order.symbol)
+        return order
 
     def _fail_sell(self, order: Order, detail: str) -> Order:
         """Persist a rejected sell. Never stamps RISK_APPROVED."""

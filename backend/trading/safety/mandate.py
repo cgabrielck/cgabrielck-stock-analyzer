@@ -10,9 +10,10 @@ allowed to do).
 Inspired by Vibe-Trading's mandate-gated live actions.
 
 Config file: repo ``config/mandate.json`` (copy from ``config/mandate.example.json``).
-If absent, a permissive default is used so older deploys keep running — Wave 1
-lands the tightened file locally. Malformed JSON still fails *open* (kill switch
-and RiskEngine remain the safety nets).
+A present, valid document is the policy — including an explicit ``{}`` /
+null caps, which means no mandate cap. A missing or unreadable file is not
+that policy: ``load_mandate()`` refuses it (fail closed). Desk place-order
+uses ``inspect_mandate()`` and fails closed the same way.
 """
 from __future__ import annotations
 
@@ -113,10 +114,11 @@ MANDATE_STATUS_CORRUPT = "corrupt"
 
 
 class MandateSnapshot(BaseModel):
-    """Honest load result for Desk ops + order path (same source).
+    """Honest load result for Desk ops, Desk orders, and the worker.
 
-    Worker ``load_mandate()`` stays fail-open for legacy deploys. Desk
-    place-order is fail-closed when status is missing or corrupt.
+    Missing or unreadable → status missing/corrupt and ``mandate is None``.
+    Never substitute a permissive mandate for that. A present valid file,
+    including explicit ``{}``, is ``loaded``.
     """
 
     status: str
@@ -163,25 +165,55 @@ def inspect_mandate(path: Optional[Path] = None) -> MandateSnapshot:
         )
 
 
+def mandate_unavailable_detail(snapshot: MandateSnapshot) -> str:
+    """Clear reject text when a mandate file was expected but is not usable.
+
+    Same honesty as Desk place-order: missing and unreadable both fail closed.
+    Does not describe an explicit empty ``{}`` file — that file is loaded.
+    """
+    if snapshot.status == MANDATE_STATUS_MISSING:
+        return (
+            "Mandate missing — orders fail closed until "
+            f"{snapshot.path} is present."
+        )
+    if snapshot.status == MANDATE_STATUS_CORRUPT:
+        return (
+            "Mandate corrupt — orders fail closed: "
+            f"{snapshot.error or 'unreadable mandate file'}."
+        )
+    return (
+        f"Mandate unusable (status={snapshot.status}) — orders fail closed."
+    )
+
+
+class MandateLoadError(Exception):
+    """Mandate file missing or unreadable. No permissive substitute."""
+
+    def __init__(self, snapshot: MandateSnapshot):
+        self.snapshot = snapshot
+        super().__init__(mandate_unavailable_detail(snapshot))
+
+
 def load_mandate(path: Optional[Path] = None) -> TradingMandate:
     """
-    Load the mandate from config/mandate.json.
+    Load a present mandate file.
 
-    Worker / legacy path: falls back to a permissive mandate if the file is
-    absent or malformed (malformed logs a warning — we fail *open* to preserve
-    existing worker behaviour, but the kill switch and RiskEngine remain as
-    safety nets). Desk place-order must use ``inspect_mandate()`` and fail closed.
+    An explicit valid document, including ``{}`` (no caps / no symbol list),
+    is returned as written. Missing or unreadable files raise
+    ``MandateLoadError`` — callers must fail closed and must not invent a
+    permissive mandate. Desk place-order uses ``inspect_mandate()`` and
+    rejects the same statuses.
     """
     snap = inspect_mandate(path)
-    if snap.is_loaded:
-        return snap.mandate  # type: ignore[return-value]
-    if snap.status == MANDATE_STATUS_CORRUPT:
-        logger.warning(
-            "Failed to load mandate from %s: %s — using permissive default.",
-            snap.path,
-            snap.error,
-        )
-    return TradingMandate.permissive()
+    if snap.is_loaded and snap.mandate is not None:
+        return snap.mandate
+    logger.error(
+        "Mandate %s at %s — fail closed, no permissive fallback: %s",
+        snap.status,
+        snap.path,
+        snap.error,
+    )
+    raise MandateLoadError(snap)
 
 
 def _utc_today() -> date:
@@ -350,8 +382,19 @@ class MandateGate:
         mandate: Optional[TradingMandate] = None,
         *,
         daily_count_path: Optional[Path] = None,
+        unavailable: Optional[MandateSnapshot] = None,
     ):
-        self.mandate = mandate or TradingMandate.permissive()
+        # Explicit ``TradingMandate`` (including ``permissive()`` / ``{}``)
+        # is a real policy. ``unavailable`` is a missing or unreadable file:
+        # do not install a fake permissive mandate in its place.
+        self.unavailable_snapshot: Optional[MandateSnapshot] = None
+        self.unavailable_reason: Optional[str] = None
+        if unavailable is not None and not unavailable.is_loaded:
+            self.unavailable_snapshot = unavailable
+            self.unavailable_reason = mandate_unavailable_detail(unavailable)
+            self.mandate: Optional[TradingMandate] = None
+        else:
+            self.mandate = mandate if mandate is not None else TradingMandate.permissive()
         self._counter = DailyOrderCounter(daily_count_path)
 
     def record_order(self) -> None:
@@ -363,6 +406,12 @@ class MandateGate:
         A write failure poisons the store so the next capped evaluate
         fail-closes instead of under-counting.
         """
+        if self.mandate is None:
+            logger.error(
+                "Not counting an order: mandate is not loaded (%s)",
+                self.unavailable_reason,
+            )
+            return
         cap = self.mandate.max_daily_orders
         try:
             if cap is not None:
@@ -378,7 +427,15 @@ class MandateGate:
         Call this after mandate/risk peek-approve and **before** broker
         submit so two processes cannot both pass evaluate then both record.
         No cap → approved without increment (caller may ``record_order``).
+        Missing/unreadable mandate → fail closed, and the daily counter
+        file is not touched.
         """
+        if self.unavailable_reason or self.mandate is None:
+            return MandateDecision(
+                approved=False,
+                reason=self.unavailable_reason
+                or "Mandate not loaded — orders fail closed.",
+            )
         cap = self.mandate.max_daily_orders
         if cap is None:
             return MandateDecision(approved=True)
@@ -398,7 +455,7 @@ class MandateGate:
 
     def release_reservation(self) -> None:
         """Return a slot if we reserved then did not accept the order."""
-        if self.mandate.max_daily_orders is None:
+        if self.mandate is None or self.mandate.max_daily_orders is None:
             return
         try:
             self._counter.release()
@@ -417,6 +474,15 @@ class MandateGate:
             order:     The draft order.
             ref_price: Reference price for notional check (limit_price used if None).
         """
+        # File missing/unreadable is not a loaded policy. Reject before the
+        # SELL-bypass and before any permissive default. An explicit ``{}``
+        # never sets ``unavailable_reason``.
+        if self.unavailable_reason or self.mandate is None:
+            return MandateDecision(
+                approved=False,
+                reason=self.unavailable_reason
+                or "Mandate not loaded — orders fail closed.",
+            )
         m = self.mandate
         side = order.side.value if isinstance(order.side, OrderSide) else str(order.side)
 
