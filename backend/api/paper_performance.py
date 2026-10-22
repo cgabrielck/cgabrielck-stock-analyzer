@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from backend.trading.fill_honesty import honest_fill_status, recorded_fill_price
 from backend.trading.performance.tracker import (
     INITIAL_CAPITAL,
     evaluate_performance,
@@ -23,32 +24,32 @@ logger = logging.getLogger(__name__)
 DEFAULT_COST_BPS = 10.0  # 0.10% round-trip per turn
 
 
+def _normalize_paper_order(row: Dict[str, Any]) -> Dict[str, Any]:
+    """Ledger row: never promote limit/zero to filled_avg_price (O4)."""
+    side = row.get("side")
+    if hasattr(side, "value"):
+        side = side.value
+    status = row.get("status")
+    if hasattr(status, "value"):
+        status = status.value
+    fill_px = recorded_fill_price(row)
+    status_text = str(status or "").lower()
+    return {
+        **row,
+        "side": str(side or "").lower(),
+        "status": honest_fill_status(status_text, {"filled_avg_price": fill_px}),
+        "quantity": float(row.get("quantity") or row.get("qty") or 0),
+        "filled_avg_price": fill_px,
+        "filled_at": row.get("filled_at") or row.get("updated_at") or row.get("created_at"),
+    }
+
+
 def _load_paper_orders() -> List[Dict[str, Any]]:
     store = None
     try:
         store = create_order_store()
         if hasattr(store, "export_dicts"):
-            rows = store.export_dicts()
-            # Normalize side enums / status for tracker
-            out: List[Dict[str, Any]] = []
-            for row in rows:
-                side = row.get("side")
-                if hasattr(side, "value"):
-                    side = side.value
-                status = row.get("status")
-                if hasattr(status, "value"):
-                    status = status.value
-                out.append(
-                    {
-                        **row,
-                        "side": str(side or "").lower(),
-                        "status": str(status or "").lower(),
-                        "quantity": float(row.get("quantity") or row.get("qty") or 0),
-                        "filled_avg_price": row.get("filled_avg_price") or row.get("limit_price"),
-                        "filled_at": row.get("filled_at") or row.get("updated_at") or row.get("created_at"),
-                    }
-                )
-            return out
+            return [_normalize_paper_order(row) for row in store.export_dicts()]
     except Exception as exc:
         logger.debug("paper order export failed: %s", exc)
     finally:
@@ -67,7 +68,7 @@ def _load_paper_orders() -> List[Dict[str, Any]]:
             data = json.loads(path.read_text(encoding="utf-8"))
             if isinstance(data, dict):
                 data = data.get("orders", [])
-            return list(data or [])
+            return [_normalize_paper_order(row) for row in (data or [])]
         except Exception:
             continue
     return []
@@ -80,8 +81,10 @@ def _turnover_pct(orders: List[Dict[str, Any]], equity: float) -> float:
     for o in orders:
         if str(o.get("status") or "").lower() != "filled":
             continue
+        px = recorded_fill_price(o)
+        if px is None:
+            continue
         qty = float(o.get("quantity") or 0)
-        px = float(o.get("filled_avg_price") or o.get("limit_price") or 0)
         notional += abs(qty * px)
     return round(100.0 * notional / equity, 2)
 
@@ -278,17 +281,18 @@ def _order_brief(order: Dict[str, Any]) -> Dict[str, Any]:
         qty_f = float(qty)
     except (TypeError, ValueError):
         qty_f = 0.0
-    px = order.get("limit_price") or order.get("filled_avg_price")
+    fill_px = recorded_fill_price(order)
     try:
-        px_f = float(px) if px not in (None, "") else None
+        limit_px = float(order.get("limit_price")) if order.get("limit_price") not in (None, "") else None
     except (TypeError, ValueError):
-        px_f = None
+        limit_px = None
+    status = honest_fill_status(_status_key(order), {"filled_avg_price": fill_px})
     return {
         "symbol": str(order.get("symbol") or "").upper(),
-        "status": _status_key(order),
+        "status": status,
         "qty": qty_f,
-        "limit_price": px_f,
-        "filled_avg_price": order.get("filled_avg_price"),
+        "limit_price": limit_px,
+        "filled_avg_price": fill_px,
         "filled_at": str(order.get("filled_at") or "")[:19] or None,
         "submitted_at": str(order.get("submitted_at") or order.get("created_at") or "")[:19] or None,
         "side": str(order.get("side") or "").lower(),

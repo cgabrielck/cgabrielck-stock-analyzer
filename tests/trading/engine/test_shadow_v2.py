@@ -92,6 +92,13 @@ class TestShadowV2(unittest.TestCase):
         self.assertEqual(filled.filled_avg_price, 150.0)
         self.assertEqual(filled.slippage_pct, 0.0)
 
+    def test_no_forward_bars_market_is_not_filled_at_zero(self):
+        """O1 fail-case: market + no bars must not FILLED @ 0."""
+        o = _order(otype="market", limit=None)
+        result = self.engine.simulate_submission(o, next_bars=None)
+        self.assertNotEqual(result.status, OrderStatus.FILLED)
+        self.assertIsNone(result.filled_avg_price)
+
     def test_datetime_weekend_bars_are_dropped_before_fill(self):
         o = _order(otype="market", limit=None)
         idx = pd.to_datetime(["2026-09-12", "2026-09-14"])  # Sat crypto + Mon equity

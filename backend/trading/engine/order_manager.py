@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from backend.trading.models import Order, OrderStatus
 from backend.trading.broker import BrokerAdapter
 from backend.trading.engine.stamp import VENUE_STATUSES
+from backend.trading.fill_honesty import apply_recorded_fill, is_fill_status, recorded_fill_price
 from backend.trading.engine.sticky_idempotency import (
     StickyLookupUnproven,
     find_sticky_order,
@@ -173,6 +174,7 @@ class OrderManager:
                 submitted_order.filled_avg_price = None
             self.store.save_order(submitted_order)
             return submitted_order
+        apply_recorded_fill(submitted_order)
         if submitted_order.status in VENUE_STATUSES:
             self.store.save_order(submitted_order)
             return submitted_order
@@ -208,14 +210,34 @@ class OrderManager:
         broker_order = self.broker.get_order(local_order.id)
         
         if broker_order:
-            # Update local state
-            if broker_order.status != local_order.status:
-                logger.info(f"Order {local_order.id} status changed: {local_order.status} -> {broker_order.status}")
-                local_order.status = broker_order.status
-                local_order.filled_at = broker_order.filled_at
+            fill_px = recorded_fill_price(broker_order)
+            if is_fill_status(broker_order.status) and fill_px is None:
+                logger.warning(
+                    "Broker reported %s for %s without a positive fill price; "
+                    "not promoting to filled (limit is not a fill).",
+                    broker_order.status,
+                    local_order.id,
+                )
                 local_order.cancelled_at = broker_order.cancelled_at
                 local_order.failed_at = broker_order.failed_at
                 local_order.error_message = broker_order.error_message
+                # Keep a non-fill local status. Do not copy limit as avg fill.
+                if is_fill_status(local_order.status):
+                    local_order.status = OrderStatus.SUBMITTED
+                local_order.filled_avg_price = None
+                local_order.filled_at = None
+                self.store.save_order(local_order)
+                return local_order
+            if (
+                broker_order.status != local_order.status
+                or fill_px != local_order.filled_avg_price
+            ):
+                logger.info(f"Order {local_order.id} status changed: {local_order.status} -> {broker_order.status}")
+                local_order.status = broker_order.status
+                local_order.cancelled_at = broker_order.cancelled_at
+                local_order.failed_at = broker_order.failed_at
+                local_order.error_message = broker_order.error_message
+                apply_recorded_fill(local_order, broker_order)
                 self.store.save_order(local_order)
             return local_order
         else:

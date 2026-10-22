@@ -29,6 +29,7 @@ import pandas as pd
 
 from backend.trading.storage import JSONOrderStore
 from backend.trading.models import Order, OrderStatus, OrderSide
+from backend.trading.fill_honesty import recorded_fill_price
 from backend.trading.safety import kill_switch
 from backend.trading.safety.mandate import inspect_mandate, resolve_mandate_path
 from backend.utils.constants import DATA_DIR
@@ -117,10 +118,12 @@ def _compute_positions(orders: List[Order]) -> pd.DataFrame:
     for order in orders:
         if order.status != OrderStatus.FILLED:
             continue
+        price = recorded_fill_price(order)
+        if price is None:
+            continue
         symbol = order.symbol
         side = order.side
         qty = order.quantity
-        price = order.filled_avg_price or order.limit_price or 0.0
         if symbol not in positions:
             positions[symbol] = {"quantity": 0.0, "total_cost": 0.0}
         if side == OrderSide.BUY:
@@ -164,6 +167,9 @@ def _compute_daily_pnl(orders: List[Order], days: int = 30) -> pd.DataFrame:
     for order in orders:
         if order.status != OrderStatus.FILLED or order.side != OrderSide.SELL:
             continue
+        filled_price = recorded_fill_price(order)
+        if filled_price is None:
+            continue
         filled_at = order.filled_at
         if not filled_at:
             continue
@@ -174,7 +180,6 @@ def _compute_daily_pnl(orders: List[Order], days: int = 30) -> pd.DataFrame:
         if dt < cutoff:
             continue
         date_key = dt.date().isoformat()
-        filled_price = order.filled_avg_price or order.limit_price or 0.0
         limit_price = order.limit_price or 0.0
         qty = order.quantity
         pnl = (filled_price - limit_price) * qty  # slippage-based rough estimate

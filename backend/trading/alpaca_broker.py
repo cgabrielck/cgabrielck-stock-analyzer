@@ -22,6 +22,8 @@ from backend.trading.engine.sticky_idempotency import (
     is_client_order_id_conflict,
     mark_acceptance_unknown,
 )
+from backend.trading.fill_honesty import apply_recorded_fill, recorded_fill_price
+from backend.trading.models import AccountSummary, Order, OrderSide, OrderStatus, OrderType, Position
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +42,7 @@ def disable_unsafe_place_retries(client: Any) -> None:
     if not isinstance(codes, list):
         return
     client._retry_codes = [code for code in codes if int(code) != 504]
-from backend.trading.models import AccountSummary, Order, OrderSide, OrderStatus, OrderType, Position
+
 
 # Alpaca's public status strings -> our internal OrderStatus enum.
 _STATUS_MAP = {
@@ -239,6 +241,7 @@ class AlpacaBroker(BrokerAdapter):
             order.submitted_at = alpaca_order.submitted_at
             # Store the broker's order ID for future reference
             order.id = str(alpaca_order.id)
+            apply_recorded_fill(order, alpaca_order)
         except APIError as e:
             if is_client_order_id_conflict(e):
                 # Includes a 422 that alpaca-py surfaced after its own 504 retry.
@@ -299,6 +302,8 @@ class AlpacaBroker(BrokerAdapter):
             # This is a simplified mapping. A real implementation would need
             # a way to link back to the original internal `Order` object to
             # retrieve all its details like idempotency_key.
+            fill_px = recorded_fill_price(alpaca_order)
+            status = self._map_status(alpaca_order.status)
             order = Order(
                 id=str(alpaca_order.id),
                 idempotency_key=alpaca_order.client_order_id,
@@ -306,14 +311,16 @@ class AlpacaBroker(BrokerAdapter):
                 side=OrderSide(getattr(alpaca_order.side, "value", alpaca_order.side)),
                 order_type=OrderType(getattr(alpaca_order.type, "value", alpaca_order.type)),
                 quantity=float(alpaca_order.qty),
-                status=self._map_status(alpaca_order.status),
+                status=status,
                 limit_price=float(alpaca_order.limit_price) if alpaca_order.limit_price else None,
                 stop_price=float(alpaca_order.stop_price) if alpaca_order.stop_price else None,
                 submitted_at=alpaca_order.submitted_at,
                 filled_at=alpaca_order.filled_at,
                 cancelled_at=alpaca_order.canceled_at,
                 failed_at=alpaca_order.failed_at,
+                filled_avg_price=fill_px,
             )
+            apply_recorded_fill(order, alpaca_order)
             return order
         except APIError:
             return None  # Order not found

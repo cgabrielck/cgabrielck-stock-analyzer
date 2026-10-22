@@ -113,6 +113,7 @@ class TestOrderManager(unittest.TestCase):
         broker_order = local_order.model_copy()
         broker_order.status = OrderStatus.FILLED
         broker_order.filled_at = datetime.now(timezone.utc)
+        broker_order.filled_avg_price = 9.87
         self.mock_broker.get_order.return_value = broker_order
 
         # Execute sync
@@ -120,6 +121,7 @@ class TestOrderManager(unittest.TestCase):
 
         self.assertEqual(result.status, OrderStatus.FILLED)
         self.assertIsNotNone(result.filled_at)
+        self.assertEqual(result.filled_avg_price, 9.87)
         
         # Verify store updated
         saved_order = self.store.get_order("broker_id_sync")

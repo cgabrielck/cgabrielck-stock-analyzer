@@ -685,9 +685,11 @@ def place_desk_order(
     )
 
     # Shadow market/stop: Mandate/Risk used mark/quote on a copy. The wire
-    # order still has no constraining limit. No-bar ShadowTradingEngine then
-    # fills at ``limit_price or 0.0`` — a fake FILLED. Reject instead of
-    # inventing $0. Limit no-bar instant-fill (O1–O6) is unchanged.
+    # order still has no constraining limit. ShadowTradingEngine refuses
+    # FILLED without a positive fill (O1). Reject here too so Desk 409s
+    # instead of storing a cancelled unpriced fill. Limit no-bar still
+    # records a simulated fill at the limit (a stored fill, not a later
+    # limit-as-avg substitution).
     if mode == "shadow" and positive_price(order.limit_price) is None:
         audit_id = audit.log_risk_decision(
             order.symbol,

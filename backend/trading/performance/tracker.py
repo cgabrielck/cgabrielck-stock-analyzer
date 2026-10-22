@@ -23,6 +23,7 @@ import numpy as np
 import pandas as pd
 
 from backend.agents.risk_analyzer import calculate_risk_metrics
+from backend.trading.fill_honesty import recorded_fill_price
 from backend.utils.constants import DATA_DIR
 
 logger = logging.getLogger(__name__)
@@ -97,7 +98,10 @@ def compute_equity_curve(orders: List[Dict], initial_capital: float = INITIAL_CA
     
     Returns DataFrame with columns: date, cash, position_value, equity
     """
-    filled = [o for o in orders if o.get("status") == "filled"]
+    filled = [
+        o for o in orders
+        if str(o.get("status") or "").lower() == "filled" and recorded_fill_price(o) is not None
+    ]
     if not filled:
         return pd.DataFrame({"date": [], "cash": [], "position_value": [], "equity": []})
     
@@ -115,7 +119,9 @@ def compute_equity_curve(orders: List[Dict], initial_capital: float = INITIAL_CA
         symbol = order["symbol"]
         side = order["side"]
         qty = float(order["quantity"])
-        price = float(order.get("filled_avg_price") or order.get("limit_price", 0))
+        price = recorded_fill_price(order)
+        if price is None:
+            continue
         
         if side == "buy":
             cash -= qty * price
@@ -154,7 +160,10 @@ def compute_trades_pnl(orders: List[Dict]) -> List[Dict]:
     buys: Dict[str, List[Tuple[float, float]]] = {}  # symbol → [(price, qty), ...]
     trades = []
     
-    filled = [o for o in orders if o.get("status") == "filled"]
+    filled = [
+        o for o in orders
+        if str(o.get("status") or "").lower() == "filled" and recorded_fill_price(o) is not None
+    ]
     for o in filled:
         o["filled_at_dt"] = pd.to_datetime(o.get("filled_at"))
     filled = sorted(filled, key=lambda x: x["filled_at_dt"])
@@ -163,7 +172,9 @@ def compute_trades_pnl(orders: List[Dict]) -> List[Dict]:
         symbol = order["symbol"]
         side = order["side"]
         qty = float(order["quantity"])
-        price = float(order.get("filled_avg_price") or order.get("limit_price", 0))
+        price = recorded_fill_price(order)
+        if price is None:
+            continue
         
         if side == "buy":
             if symbol not in buys:

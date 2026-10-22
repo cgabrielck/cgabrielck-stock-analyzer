@@ -37,6 +37,7 @@ from backend.trading.engine.sticky_idempotency import (
 )
 from backend.trading.models import Order, OrderSide, OrderStatus, OrderType
 from backend.trading.reconciliation.service import ReconciliationService
+from backend.trading.fill_honesty import fill_notify_price
 from backend.trading.risk.gates import RiskEngine, RiskLimits, positive_price
 from backend.trading.risk.position_sizer import cap_shares_to_notional, shares_to_buy
 from backend.trading.strategies.base import StrategyBase
@@ -767,13 +768,14 @@ class TradingWorker:
                 order_id=result.id,
                 status=result.status.value,
             )
-            if result.status == OrderStatus.FILLED:
+            fill_px = fill_notify_price(result)
+            if result.status == OrderStatus.FILLED and fill_px is not None:
                 self._notify_trade(
                     "fill",
                     symbol=ticker,
                     side="buy",
                     quantity=qty,
-                    price=float(result.filled_avg_price or signal.entry_price),
+                    price=fill_px,
                     stop_loss=signal.stop_loss_price or result.stop_loss_price,
                     take_profit=signal.take_profit_price or result.take_profit_price,
                     strategy=signal.strategy_id,
@@ -835,14 +837,15 @@ class TradingWorker:
                 except Exception as exc:
                     logger.debug("sync_order_status failed for %s: %s", order.id, exc)
                     continue
-                if updated and updated.status == OrderStatus.FILLED:
+                fill_px = fill_notify_price(updated)
+                if updated and updated.status == OrderStatus.FILLED and fill_px is not None:
                     meta = self._position_meta.get(updated.symbol, {})
                     self._notify_trade(
                         "fill",
                         symbol=updated.symbol,
                         side=updated.side.value,
                         quantity=updated.quantity,
-                        price=float(updated.filled_avg_price or updated.limit_price or 0),
+                        price=fill_px,
                         stop_loss=updated.stop_loss_price or meta.get("stop_loss_price"),
                         take_profit=updated.take_profit_price or meta.get("take_profit_price"),
                         strategy=meta.get("strategy_id"),
