@@ -509,6 +509,49 @@ def test_honest_order_row_keeps_real_fill():
     assert row["filled_avg_price"] == 11.5
 
 
+def test_broker_filled_empty_string_price_not_shown_filled():
+    """FC-FILL-01: broker filled + avg_fill_price="" / "null" is not shown as filled."""
+    empty = honest_order_row(
+        {
+            "id": "empty-px",
+            "symbol": "AAPL",
+            "status": "filled",
+            "limit_price": 150.0,
+            "filled_avg_price": "",
+        }
+    )
+    assert empty["status"] != "filled"
+    assert empty["filled_avg_price"] is None
+    null_str = honest_order_row(
+        {
+            "id": "null-str",
+            "symbol": "MSFT",
+            "status": "filled",
+            "filled_avg_price": "null",
+        }
+    )
+    assert null_str["status"] != "filled"
+    assert null_str["filled_avg_price"] is None
+    book = orders_book(
+        [
+            {
+                "id": "row-empty",
+                "symbol": "AAPL",
+                "status": "filled",
+                "limit_price": 150.0,
+                "filled_avg_price": "",
+            }
+        ],
+        source="broker",
+        degraded=False,
+        unverified=False,
+    )
+    row = book["orders"][0]
+    assert row["status"] != "filled"
+    assert book.get("verified") is not True
+    assert book.get("live") is not True
+
+
 def test_get_orders_unpriced_broker_fill_is_not_shown_filled(monkeypatch):
     from fastapi.testclient import TestClient
     from backend.trading.engine.order_manager import InMemoryOrderStore

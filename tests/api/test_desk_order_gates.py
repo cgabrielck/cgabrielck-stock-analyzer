@@ -142,6 +142,28 @@ def test_api_happy_path_still_submits(desk_api):
     assert all(e.get("actor") == DESK_ACTOR for e in money)
 
 
+def test_api_success_without_path_stamp_body_is_not_submitted(desk_api, monkeypatch):
+    """FC-ORDER-01: missing path stamp is not 200 and must not claim submitted."""
+    real = journal_store.record_from_order
+
+    def _omit_stamp(*args, **kwargs):
+        kwargs.pop("intent_id", None)
+        kwargs.pop("provenance_extra", None)
+        kwargs["link_intent"] = False
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr("backend.trading.engine.desk_orders.record_from_order", _omit_stamp)
+    client = desk_api["client"]
+    res = client.post(
+        "/api/orders",
+        json={"symbol": "AAPL", "side": "buy", "quantity": 1, "limit_price": 150, "order_type": "limit"},
+    )
+    assert res.status_code != 200
+    assert res.status_code in {500, 409, 503, 502}
+    assert '"status":"submitted"' not in res.text.replace(" ", "").lower()
+    assert "submitted" not in str(res.json()).lower() or res.status_code != 200
+
+
 def test_api_success_without_path_stamp_is_not_200(desk_api, monkeypatch):
     """Fail-case: FastAPI POST /api/orders must not 200 if PATH stamp is skipped."""
     real = journal_store.record_from_order
@@ -541,6 +563,38 @@ def test_api_kill_market_sell_409_d_sell_kill(desk_api):
     assert res.status_code == 409, res.text
     assert res.status_code != 200
     assert res.json()["detail"] == KILL_SELL_DETAIL
+    desk_api["broker"].submit_order.assert_not_called()
+
+
+def test_kill_on_blocks_desk_market_sell_and_journals(desk_api):
+    """FC-KILL-01: kill ON + market sell is 409, broker call_count==0, journal reject."""
+    kill_switch.engage("failcase kill")
+    client = desk_api["client"]
+    res = client.post(
+        "/api/orders",
+        json={"symbol": "AAPL", "side": "sell", "quantity": 1, "order_type": "market"},
+    )
+    assert res.status_code == 409, res.text
+    assert desk_api["broker"].submit_order.call_count == 0
+    rows = journal_store.load_raw_entries()
+    assert rows, "rejected kill-sell must still journal"
+    blob = json.dumps(rows, default=str).lower()
+    assert "kill" in blob or "reject" in blob or "blocked" in blob
+
+
+def test_desk_corrupt_mandate_rejects_buy_and_ops_not_loaded(desk_api):
+    """FC-MANDATE-01: corrupt mandate.json fail-closes Desk buy; ops not loaded."""
+    desk_api["mandate_path"].write_text("{{{not json", encoding="utf-8")
+    reset_desk_mandate_gate()
+    client = desk_api["client"]
+    ops = client.get("/api/ops").json()
+    assert ops["mandate_status"] in {"missing", "corrupt", "error"}
+    assert ops["mandate"] is None
+    res = client.post(
+        "/api/orders",
+        json={"symbol": "AAPL", "side": "buy", "quantity": 1, "limit_price": 150, "order_type": "limit"},
+    )
+    assert res.status_code != 200
     desk_api["broker"].submit_order.assert_not_called()
 
 
