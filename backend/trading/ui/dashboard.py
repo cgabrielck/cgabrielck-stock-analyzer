@@ -11,19 +11,17 @@ New in v2:
 from __future__ import annotations
 
 import html
-import uuid
 from typing import Optional
 
 import streamlit as st
 
 from backend.trading.broker import BrokerAdapter
+from backend.trading.engine.desk_orders import place_lab_manual_order
 from backend.trading.engine.order_manager import OrderManager, OrderStore
-from backend.trading.engine.shadow import ShadowTradingEngine
-from backend.trading.engine.signal_processor import SignalProcessor
 from backend.trading.engine.worker import TradingWorker
-from backend.trading.models import Order, OrderSide, OrderStatus, OrderType
+from backend.trading.models import OrderStatus
 from backend.trading.reconciliation.service import ReconciliationService
-from backend.trading.risk.gates import RiskEngine, RiskLimits
+from backend.trading.risk.gates import positive_price
 from backend.trading.strategies.registry import STRATEGY_REGISTRY
 from backend.i18n import t
 
@@ -291,11 +289,20 @@ def _render_auto_tab(broker, store, reconciler, summary, lang: str) -> None:
 # Manual signal tab  (preserved from v1)
 # ---------------------------------------------------------------------------
 
+def _lab_result_reason(result) -> str:
+    """User-visible reject / fail text. Never invent success."""
+    detail = getattr(result, "detail", None)
+    if isinstance(detail, dict):
+        return str(detail.get("message") or detail.get("error") or detail)
+    if detail:
+        return str(detail)
+    order = getattr(result, "order", None)
+    return str(getattr(order, "error_message", None) or "rejected")
+
+
 def _render_manual_tab(broker, store, summary, lang: str) -> None:
     st.markdown(f"### {t('trading.section.signal', lang)}")
     st.caption(t("trading.signal.desc", lang))
-
-    manager = OrderManager(broker=broker, store=store)
 
     with st.form("signal_injection_form"):
         col1, col2 = st.columns(2)
@@ -320,35 +327,37 @@ def _render_manual_tab(broker, store, summary, lang: str) -> None:
         submitted = st.form_submit_button(t("trading.signal.submit", lang), type="primary", width="stretch")
 
         if submitted and sym:
-            limits      = RiskLimits()
-            risk_engine = RiskEngine(limits)
-            resolved    = limit_price if order_type == "limit" else None
-            idem        = str(uuid.uuid4())
-
-            if use_shadow:
-                o = Order(id=str(uuid.uuid4()), symbol=sym,
-                          side=OrderSide.BUY if side == "buy" else OrderSide.SELL,
-                          order_type=OrderType.LIMIT if order_type == "limit" else OrderType.MARKET,
-                          quantity=qty, limit_price=resolved, idempotency_key=idem)
-                decision = risk_engine.evaluate_order(o, summary) if summary else None
-                if decision is not None and not decision.approved:
-                    st.error(t("trading.signal.rejected", lang, reason=decision.reason))
-                else:
-                    o.status = OrderStatus.RISK_APPROVED
-                    shadow   = ShadowTradingEngine(manager)
-                    sim      = shadow.simulate_submission(o)
-                    st.success(t("trading.signal.shadow_complete", lang, status=sim.status.value))
+            resolved = limit_price if order_type == "limit" else None
+            with st.spinner(t("trading.signal.processing", lang)):
+                result = place_lab_manual_order(
+                    broker=broker,
+                    store=store,
+                    symbol=sym,
+                    side=side,
+                    quantity=qty,
+                    order_type=order_type,
+                    limit_price=resolved,
+                    account=summary,
+                    execution_mode="shadow" if use_shadow else "paper",
+                )
+            reason = _lab_result_reason(result)
+            fill_ok = True
+            if use_shadow and result.order.status == OrderStatus.FILLED:
+                fill_ok = positive_price(getattr(result.order, "filled_avg_price", None)) is not None
+            honest_ok = (
+                (not result.blocked)
+                and result.http_status == 200
+                and result.journaled
+                and result.order.status != OrderStatus.REJECTED
+                and fill_ok
+            )
+            if not honest_ok:
+                st.error(t("trading.signal.rejected", lang, reason=reason))
+            elif use_shadow:
+                st.success(t("trading.signal.shadow_complete", lang, status=result.order.status.value))
             else:
-                processor = SignalProcessor(broker, risk_engine, manager)
-                signal = {"symbol": sym, "side": side, "quantity": qty,
-                          "limit_price": resolved, "idempotency_key": idem}
-                with st.spinner(t("trading.signal.processing", lang)):
-                    result = processor.process_signal(signal)
-                if result.status == OrderStatus.REJECTED:
-                    st.error(t("trading.signal.rejected", lang, reason=result.error_message))
-                else:
-                    st.success(t("trading.signal.submitted", lang,
-                                 status=result.status.value, id=result.id))
+                st.success(t("trading.signal.submitted", lang,
+                             status=result.order.status.value, id=result.order.id))
 
 
 # ---------------------------------------------------------------------------

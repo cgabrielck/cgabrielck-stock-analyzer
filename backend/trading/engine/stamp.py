@@ -24,7 +24,8 @@ What must NOT be stamped ``RISK_APPROVED``
 - A 0.995 / dummy / tiny limit used as the only notional so a cap that
   would fail at the honest mark silently passes.
 - Shadow/paper convenience before submit.
-- Streamlit lab dashboard (S3) — remains OPEN; not this module.
+- Streamlit lab dashboard (S3) — closed via ``place_desk_order`` /
+  ``place_lab_manual_order`` (``account is None`` → reject, no stamp).
 - Intent / M8 / R1-PATH — remains OPEN; not this module.
 - D-sell-kill — remains OPEN; not this module.
 

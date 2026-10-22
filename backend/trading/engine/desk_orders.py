@@ -1,14 +1,18 @@
-"""Desk manual place-order path (R1-SAFE).
+"""Desk / lab manual place-order path (R1-SAFE).
 
 Manual Desk stays a separate path from IntentStore / H1 / SignalProcessor
 (R1-PATH, DESIGN — not wired here). This module still enforces, in order:
 
     kill (buy-only, existing R6) → Mandate (fail-closed) → RiskEngine
-    → OrderManager + journal/audit
+    → OrderManager + journal/audit  (or shadow simulate + journal)
 
-so accepted and rejected Desk orders are traceable. ``/api/ops`` and this
-path share ``inspect_mandate()`` — the UI must not show a mandate the order
-path does not use.
+so accepted and rejected orders are traceable. FastAPI ``POST /api/orders``
+and the Streamlit lab dashboard both call ``place_desk_order`` — there is
+no third evaluate-skip path. ``/api/ops`` and this path share
+``inspect_mandate()``.
+
+S3: ``account is None`` (or a failed/empty snapshot) is a reject. Never
+stamp ``RISK_APPROVED`` / ``FILLED`` / verified / live without evaluate.
 
 TODO(D-sell-kill): Desk sells currently skip the kill switch, matching worker
 buy-only halt. Suggested HARD control-plane item — not in the R1-SAFE buy list.
@@ -20,12 +24,14 @@ from __future__ import annotations
 
 import logging
 import threading
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Optional, Tuple
 
 from backend.trading.broker import BrokerAdapter
 from backend.trading.engine.order_manager import OrderManager, OrderStore
+from backend.trading.engine.stamp import stamp_risk_approved
 from backend.trading.models import AccountSummary, Order, OrderSide, OrderStatus, OrderType
 from backend.trading.risk.gates import RiskEngine, positive_price
 from backend.trading.safety import audit, kill_switch
@@ -47,6 +53,13 @@ NO_CONSTRAINING_PRICE_DETAIL = (
     "Cannot approve order without a positive price that constrains "
     "the submitted order."
 )
+ACCOUNT_MISSING_DETAIL = "Cannot evaluate risk: account snapshot missing."
+SHADOW_NO_POSITIVE_FILL_DETAIL = (
+    "Cannot shadow-fill without a positive fill price. "
+    "Market/stop orders have no constraining limit; a $0 fill is not a fill."
+)
+_ACCOUNT_UNSET = object()
+_LAB_EXECUTION_MODES = frozenset({"paper", "shadow"})
 
 # Alpaca MarketOrderRequest / StopOrderRequest ignore limit_price.
 _UNCONSTRAINED_ORDER_TYPES = frozenset({OrderType.MARKET.value, OrderType.STOP.value})
@@ -317,15 +330,22 @@ def place_desk_order(
     risk_engine: Optional[RiskEngine] = None,
     quote_fn: Optional[Callable[[str], Optional[float]]] = None,
     mandate_path: Any = None,
+    account: Any = _ACCOUNT_UNSET,
+    execution_mode: str = "paper",
 ) -> DeskPlaceResult:
-    """Evaluate a manual Desk order, then submit via OrderManager.
+    """Evaluate a manual Desk/lab order, then paper-submit or shadow-simulate.
 
     Does not call SignalProcessor / IntentStore. User-supplied quantity is
     kept (no Kelly resize) but still has to pass Mandate + RiskEngine.
+
+    ``account is None`` (explicit) or a failed/empty snapshot → reject (S3).
+    FastAPI omits ``account`` so this path fetches from the broker.
+    Streamlit passes the page snapshot, including ``None``.
     """
     engine = risk_engine or _default_risk_engine
     side = _side_value(order)
     snapshot = inspect_mandate(mandate_path)
+    mode = str(execution_mode or "paper").lower()
 
     # 1. Kill — buy-only, existing R6 behaviour / message.
     # TODO(D-sell-kill): sells skip this check; leave as-is (not R1-SAFE).
@@ -384,10 +404,38 @@ def place_desk_order(
             mandate_path=snapshot.path,
         )
 
-    try:
-        account = broker.get_account_summary()
-    except Exception as exc:
-        detail = f"Cannot evaluate risk: account snapshot failed: {exc}"
+    if mode not in _LAB_EXECUTION_MODES:
+        detail = f"Unknown execution_mode: {execution_mode}."
+        return _block(
+            order,
+            store=store,
+            http_status=400,
+            detail=detail,
+            gate="risk",
+            mandate_status=snapshot.status,
+            mandate_path=snapshot.path,
+        )
+
+    if account is _ACCOUNT_UNSET:
+        try:
+            account = broker.get_account_summary()
+        except Exception as exc:
+            detail = f"Cannot evaluate risk: account snapshot failed: {exc}"
+            audit_id = audit.log_risk_decision(
+                order.symbol, side, float(order.quantity or 0), False, detail, actor=DESK_ACTOR
+            )
+            return _block(
+                order,
+                store=store,
+                http_status=409,
+                detail=detail,
+                gate="risk",
+                audit_id=audit_id,
+                mandate_status=snapshot.status,
+                mandate_path=snapshot.path,
+            )
+    if account is None:
+        detail = ACCOUNT_MISSING_DETAIL
         audit_id = audit.log_risk_decision(
             order.symbol, side, float(order.quantity or 0), False, detail, actor=DESK_ACTOR
         )
@@ -501,10 +549,65 @@ def place_desk_order(
         actor=DESK_ACTOR,
     )
 
-    # 4. OrderManager + journal. Stamp RISK_APPROVED only after real evaluate.
-    order.status = OrderStatus.RISK_APPROVED
+    # Shadow market/stop: Mandate/Risk used mark/quote on a copy. The wire
+    # order still has no constraining limit. No-bar ShadowTradingEngine then
+    # fills at ``limit_price or 0.0`` — a fake FILLED. Reject instead of
+    # inventing $0. Limit no-bar instant-fill (O1–O6) is unchanged.
+    if mode == "shadow" and positive_price(order.limit_price) is None:
+        audit_id = audit.log_risk_decision(
+            order.symbol,
+            side,
+            float(order.quantity or 0),
+            False,
+            SHADOW_NO_POSITIVE_FILL_DETAIL,
+            actor=DESK_ACTOR,
+        )
+        return _block(
+            order,
+            store=store,
+            http_status=409,
+            detail=SHADOW_NO_POSITIVE_FILL_DETAIL,
+            gate="shadow",
+            audit_id=audit_id,
+            mandate_status=snapshot.status,
+            mandate_path=snapshot.path,
+        )
+
+    # 4. Stamp only after real Mandate + Risk evaluate, then paper or shadow.
+    stamp_risk_approved(
+        order,
+        risk_decision=risk_decision,
+        mandate_decision=mandate_decision,
+        require_mandate=True,
+    )
     manager = OrderManager(broker=broker, store=store)
-    submitted = manager.submit_new_order(order)
+    if mode == "shadow":
+        from backend.trading.engine.shadow import ShadowTradingEngine
+
+        submitted = ShadowTradingEngine(manager).simulate_submission(order)
+        fill_px = positive_price(getattr(submitted, "filled_avg_price", None))
+        status_key = str(getattr(submitted.status, "value", submitted.status)).lower()
+        if status_key == "filled" and fill_px is None:
+            audit_id = audit.log_risk_decision(
+                order.symbol,
+                side,
+                float(order.quantity or 0),
+                False,
+                SHADOW_NO_POSITIVE_FILL_DETAIL,
+                actor=DESK_ACTOR,
+            )
+            return _block(
+                submitted,
+                store=store,
+                http_status=409,
+                detail=SHADOW_NO_POSITIVE_FILL_DETAIL,
+                gate="shadow",
+                audit_id=audit_id,
+                mandate_status=snapshot.status,
+                mandate_path=snapshot.path,
+            )
+    else:
+        submitted = manager.submit_new_order(order)
     submit_audit = audit.log_order_submission(
         submitted.symbol,
         side,
@@ -517,52 +620,62 @@ def place_desk_order(
     journaled, journal_err = _journal_order(
         submitted, audit_id=submit_audit or risk_audit
     )
-    blocked_broker = str(getattr(submitted.status, "value", submitted.status)).lower() == "rejected"
+    blocked_accept = str(getattr(submitted.status, "value", submitted.status)).lower() == "rejected"
     if not journaled:
-        if blocked_broker:
+        if blocked_accept:
             detail = _reject_not_persisted_detail(
                 submitted.error_message or "Order rejected",
                 journal_err or "journal write failed",
-                "broker",
+                "broker" if mode != "shadow" else "shadow",
             )
             return DeskPlaceResult(
                 order=submitted,
                 blocked=True,
                 http_status=500,
                 detail=detail,
-                gate="broker",
+                gate="broker" if mode != "shadow" else "shadow",
                 mandate_status=snapshot.status,
                 mandate_path=snapshot.path,
                 audit_id=submit_audit or risk_audit,
                 journaled=False,
             )
+        fail_detail = _journal_failed_after_broker_detail(
+            submitted, journal_err or "journal write failed"
+        )
+        if mode == "shadow":
+            fail_detail["broker_submitted"] = False
+            shadow_id = getattr(submitted, "id", None)
+            id_bit = f" (id={shadow_id})" if shadow_id else ""
+            fail_detail["message"] = (
+                f"Shadow order was not journaled{id_bit}. "
+                f"{journal_err or 'journal write failed'}. "
+                "Lab does not claim a durable audit trail."
+            )
         return DeskPlaceResult(
             order=submitted,
             blocked=False,
             http_status=502,
-            detail=_journal_failed_after_broker_detail(
-                submitted, journal_err or "journal write failed"
-            ),
+            detail=fail_detail,
             gate="journal",
             mandate_status=snapshot.status,
             mandate_path=snapshot.path,
             audit_id=submit_audit or risk_audit,
             journaled=False,
         )
-    if blocked_broker:
+    if blocked_accept:
         return DeskPlaceResult(
             order=submitted,
             blocked=True,
             http_status=400,
             detail=submitted.error_message or "Order rejected",
-            gate="broker",
+            gate="broker" if mode != "shadow" else "shadow",
             mandate_status=snapshot.status,
             mandate_path=snapshot.path,
             audit_id=submit_audit or risk_audit,
             journaled=True,
         )
-    # Count daily mandate only after broker accept + durable journal (not on 502 retry).
-    if side == "buy":
+    # Count daily mandate only after broker accept + durable journal (not shadow / 502).
+    if side == "buy" and mode != "shadow":
         gate.record_order()
     return DeskPlaceResult(
         order=submitted,
@@ -573,4 +686,52 @@ def place_desk_order(
         mandate_path=snapshot.path,
         audit_id=submit_audit or risk_audit,
         journaled=True,
+    )
+
+
+def place_lab_manual_order(
+    *,
+    broker: BrokerAdapter,
+    store: OrderStore,
+    symbol: str,
+    side: str,
+    quantity: float,
+    order_type: str,
+    limit_price: Optional[float],
+    account: Optional[AccountSummary],
+    execution_mode: str = "paper",
+    risk_engine: Optional[RiskEngine] = None,
+    quote_fn: Optional[Callable[[str], Optional[float]]] = None,
+    mandate_path: Any = None,
+) -> DeskPlaceResult:
+    """Streamlit / lab manual surface — same gates as Desk, no parallel path.
+
+    ``account is None`` is S3: reject, never stamp RISK_APPROVED / FILLED.
+    """
+    side_key = str(side or "").lower()
+    type_key = str(order_type or "limit").lower()
+    if type_key == "limit":
+        otype = OrderType.LIMIT
+    elif type_key == "market":
+        otype = OrderType.MARKET
+    else:
+        otype = OrderType(type_key)
+    order = Order(
+        id=str(uuid.uuid4()),
+        symbol=str(symbol or "").upper().strip(),
+        side=OrderSide.BUY if side_key == "buy" else OrderSide.SELL,
+        order_type=otype,
+        quantity=float(quantity),
+        limit_price=limit_price if type_key in ("limit", "stop_limit") else None,
+        idempotency_key=str(uuid.uuid4()),
+    )
+    return place_desk_order(
+        order,
+        broker=broker,
+        store=store,
+        risk_engine=risk_engine,
+        quote_fn=quote_fn,
+        mandate_path=mandate_path,
+        account=account,
+        execution_mode=execution_mode,
     )
