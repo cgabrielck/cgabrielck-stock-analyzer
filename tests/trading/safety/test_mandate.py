@@ -187,18 +187,93 @@ def test_inspect_mandate_loaded_matches_file(tmp_path):
     assert snap.mandate.max_notional_per_order == 1000
 
 
-def test_load_mandate_still_fail_open_for_worker(tmp_path):
-    """Worker path stays fail-open; Desk uses inspect_mandate instead."""
-    from backend.trading.safety.mandate import TradingMandate, load_mandate
+def test_load_mandate_missing_file_fail_closed(tmp_path):
+    """Missing file must not become a permissive mandate (pre-fix worker hole)."""
+    from backend.trading.safety.mandate import MandateLoadError, load_mandate
 
-    missing = load_mandate(tmp_path / "nope.json")
-    assert missing.blocked_symbols == []
-    assert missing.max_notional_per_order is None
+    with pytest.raises(MandateLoadError) as exc:
+        load_mandate(tmp_path / "nope.json")
+    assert exc.value.snapshot.status == "missing"
+    assert exc.value.snapshot.mandate is None
+    assert "fail closed" in str(exc.value).lower()
+
+
+def test_load_mandate_unreadable_file_fail_closed(tmp_path):
+    """Corrupt / unreadable bytes are not a permissive fallback."""
+    from backend.trading.safety.mandate import MandateLoadError, load_mandate
 
     corrupt = tmp_path / "bad.json"
     corrupt.write_text("[]", encoding="utf-8")
-    fallback = load_mandate(corrupt)
-    assert fallback.model_dump() == TradingMandate.permissive().model_dump()
+    with pytest.raises(MandateLoadError) as exc:
+        load_mandate(corrupt)
+    assert exc.value.snapshot.status == "corrupt"
+    assert exc.value.snapshot.mandate is None
+    assert "fail closed" in str(exc.value).lower()
+
+    empty = tmp_path / "empty.json"
+    empty.write_text("", encoding="utf-8")
+    with pytest.raises(MandateLoadError) as exc_empty:
+        load_mandate(empty)
+    assert exc_empty.value.snapshot.status == "corrupt"
+
+    unreadable = tmp_path / "mandate-dir.json"
+    unreadable.mkdir()
+    with pytest.raises(MandateLoadError) as exc_dir:
+        load_mandate(unreadable)
+    assert exc_dir.value.snapshot.status == "corrupt"
+    assert exc_dir.value.snapshot.mandate is None
+
+
+def test_load_mandate_explicit_empty_object_stays_permissive(tmp_path):
+    """``{}`` is an intentional no-cap policy, not a missing file."""
+    from backend.trading.safety.mandate import TradingMandate, load_mandate
+
+    target = tmp_path / "mandate.json"
+    target.write_text("{}", encoding="utf-8")
+    loaded = load_mandate(target)
+    assert loaded.model_dump() == TradingMandate.permissive().model_dump()
+    assert loaded.max_daily_orders is None
+    assert loaded.max_notional_per_order is None
+
+
+def test_load_mandate_explicit_null_caps_stay_uncapped(tmp_path):
+    from backend.trading.safety.mandate import load_mandate
+
+    target = tmp_path / "mandate.json"
+    target.write_text(
+        '{"max_daily_orders": null, "max_notional_per_order": null, "allowed_symbols": []}',
+        encoding="utf-8",
+    )
+    loaded = load_mandate(target)
+    assert loaded.max_daily_orders is None
+    assert loaded.max_notional_per_order is None
+    assert loaded.allowed_symbols == []
+
+
+def test_unavailable_gate_rejects_buy_and_sell_without_touching_counter(tmp_path):
+    """Missing-file gate is not permissive, and does not write the R4 counter."""
+    from pathlib import Path
+
+    from backend.trading.safety.mandate import MandateGate, inspect_mandate
+
+    snap = inspect_mandate(tmp_path / "absent.json")
+    counter = tmp_path / "mandate_daily_orders.json"
+    gate = MandateGate(unavailable=snap, daily_count_path=counter)
+    assert gate.mandate is None
+    buy = gate.evaluate(make_order(), ref_price=150.0)
+    assert not buy.approved
+    assert "fail closed" in (buy.reason or "").lower()
+    sell = gate.evaluate(
+        make_order(side=OrderSide.SELL, oid="exit"),
+        ref_price=150.0,
+    )
+    assert not sell.approved
+    assert "fail closed" in (sell.reason or "").lower()
+    reserved = gate.try_reserve()
+    assert not reserved.approved
+    gate.record_order()
+    assert not counter.exists()
+    assert not Path(str(counter) + ".fail").exists()
 
 
 def test_restart_mid_day_still_enforces_daily_limit(tmp_path):
