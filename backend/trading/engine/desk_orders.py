@@ -18,8 +18,8 @@ Kill on this path blocks sell as well as buy (409 + halt reason). Worker
 flatten-through-kill is a leftover implementation note, not a binding
 Desk product rule (ADR-003 / MODULAR / AUDIT do not require it).
 
-TODO(R4): max_daily_orders is process-local on this gate. Desk and worker do
-not yet share a durable daily counter.
+R4: max_daily_orders is a durable UTC-day counter under DATA_DIR, shared
+by Desk and worker MandateGate instances. Restart does not reset the day.
 """
 from __future__ import annotations
 
@@ -191,9 +191,11 @@ def ops_mandate_payload(snapshot: Optional[MandateSnapshot] = None) -> dict:
 
 
 def _gate_for_snapshot(snapshot: MandateSnapshot) -> MandateGate:
-    """Reuse one process-local gate so Desk daily counts accumulate.
+    """MandateGate backed by the durable Desk+worker daily counter (R4).
 
-    TODO(R4): persist and share this counter with the worker.
+    The gate object may be reused in-process; the count itself lives on
+    disk so a worker restart or a sibling Desk process sees the same
+    UTC-day total.
     """
     global _desk_gate
     mandate = snapshot.mandate
@@ -208,7 +210,7 @@ def _gate_for_snapshot(snapshot: MandateSnapshot) -> MandateGate:
 
 
 def reset_desk_mandate_gate() -> None:
-    """Test helper — drop the process-local daily counter."""
+    """Test helper — drop the process-local gate cache (count stays on disk)."""
     global _desk_gate
     with _gate_lock:
         _desk_gate = None

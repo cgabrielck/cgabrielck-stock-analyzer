@@ -779,3 +779,93 @@ def test_desk_orders_module_does_not_import_intent_or_signal_processor():
     assert "IntentStore" not in joined
     assert "signal_processor" not in joined
     assert "process_signal" not in joined
+
+
+def test_desk_buy_counts_toward_daily_limit(tmp_path):
+    """Successful Desk buy increments the shared counter (R4)."""
+    from backend.trading.safety.mandate import MandateGate, TradingMandate
+
+    path = _mandate_file(tmp_path, {**TIGHT, "max_daily_orders": 2})
+    store = InMemoryOrderStore()
+    broker = _broker()
+    first = place_desk_order(
+        _order(id="day-1", idempotency_key="day-1"),
+        broker=broker,
+        store=store,
+        mandate_path=path,
+    )
+    assert first.http_status == 200
+    assert first.blocked is False
+    second = place_desk_order(
+        _order(id="day-2", idempotency_key="day-2"),
+        broker=broker,
+        store=store,
+        mandate_path=path,
+    )
+    assert second.http_status == 200
+    worker = MandateGate(mandate=TradingMandate(max_daily_orders=2))
+    assert worker.orders_today == 2
+    blocked = place_desk_order(
+        _order(id="day-3", idempotency_key="day-3"),
+        broker=broker,
+        store=store,
+        mandate_path=path,
+    )
+    assert blocked.blocked is True
+    assert blocked.http_status == 409
+    assert blocked.gate == "mandate"
+    assert "daily order limit" in (blocked.detail or "").lower()
+    assert broker.submit_order.call_count == 2
+    rows = journal_store.load_raw_entries()
+    assert any("daily order limit" in str(row).lower() for row in rows)
+
+
+def test_restart_does_not_reset_desk_daily_limit(tmp_path):
+    """R4 fail-case: dropping the in-process gate (restart) must not free quota.
+
+    Pre-fix main: reset_desk_mandate_gate() zeroed orders_today.
+    """
+    path = _mandate_file(tmp_path, {**TIGHT, "max_daily_orders": 1})
+    first = place_desk_order(
+        _order(id="r4-1", idempotency_key="r4-1"),
+        broker=_broker(),
+        store=InMemoryOrderStore(),
+        mandate_path=path,
+    )
+    assert first.http_status == 200
+    reset_desk_mandate_gate()
+    blocked = place_desk_order(
+        _order(id="r4-2", idempotency_key="r4-2"),
+        broker=_broker(),
+        store=InMemoryOrderStore(),
+        mandate_path=path,
+    )
+    assert blocked.blocked is True
+    assert blocked.http_status == 409
+    assert blocked.gate == "mandate"
+    assert "daily order limit" in (blocked.detail or "").lower()
+
+
+def test_worker_record_blocks_desk_buy_same_day(tmp_path):
+    """R4 fail-case: worker count is visible to Desk place-order.
+
+    Pre-fix main: Desk never read the worker counter.
+    """
+    from backend.trading.safety.mandate import MandateGate, TradingMandate
+
+    path = _mandate_file(tmp_path, {**TIGHT, "max_daily_orders": 1})
+    worker = MandateGate(mandate=TradingMandate(max_daily_orders=1))
+    worker.record_order()
+    broker = _broker()
+    result = place_desk_order(
+        _order(id="r4-desk", idempotency_key="r4-desk"),
+        broker=broker,
+        store=InMemoryOrderStore(),
+        mandate_path=path,
+    )
+    assert result.blocked is True
+    assert result.http_status == 409
+    assert result.gate == "mandate"
+    assert "daily order limit" in (result.detail or "").lower()
+    broker.submit_order.assert_not_called()
+    assert journal_store.load_raw_entries()

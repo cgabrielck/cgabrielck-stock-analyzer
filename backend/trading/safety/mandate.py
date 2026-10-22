@@ -16,11 +16,15 @@ and RiskEngine remain the safety nets).
 """
 from __future__ import annotations
 
+import fcntl
 import json
 import logging
+import os
+import threading
+from contextlib import contextmanager
 from datetime import date, datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Iterator, List, Optional
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
@@ -36,6 +40,10 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 REPO_MANDATE_FILE = _REPO_ROOT / "config" / "mandate.json"
 BACKEND_MANDATE_FILE = Path(DATA_DIR).parent / "config" / "mandate.json"
 MANDATE_FILE = REPO_MANDATE_FILE
+
+# Durable UTC-day BUY count shared by Desk and worker (R4). Same DATA_DIR
+# convention as kill switch / IntentStore. Missing file = 0 for the day.
+DAILY_ORDERS_FILE = Path(DATA_DIR) / "mandate_daily_orders.json"
 
 
 def resolve_mandate_path(path: Optional[Path] = None) -> Path:
@@ -176,33 +184,121 @@ def load_mandate(path: Optional[Path] = None) -> TradingMandate:
     return TradingMandate.permissive()
 
 
+def _utc_today() -> date:
+    return datetime.now(timezone.utc).date()
+
+
+class DailyOrderCountError(Exception):
+    """Daily-count file unreadable. Evaluate fail-closes when a cap is set."""
+
+
+class DailyOrderCounter:
+    """Process-shared UTC-day order count (flock + atomic replace).
+
+    Desk and worker each construct a MandateGate; this file is the shared
+    source of truth so a restart cannot reset the day's count.
+    """
+
+    def __init__(self, path: Optional[Path] = None):
+        self._path_override = Path(path) if path is not None else None
+        self._thread = threading.RLock()
+
+    @property
+    def path(self) -> Path:
+        if self._path_override is not None:
+            return self._path_override
+        return Path(DAILY_ORDERS_FILE)
+
+    @contextmanager
+    def _exclusive(self) -> Iterator[None]:
+        lock_path = str(self.path) + ".lock"
+        Path(lock_path).parent.mkdir(parents=True, exist_ok=True)
+        with self._thread:
+            fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o644)
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX)
+                try:
+                    yield
+                finally:
+                    fcntl.flock(fd, fcntl.LOCK_UN)
+            finally:
+                os.close(fd)
+
+    def _read_unlocked(self, today: date) -> int:
+        target = self.path
+        if not target.exists():
+            return 0
+        try:
+            with open(target, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+        except (OSError, json.JSONDecodeError) as exc:
+            raise DailyOrderCountError(str(exc)) from exc
+        if not isinstance(data, dict):
+            raise DailyOrderCountError("daily order count file is not an object")
+        stored_date = data.get("date")
+        if stored_date != today.isoformat():
+            return 0
+        raw = data.get("count")
+        if isinstance(raw, bool) or not isinstance(raw, int):
+            raise DailyOrderCountError("daily order count is not an integer")
+        if raw < 0:
+            raise DailyOrderCountError("daily order count is negative")
+        return raw
+
+    def _write_unlocked(self, today: date, count: int) -> None:
+        target = self.path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        payload = {"date": today.isoformat(), "count": count, "tz": "UTC"}
+        tmp = Path(str(target) + ".tmp")
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(payload, fh)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, target)
+
+    def get_today(self) -> int:
+        today = _utc_today()
+        with self._exclusive():
+            return self._read_unlocked(today)
+
+    def increment(self) -> int:
+        today = _utc_today()
+        with self._exclusive():
+            count = self._read_unlocked(today) + 1
+            self._write_unlocked(today, count)
+            return count
+
+
 class MandateGate:
     """
     Enforces a TradingMandate against orders, tracking per-day order counts.
 
-    Stateful only for the daily-order counter (reset each UTC day).
+    The daily BUY counter is durable under ``DATA_DIR`` and shared by every
+    MandateGate that uses the default path (Desk + worker). UTC day roll is
+    on read; a process restart does not reset today's count.
     """
 
-    def __init__(self, mandate: Optional[TradingMandate] = None):
+    def __init__(
+        self,
+        mandate: Optional[TradingMandate] = None,
+        *,
+        daily_count_path: Optional[Path] = None,
+    ):
         self.mandate = mandate or TradingMandate.permissive()
-        self._order_count_date: Optional[date] = None
-        self._orders_today: int = 0
-
-    def _roll_day(self) -> None:
-        today = datetime.now(timezone.utc).date()
-        if self._order_count_date != today:
-            self._order_count_date = today
-            self._orders_today = 0
+        self._counter = DailyOrderCounter(daily_count_path)
 
     def record_order(self) -> None:
-        """Count an accepted BUY order toward the daily limit."""
-        self._roll_day()
-        self._orders_today += 1
+        """Count an accepted BUY order toward the daily limit (durable)."""
+        try:
+            self._counter.increment()
+        except DailyOrderCountError as exc:
+            # Order may already be accepted; next evaluate fail-closes if
+            # the file is unreadable. Do not crash Desk/worker after submit.
+            logger.error("Failed to persist daily order count: %s", exc)
 
     @property
     def orders_today(self) -> int:
-        self._roll_day()
-        return self._orders_today
+        return self._counter.get_today()
 
     def evaluate(self, order: Order, ref_price: Optional[float] = None) -> MandateDecision:
         """
@@ -249,12 +345,23 @@ class MandateGate:
                             f"${m.max_notional_per_order:,.0f}."),
                 )
 
-        # Constraint 5: max daily orders
-        if m.max_daily_orders is not None and self.orders_today >= m.max_daily_orders:
-            return MandateDecision(
-                approved=False,
-                reason=(f"Daily order limit reached ({self.orders_today}/"
-                        f"{m.max_daily_orders})."),
-            )
+        # Constraint 5: max daily orders (shared durable counter; fail closed)
+        if m.max_daily_orders is not None:
+            try:
+                orders_today = self.orders_today
+            except DailyOrderCountError as exc:
+                return MandateDecision(
+                    approved=False,
+                    reason=(
+                        "Daily order counter unreadable — fail closed "
+                        f"({exc})."
+                    ),
+                )
+            if orders_today >= m.max_daily_orders:
+                return MandateDecision(
+                    approved=False,
+                    reason=(f"Daily order limit reached ({orders_today}/"
+                            f"{m.max_daily_orders})."),
+                )
 
         return MandateDecision(approved=True)
