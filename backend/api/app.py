@@ -317,13 +317,13 @@ def ops(_auth: None = Depends(require_operator)) -> Dict[str, Any]:
 
 @app.post("/api/ops/kill")
 def ops_kill(reason: str = "Manual halt from Cgab", _auth: None = Depends(require_operator)) -> Dict[str, Any]:
-    kill_switch.engage(reason)
+    kill_switch.engage(reason, actor="desk_ops", source="POST /api/ops/kill")
     return ops()
 
 
 @app.post("/api/ops/resume")
 def ops_resume(_auth: None = Depends(require_operator)) -> Dict[str, Any]:
-    kill_switch.disengage()
+    kill_switch.disengage(actor="desk_ops", source="POST /api/ops/resume")
     return ops()
 
 

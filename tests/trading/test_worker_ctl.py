@@ -5,6 +5,23 @@ import pytest
 from backend.api.worker_ctl import explain
 
 
+def test_explain_unverified_heartbeat_without_pid():
+    out = explain(
+        {
+            "paper": True,
+            "running": False,
+            "stale": False,
+            "halted": False,
+            "market_hours": True,
+            "unverified": True,
+            "degraded": True,
+        }
+    )
+    assert out["code"] == "unverified"
+    assert "unverified" in out["message_en"].lower()
+    assert "PID" in out["message_zh"] or "未驗證" in out["message_zh"]
+
+
 def test_explain_not_running():
     out = explain({"paper": True, "running": False, "stale": False, "halted": False, "market_hours": False})
     assert out["code"] == "not_running"
@@ -98,6 +115,90 @@ def test_explain_cadence_wait():
     assert out["code"] == "cadence_wait"
     assert "Monday" in out["message_en"] or "weekly" in out["message_en"]
     assert "週" in out["message_zh"] or "PANIC" in out["message_zh"]
+
+
+def _write_hb(path, payload):
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+
+def test_status_fresh_heartbeat_without_pid_is_not_running(monkeypatch, tmp_path):
+    """D9 fail-case: missing pid must never report running=True (legacy heartbeat)."""
+    from datetime import datetime, timezone
+
+    from backend.api import worker_ctl
+
+    hb = tmp_path / "worker_heartbeat.json"
+    pidf = tmp_path / "worker.pid"
+    _write_hb(
+        hb,
+        {
+            "running": True,
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "strategy": "breakout",
+            "paper": True,
+        },
+    )
+    monkeypatch.setattr(worker_ctl, "HEARTBEAT_PATH", hb)
+    monkeypatch.setattr(worker_ctl, "PID_PATH", pidf)
+    monkeypatch.setattr(worker_ctl, "pid_alive", lambda pid: False)
+
+    out = worker_ctl.status()
+    assert out["running"] is False
+    assert out["pid"] is None
+    assert out["alive"] is False
+    assert out["unverified"] is True
+    assert out["degraded"] is True
+    assert out["process_evidence"] == "heartbeat_unverified"
+    assert out["explain"]["code"] == "unverified"
+    assert out.get("verified") is not True
+    assert out.get("live") is not True
+
+
+def test_status_alive_pid_is_running(monkeypatch, tmp_path):
+    from datetime import datetime, timezone
+
+    from backend.api import worker_ctl
+
+    hb = tmp_path / "worker_heartbeat.json"
+    pidf = tmp_path / "worker.pid"
+    _write_hb(
+        hb,
+        {
+            "running": True,
+            "pid": 2152,
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "strategy": "breakout",
+            "paper": True,
+        },
+    )
+    pidf.write_text("2152", encoding="utf-8")
+    monkeypatch.setattr(worker_ctl, "HEARTBEAT_PATH", hb)
+    monkeypatch.setattr(worker_ctl, "PID_PATH", pidf)
+    monkeypatch.setattr(worker_ctl, "pid_alive", lambda pid: pid == 2152)
+
+    out = worker_ctl.status()
+    assert out["running"] is True
+    assert out["pid"] == 2152
+    assert out["alive"] is True
+    assert out["unverified"] is False
+    assert out["degraded"] is False
+    assert out["process_evidence"] == "pid_alive"
+
+
+def test_status_pidfile_alive_without_heartbeat_pid_is_running(monkeypatch, tmp_path):
+    from backend.api import worker_ctl
+
+    hb = tmp_path / "worker_heartbeat.json"
+    pidf = tmp_path / "worker.pid"
+    pidf.write_text("9612", encoding="utf-8")
+    monkeypatch.setattr(worker_ctl, "HEARTBEAT_PATH", hb)
+    monkeypatch.setattr(worker_ctl, "PID_PATH", pidf)
+    monkeypatch.setattr(worker_ctl, "pid_alive", lambda pid: pid == 9612)
+
+    out = worker_ctl.status()
+    assert out["running"] is True
+    assert out["pid"] == 9612
+    assert out["process_evidence"] == "pid_alive"
 
 
 def test_restart_stops_then_starts(monkeypatch):

@@ -1370,11 +1370,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     # Kill switch control commands — no worker/credentials needed.
     from backend.trading.safety import kill_switch as _ks
     if args.halt is not None:
-        _ks.engage(args.halt)
+        _ks.engage(args.halt, actor="cli", source="worker --halt")
         logger.warning("KILL SWITCH ENGAGED: %s", args.halt)
         return 0
     if args.resume:
-        _ks.disengage()
+        _ks.disengage(actor="cli", source="worker --resume")
         logger.info("Kill switch disengaged — normal trading resumes.")
         return 0
     if args.status:

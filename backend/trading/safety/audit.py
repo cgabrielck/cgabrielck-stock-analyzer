@@ -34,6 +34,7 @@ _EVENT_TYPE_KIND = {
     "order_fill": "order_fill",
     "kill_switch_check": "kill",
     "kill_switch_engage": "kill",
+    "kill_switch_resume": "resume",
     "resume": "resume",
     "config_change": "config_change",
 }
@@ -93,6 +94,53 @@ def log_event(
 def log_kill_switch_check(halted: bool, reason: Optional[str] = None) -> Optional[str]:
     """Log a kill switch check (called every worker tick)."""
     return log_event("kill_switch_check", {"halted": halted, "reason": reason}, kind="kill")
+
+
+def log_kill_switch_engage(
+    reason: Optional[str] = None,
+    *,
+    actor: str = "unknown",
+    source: Optional[str] = None,
+    previous_halted: bool = False,
+    sentinel: Optional[str] = None,
+) -> Optional[str]:
+    """Log a kill-switch engage (control-plane halt, not a per-tick check)."""
+    return log_event(
+        "kill_switch_engage",
+        {
+            "halted": True,
+            "engaged": True,
+            "reason": reason,
+            "source": source,
+            "previous_halted": previous_halted,
+            "sentinel": sentinel,
+        },
+        actor=actor,
+        kind="kill",
+    )
+
+
+def log_kill_switch_resume(
+    reason: Optional[str] = None,
+    *,
+    actor: str = "unknown",
+    source: Optional[str] = None,
+    sentinel: Optional[str] = None,
+) -> Optional[str]:
+    """Log a kill-switch resume (control-plane clear, not a per-tick check)."""
+    return log_event(
+        "kill_switch_resume",
+        {
+            "halted": False,
+            "engaged": False,
+            "reason": reason or "Kill switch cleared",
+            "source": source,
+            "previous_halted": True,
+            "sentinel": sentinel,
+        },
+        actor=actor,
+        kind="resume",
+    )
 
 
 def log_mandate_decision(

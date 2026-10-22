@@ -46,6 +46,31 @@ def test_log_kill_switch_check(isolated_audit_dir):
     assert entry["reason"] == "Manual halt"
 
 
+def test_log_kill_switch_engage_and_resume(isolated_audit_dir):
+    engage_id = audit.log_kill_switch_engage(
+        "ops halt",
+        actor="desk_ops",
+        source="POST /api/ops/kill",
+        previous_halted=False,
+        sentinel="/tmp/KILL_SWITCH",
+    )
+    resume_id = audit.log_kill_switch_resume(
+        "Kill switch cleared",
+        actor="desk_ops",
+        source="POST /api/ops/resume",
+        sentinel="/tmp/KILL_SWITCH",
+    )
+    assert engage_id
+    assert resume_id
+    events = audit.read_recent_events(limit=10, days=2)
+    kinds = {row["kind"] for row in events}
+    types = {row["event_type"] for row in events}
+    assert "kill" in kinds
+    assert "resume" in kinds
+    assert "kill_switch_engage" in types
+    assert "kill_switch_resume" in types
+
+
 def test_log_mandate_decision(isolated_audit_dir):
     """log_mandate_decision() records authorization outcomes."""
     audit.log_mandate_decision(
