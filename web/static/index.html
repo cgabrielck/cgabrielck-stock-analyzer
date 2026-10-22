@@ -380,7 +380,9 @@ const I18N = {
     "desk.open":"Open orders",
     "desk.open.hint":"new / accepted = sent to the broker, not filled yet. The limit must trade before shares hit the book.",
     "orders.degraded":"Orders source={source} · degraded · unverified — not a clean broker book.",
+    "orders.local":"local/unverified",
     "orders.unpriced":"unpriced — not a fill",
+    "desk.kpi.empty":"Empty paper book — not backtest figures.",
     "orders.fill":"Fill",
     "desk.mandate.gap":"Mandate {status} — Desk and paper worker fail-closed until mandate.json loads.",
     "settings.paper_gate":"Do not set APCA_PAPER=false until the paper runbook is signed.",
@@ -391,7 +393,7 @@ const I18N = {
     "desk.llm":"Tune the agent in AI Mode. LLM cannot bypass RiskEngine.",
     "desk.banner.on":"Paper auto is ON",
     "desk.banner.off":"Paper auto is OFF",
-    "desk.how":"Start it in AI Mode. AUTO ON means the worker process is running (live pid) — not account-loaded and not an unverified heartbeat.",
+    "desk.how":"Start it in AI Mode. AUTO ON means the worker process is running (live pid, heartbeat not stale) — not account-loaded, not an unverified heartbeat, and not a stale pid.",
     "guest.desk.title":"Research desk",
     "guest.desk.lead":"Same Scan, scores, charts, and deep research. Paper trading stays on the owner PC.",
     "guest.chip":"GUEST",
@@ -428,7 +430,7 @@ const I18N = {
     "t2.t":"Desk is the paper book",
     "t2.b":"Equity and holdings come from Alpaca paper. An empty table means no fills yet — not a broken screen.",
     "t3.t":"Start paper auto in AI Mode",
-    "t3.b":"Saving sliders does not start the bot. Press Start paper auto. AUTO ON means the worker process is running (live pid) — not an unverified heartbeat.",
+    "t3.b":"Saving sliders does not start the bot. Press Start paper auto. AUTO ON means the worker process is running (live pid, heartbeat not stale) — not an unverified heartbeat.",
     "t4.t":"Why you may see no trades",
     "t4.b":"Run Scan so fund scores feed the AI (≥65). Then signals must still pass RSI/BB, Kelly, and risk gates.",
     "t5.t":"English and 繁體中文",
@@ -577,7 +579,9 @@ const I18N = {
     "desk.open":"未成交訂單",
     "desk.open.hint":"new／accepted = 已送券商，還沒成交。限價碰到才會入帳。",
     "orders.degraded":"訂單來源={source} · 降級 · 未驗證 — 不是乾淨的券商帳本。",
+    "orders.local":"本地/未驗證",
     "orders.unpriced":"無成交價 — 不是成交",
+    "desk.kpi.empty":"紙上帳本是空的 — 不是回測數字。",
     "orders.fill":"成交價",
     "desk.mandate.gap":"授權 {status} — 工作台與紙上 worker 都 fail-closed，直到 mandate.json 載入。",
     "settings.paper_gate":"在紙上 runbook 簽署前，不要把 APCA_PAPER 設成 false。",
@@ -588,7 +592,7 @@ const I18N = {
     "desk.llm":"在 AI 模式調整代理人。LLM 不能繞過風控。",
     "desk.banner.on":"紙上自動交易：開啟",
     "desk.banner.off":"紙上自動交易：關閉",
-    "desk.how":"到 AI 模式啟動。頂欄 AUTO ON 代表工作行程進程在跑（有活 PID），不是帳戶已載入，也不是未驗證心跳。",
+    "desk.how":"到 AI 模式啟動。頂欄 AUTO ON 代表工作行程進程在跑（有活 PID 且心跳未過期），不是帳戶已載入，不是未驗證心跳，也不是過期 PID。",
     "guest.desk.title":"研究工作台",
     "guest.desk.lead":"掃描、分數、圖表與深度研究與本機相同。紙上交易只留在擁有者電腦。",
     "guest.chip":"訪客",
@@ -625,7 +629,7 @@ const I18N = {
     "t2.t":"工作台是模擬帳本",
     "t2.b":"權益與持倉來自 Alpaca 模擬帳戶。表格空白代表還沒成交，不是畫面壞掉。",
     "t3.t":"在 AI 模式啟動自動交易",
-    "t3.b":"只儲存參數不會啟動機器人。請按「啟動紙上自動交易」。AUTO ON 代表工作行程進程在跑（有活 PID），不是未驗證心跳。",
+    "t3.b":"只儲存參數不會啟動機器人。請按「啟動紙上自動交易」。AUTO ON 代表工作行程進程在跑（有活 PID 且心跳未過期），不是未驗證心跳。",
     "t4.t":"為什麼可能沒有成交",
     "t4.b":"先跑掃描讓基本面分數餵給 AI（≥65）。訊號還要通過 RSI/布林、凱利倉位與風控。",
     "t5.t":"英文與繁體中文",
@@ -685,9 +689,13 @@ function closeMobileNav(){
 }
 function workerProcessOn(w){
   if(!w) return false;
+  if(w.display && typeof w.display.auto_on==="boolean") return !!w.display.auto_on;
   if(w.unverified || w.process_evidence==="heartbeat_unverified") return false;
-  if(w.display && w.display.auto_on===false) return false;
-  return !!w.running;
+  if(w.stale) return false;
+  const evidence = String(w.process_evidence||"");
+  if(evidence==="none" || evidence==="pid_dead") return false;
+  const alive = !!(w.alive || evidence==="pid_alive");
+  return !!(w.running && alive);
 }
 function fillItemPrice(item){
   if(!item || typeof item!=="object") return null;
@@ -714,11 +722,15 @@ function isPricedFill(e){
   return positiveFillPrice(e)!=null;
 }
 function orderStatusLabel(o){
+  if(o && o.display_status) return String(o.display_status);
   const st = String(o && o.status || "").toLowerCase();
+  let label = (o && o.status) ? String(o.status) : "—";
   if((st==="filled" || st==="partially_filled") && !isPricedFill(o)){
-    return t("orders.unpriced");
+    label = t("orders.unpriced");
   }
-  return (o && o.status) ? String(o.status) : "—";
+  const dirty = !!(o && (o.degraded || o.unverified || o.source==="local_store"));
+  if(dirty) return label==="—" ? t("orders.local") : (label+" · "+t("orders.local"));
+  return label;
 }
 function fillPriceLabel(o){
   const px = positiveFillPrice(o);
@@ -762,8 +774,8 @@ function applyChrome(){
   const stale = !!(worker && worker.stale);
   const unverified = !!(worker && (worker.unverified || worker.process_evidence==="heartbeat_unverified"));
   const auto = $("#chipAuto");
-  auto.textContent = on ? "AUTO ON" : (unverified ? "AUTO UNVERIFIED" : "AUTO OFF");
-  auto.className = "pill" + (on && !stale ? "" : (stale || unverified) ? " warn" : " off");
+  auto.textContent = on ? "AUTO ON" : (stale ? "AUTO STALE" : unverified ? "AUTO UNVERIFIED" : "AUTO OFF");
+  auto.className = "pill" + (on ? "" : (stale || unverified) ? " warn" : " off");
   const paper = (metaState?.paper !== false) && (worker?.paper !== false);
   $("#chipPaper").style.display = paper ? "" : "none";
   $("#paperPill").style.display = paper ? "" : "none";
@@ -925,7 +937,13 @@ async function desk(){
   if (settled[2].status === "fulfilled") orderBook = settled[2].value || {};
   orders = orderBook.orders || [];
   const ordersDirty = !!(orderBook.degraded || orderBook.unverified || orderBook.source==="local_store");
-  const kpiSource = perf.kpi_source || "none";
+  const kpiSource = (perf.empty_book || !perf.kpi_source || perf.kpi_source==="none")
+    ? "empty"
+    : (perf.kpi_label || perf.kpi_source || "none");
+  const kpiCue = perf.kpi_cue || (kpiSource==="empty" ? t("desk.kpi.empty") : "");
+  const kpiWin = (kpiSource==="empty") ? null : perf.win_rate_pct;
+  const kpiPf = (kpiSource==="empty") ? null : perf.profit_factor;
+  const kpiTrades = (kpiSource==="empty") ? null : perf.num_trades;
   if (settled[3].status === "fulfilled") digest = settled[3].value || {};
   if (settled[4].status === "fulfilled") tear = settled[4].value || {};
   if(page!=="desk") return;
@@ -972,10 +990,11 @@ async function desk(){
     </div>
     ${digestCard(digest)}
     ${tearCard(tear)}
+    ${kpiCue?`<p class="muted" style="color:#e8b86d">${esc(kpiCue)}</p>`:""}
     <div class="grid3">
-      <div class="card"><div class="lbl">Win rate (${esc(kpiSource)})</div><div class="val">${perf.win_rate_pct??"—"}%</div></div>
-      <div class="card"><div class="lbl">Profit factor (${esc(kpiSource)})</div><div class="val">${perf.profit_factor??"—"}</div></div>
-      <div class="card"><div class="lbl">Trades (${esc(kpiSource)})</div><div class="val">${perf.num_trades??"—"}</div></div>
+      <div class="card"><div class="lbl">Win rate (${esc(kpiSource)})</div><div class="val">${kpiWin==null?"—":kpiWin+"%"}</div></div>
+      <div class="card"><div class="lbl">Profit factor (${esc(kpiSource)})</div><div class="val">${kpiPf??"—"}</div></div>
+      <div class="card"><div class="lbl">Trades (${esc(kpiSource)})</div><div class="val">${kpiTrades??"—"}</div></div>
     </div>
     <div class="layout">
       <div class="card">
@@ -1702,7 +1721,7 @@ async function aimode(){
     <p class="muted" id="sm"></p>
     </div><div>
       <div class="card" style="margin-bottom:12px"><h3>${t("aimode.worker")}</h3>
-        <p>AUTO ${workerProcessOn(worker)?"ON":"OFF"} · PAPER ${worker?.paper!==false?"YES":"NO"} · ${live||"—"}</p>
+        <p>AUTO ${workerProcessOn(worker)?"ON":(worker?.stale?"STALE":"OFF")} · PAPER ${worker?.paper!==false?"YES":"NO"} · ${live||"—"}</p>
         <p class="muted">${explainMsg()}</p>
         <p class="muted">${t("aimode.cap")}: ${worker?.fetched??"—"} / cap ${worker?.universe_cap??"—"} / ${worker?.universe_size??"—"}</p>
         <p class="muted">market hours: ${worker?.market_hours?"yes":"no"} · ignore hours: ${worker?.ignore_market_hours?"yes":"no"} · cadence: ${worker?.cadence||cadence||"—"}</p>
@@ -1922,7 +1941,7 @@ async function settings(){
     <p>Ignore market hours: ${m.ignore_market_hours}</p>
     <p>LLM: ${m.llm?.configured?"ON":"OFF"} · chat=${m.llm?.chat_model||"—"} · reasoner=${m.llm?.reasoning_model||"—"}</p>
     <p class="muted">Scan / Deep use the chat model for batch scores and the reasoner for deep strategy write-ups. The paper worker does not call the LLM every minute.</p>
-    ${paperControls?`<p>AUTO: ${workerProcessOn(worker)?"ON":"OFF"} (${explainMsg()})</p>${killLine}`:`<p class="muted">${t("guest.desk.lead")}</p>`}
+    ${paperControls?`<p>AUTO: ${workerProcessOn(worker)?"ON":(worker?.stale?"STALE":"OFF")} (${explainMsg()})</p>${killLine}`:`<p class="muted">${t("guest.desk.lead")}</p>`}
     <p class="muted">docs/CGAB_USER_GUIDE.md</p>
     <button class="btn" id="replay">${t("btn.tour")}</button>
   </div>`;

@@ -34,7 +34,7 @@ First visit: a short tour appears. Replay it from **More → Guide** or the **?*
 - **AI Mode** is the only place to pick the strategy and **Start / Stop paper auto**.
 - Saving sliders does **not** start the bot. You must press **Start paper auto**.
 
-The top bar **AUTO ON** means the worker process is running (live pid evidence). It does **not** mean the account is loaded, and it does **not** light from an unverified heartbeat. **AUTO OFF** means it is not running.
+The top bar **AUTO ON** means the worker process is running (live pid evidence, heartbeat not stale). It does **not** mean the account is loaded, and it does **not** light from an unverified or stale heartbeat. **AUTO OFF** / **AUTO STALE** means it is not a live worker.
 
 ### 4. How paper auto trading works
 
@@ -106,7 +106,7 @@ Bind the FastAPI Desk so phones on the same Wi-Fi can open the **same** UI as lo
 - **AI 模式**才是選擇策略並 **啟動 / 停止紙上自動交易** 的地方。
 - 只儲存參數 **不會** 啟動機器人，必須再按啟動。
 
-頂欄 **AUTO ON** 代表工作行程進程在跑（有活 PID 證據），不是帳戶已載入，也不是未驗證心跳。**AUTO OFF** 代表行程未在跑。
+頂欄 **AUTO ON** 代表工作行程進程在跑（有活 PID 證據且心跳未過期），不是帳戶已載入，也不是未驗證心跳或過期 PID。**AUTO OFF**／**AUTO STALE** 代表不是活著的 worker。
 
 ### 4. 紙上自動交易怎麼開
 

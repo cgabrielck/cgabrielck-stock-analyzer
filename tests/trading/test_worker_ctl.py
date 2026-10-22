@@ -184,9 +184,48 @@ def test_status_alive_pid_is_running(monkeypatch, tmp_path):
     assert out["running"] is True
     assert out["pid"] == 2152
     assert out["alive"] is True
+    assert out["stale"] is False
     assert out["unverified"] is False
     assert out["degraded"] is False
     assert out["process_evidence"] == "pid_alive"
+    assert out["display"]["auto_on"] is True
+    assert out["display"]["worker_label"] == "Worker running"
+
+
+def test_status_stale_alive_pid_display_is_not_auto_on(monkeypatch, tmp_path):
+    """D4: pid can still be alive while the chip refuses AUTO ON."""
+    from datetime import datetime, timedelta, timezone
+
+    from backend.api import worker_ctl
+
+    hb = tmp_path / "worker_heartbeat.json"
+    pidf = tmp_path / "worker.pid"
+    old = (datetime.now(timezone.utc) - timedelta(seconds=worker_ctl.STALE_AFTER_SEC + 20)).isoformat()
+    _write_hb(
+        hb,
+        {
+            "running": True,
+            "pid": 2152,
+            "ts": old,
+            "strategy": "breakout",
+            "paper": True,
+        },
+    )
+    pidf.write_text("2152", encoding="utf-8")
+    monkeypatch.setattr(worker_ctl, "HEARTBEAT_PATH", hb)
+    monkeypatch.setattr(worker_ctl, "PID_PATH", pidf)
+    monkeypatch.setattr(worker_ctl, "pid_alive", lambda pid: pid == 2152)
+
+    out = worker_ctl.status()
+    assert out["running"] is True
+    assert out["alive"] is True
+    assert out["stale"] is True
+    assert out["display"]["auto_on"] is False
+    assert out["display"]["worker_running"] is False
+    assert out["display"]["worker_label"] == "Worker stale"
+    assert out["display"]["worker_tone"] != "on"
+    assert "linked" not in out["display"]["worker_label"].lower()
+    assert out.get("verified") is not True
 
 
 def test_status_pidfile_alive_without_heartbeat_pid_is_running(monkeypatch, tmp_path):

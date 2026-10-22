@@ -53,15 +53,34 @@ function accountChipLabel(account: any) {
   return account ? "Account loaded" : "Account —";
 }
 function workerChip(worker: any) {
+  const display = worker?.display;
+  if (display && display.worker_label) {
+    const tone = display.worker_tone;
+    const klass = tone === "on" ? "chip on" : tone === "warn" ? "chip warn" : "chip";
+    return { label: String(display.worker_label), klass, on: !!display.auto_on };
+  }
   const unverified = !!(worker?.unverified || worker?.process_evidence === "heartbeat_unverified");
-  if (unverified) return { label: "Worker unverified", klass: "chip warn" };
-  if (worker?.running) return { label: "Worker running", klass: "chip on" };
-  return { label: "Worker not running", klass: "chip" };
+  const stale = !!worker?.stale;
+  const evidence = String(worker?.process_evidence || "");
+  const alive = !!(worker?.alive || evidence === "pid_alive");
+  const on = !!(worker?.running && alive && !stale && !unverified && evidence !== "pid_dead" && evidence !== "none");
+  if (unverified) return { label: "Worker unverified", klass: "chip warn", on: false };
+  if (stale) return { label: "Worker stale", klass: "chip warn", on: false };
+  if (on) return { label: "Worker running", klass: "chip on", on: true };
+  return { label: "Worker not running", klass: "chip", on: false };
 }
 function kpiSourceLabel(perf: any) {
-  const src = perf?.kpi_source;
+  if (!perf || perf.empty_book || perf.kpi_source === "none" || !perf.kpi_source) return "empty";
+  if (perf.kpi_label === "empty" || perf.kpi_label === "paper" || perf.kpi_label === "backtest") {
+    return perf.kpi_label;
+  }
+  const src = perf.kpi_source;
   if (src === "paper" || src === "backtest") return src;
-  return "—";
+  return "empty";
+}
+function kpiNum(n?: number | null, suffix = "") {
+  if (n == null || Number.isNaN(n)) return "—";
+  return suffix ? `${n}${suffix}` : String(n);
 }
 function ordersBookDirty(book: any) {
   return !!(book?.degraded || book?.unverified || book?.source === "local_store");
@@ -90,11 +109,15 @@ function isPricedFill(e: any) {
   return positiveFillPrice(e) != null;
 }
 function orderStatusLabel(o: any) {
+  if (o?.display_status) return String(o.display_status);
   const st = String(o?.status || "").toLowerCase();
+  let label = o?.status ? String(o.status) : "—";
   if ((st === "filled" || st === "partially_filled") && !isPricedFill(o)) {
-    return "unpriced — not a fill";
+    label = "unpriced — not a fill";
   }
-  return o?.status ? String(o.status) : "—";
+  const dirty = !!(o?.degraded || o?.unverified || o?.source === "local_store");
+  if (dirty) return label === "—" ? "local/unverified" : `${label} · local/unverified`;
+  return label;
 }
 function fillPriceLabel(o: any) {
   const px = positiveFillPrice(o);
@@ -156,7 +179,14 @@ export default function App() {
     try {
       setWorker(await api.workerStatus());
     } catch {
-      setWorker({ running: false, unverified: false });
+      setWorker({
+        running: false,
+        unverified: false,
+        stale: false,
+        alive: false,
+        process_evidence: "none",
+        display: { auto_on: false, worker_running: false, worker_label: "Worker not running", worker_tone: "off" },
+      });
     }
   }
   useEffect(() => { refreshAccount(); }, []);
@@ -269,10 +299,13 @@ function Desk({ account, onTrade, onRefresh }: { account: any; onTrade: (s: stri
         <div className="card kpi"><div className="lbl">Buying power</div><div className="val">{money(account?.buying_power)}</div></div>
       </div>
       <div className="grid3" style={{ marginBottom: 14 }}>
-        <div className="card kpi"><div className="lbl">Win rate ({kpiSourceLabel(perf)})</div><div className="val">{perf?.win_rate_pct ?? "—"}%</div></div>
-        <div className="card kpi"><div className="lbl">Profit factor ({kpiSourceLabel(perf)})</div><div className="val">{perf?.profit_factor ?? "—"}</div></div>
-        <div className="card kpi"><div className="lbl">Max DD ({kpiSourceLabel(perf)})</div><div className="val">{perf?.max_drawdown_pct ?? "—"}</div></div>
+        <div className="card kpi"><div className="lbl">Win rate ({kpiSourceLabel(perf)})</div><div className="val">{kpiNum(perf?.win_rate_pct, "%")}</div></div>
+        <div className="card kpi"><div className="lbl">Profit factor ({kpiSourceLabel(perf)})</div><div className="val">{kpiNum(perf?.profit_factor)}</div></div>
+        <div className="card kpi"><div className="lbl">Max DD ({kpiSourceLabel(perf)})</div><div className="val">{kpiNum(perf?.max_drawdown_pct, "%")}</div></div>
       </div>
+      {perf && (perf.empty_book || kpiSourceLabel(perf) === "empty") && (
+        <p className="muted">Empty paper book — not backtest figures.</p>
+      )}
       <div className="layout">
         <div className="card">
           <h3>Holdings — broker inventory</h3>

@@ -8,8 +8,11 @@ import pytest
 from fastapi.testclient import TestClient
 
 from backend.api.desk_display import (
+    KPI_EMPTY_CUE,
+    LOCAL_ORDER_CUE,
     UNPRICED_FILL_LABEL,
     compose_performance_kpis,
+    desk_kpi_source_label,
     display_chips,
     is_priced_fill,
     journal_display_audit,
@@ -17,9 +20,11 @@ from backend.api.desk_display import (
     journal_status_class,
     journal_status_label,
     journal_summary_label,
+    order_display_status,
     orders_book,
     paper_vs_spy_risk,
     strategy_fallback_row,
+    worker_process_on,
 )
 from backend.trading.engine.order_manager import InMemoryOrderStore
 from backend.trading.models import Order, OrderSide, OrderStatus, OrderType
@@ -66,13 +71,44 @@ def test_d4_heartbeat_unverified_is_not_green_or_linked():
 
 def test_d4_pid_alive_may_show_running():
     chips = display_chips(
-        {"running": True, "unverified": False, "process_evidence": "pid_alive"},
+        {"running": True, "unverified": False, "process_evidence": "pid_alive", "alive": True, "pid": 2152},
         account_loaded=True,
     )
     assert chips["worker_running"] is True
     assert chips["auto_on"] is True
     assert chips["worker_label"] == "Worker running"
     assert chips["worker_tone"] == "on"
+
+
+def test_d4_stale_alive_pid_is_not_on():
+    """Fail-case: alive but stale heartbeat must not read as linked/ON."""
+    status = {
+        "running": True,
+        "alive": True,
+        "stale": True,
+        "pid": 2152,
+        "unverified": False,
+        "process_evidence": "pid_alive",
+    }
+    assert worker_process_on(status) is False
+    chips = display_chips(status, account_loaded=True)
+    assert chips["auto_on"] is False
+    assert chips["worker_running"] is False
+    assert chips["worker_tone"] != "on"
+    assert chips["worker_label"] == "Worker stale"
+    assert "linked" not in chips["worker_label"].lower()
+    assert chips["account_label"] == "Account loaded"
+
+
+def test_d4_running_bit_without_pid_evidence_is_not_on():
+    """Fail-case: a bare running=True / no pid must not light the chip."""
+    status = {"running": True, "alive": False, "pid": None, "process_evidence": "none"}
+    assert worker_process_on(status) is False
+    chips = display_chips(status, account_loaded=True)
+    assert chips["auto_on"] is False
+    assert chips["worker_label"] == "Worker not running"
+    assert "linked" not in chips["worker_label"].lower()
+    assert chips["worker_tone"] != "on"
 
 
 def test_d4_ui_does_not_treat_account_as_worker_linked():
@@ -82,10 +118,14 @@ def test_d4_ui_does_not_treat_account_as_worker_linked():
     assert "Worker linked" not in tsx
     assert "accountChipLabel" in tsx
     assert "Worker unverified" in tsx
+    assert "Worker stale" in tsx
     assert "Account loaded" in tsx
     assert "function workerProcessOn" in html
     assert "heartbeat_unverified" in html
     assert "worker.unverified" in html
+    assert "worker.stale" in html
+    assert "AUTO STALE" in html
+    assert "display.auto_on" in html
 
 
 # --- D5: GET /api/orders silent local-store fallback ------------------------
@@ -99,6 +139,14 @@ def test_d5_local_store_envelope_is_degraded():
     assert book["verified"] is False
     assert book["live"] is False
     assert book["count"] == 1
+    row = book["orders"][0]
+    assert row["source"] == "local_store"
+    assert row["degraded"] is True
+    assert row["unverified"] is True
+    assert row.get("verified") is not True
+    assert row.get("live") is not True
+    assert LOCAL_ORDER_CUE in row["display_status"]
+    assert "broker" not in row["display_status"].lower()
 
 
 def test_d5_broker_envelope_is_not_silent_fallback():
@@ -127,6 +175,77 @@ def honesty_api(tmp_path, monkeypatch):
         yield {"client": client, "broker": broker, "store": store}
 
 
+def _patch_worker_heartbeat(monkeypatch, tmp_path, payload, *, pid=None, alive_pid=None):
+    from backend.api import worker_ctl
+
+    hb = tmp_path / "worker_heartbeat.json"
+    pidf = tmp_path / "worker.pid"
+    hb.write_text(__import__("json").dumps(payload), encoding="utf-8")
+    if pid is not None:
+        pidf.write_text(str(pid), encoding="utf-8")
+    monkeypatch.setattr(worker_ctl, "HEARTBEAT_PATH", hb)
+    monkeypatch.setattr(worker_ctl, "PID_PATH", pidf)
+    if alive_pid is None:
+        monkeypatch.setattr(worker_ctl, "pid_alive", lambda _pid: False)
+    else:
+        monkeypatch.setattr(worker_ctl, "pid_alive", lambda p: p == alive_pid)
+    return worker_ctl
+
+
+def test_d4_worker_status_stale_pid_is_not_auto_on(honesty_api, monkeypatch, tmp_path):
+    """Fail-case: GET /api/worker/status with stale heartbeat must not light AUTO ON."""
+    from datetime import datetime, timedelta, timezone
+
+    from backend.api import worker_ctl
+
+    old = (datetime.now(timezone.utc) - timedelta(seconds=worker_ctl.STALE_AFTER_SEC + 45)).isoformat()
+    _patch_worker_heartbeat(
+        monkeypatch,
+        tmp_path,
+        {"running": True, "pid": 2152, "ts": old, "paper": True, "strategy": "breakout"},
+        pid=2152,
+        alive_pid=2152,
+    )
+    res = honesty_api["client"].get("/api/worker/status")
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["running"] is True
+    assert body["stale"] is True
+    assert body["pid"] == 2152
+    assert body["display"]["auto_on"] is False
+    assert body["display"]["worker_running"] is False
+    assert body["display"]["worker_tone"] != "on"
+    assert body["display"]["worker_label"] == "Worker stale"
+    assert "linked" not in body["display"]["worker_label"].lower()
+    assert body.get("verified") is not True
+    assert body.get("live") is not True
+
+
+def test_d4_worker_status_no_pid_is_not_auto_on(honesty_api, monkeypatch, tmp_path):
+    """Fail-case: fresh heartbeat claiming running without a pid is not linked/ON."""
+    from datetime import datetime, timezone
+
+    _patch_worker_heartbeat(
+        monkeypatch,
+        tmp_path,
+        {
+            "running": True,
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "paper": True,
+            "strategy": "breakout",
+        },
+    )
+    res = honesty_api["client"].get("/api/worker/status")
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["running"] is False
+    assert body["pid"] is None
+    assert body["unverified"] is True
+    assert body["display"]["auto_on"] is False
+    assert body["display"]["worker_label"] == "Worker unverified"
+    assert "linked" not in body["display"]["worker_label"].lower()
+
+
 def test_d5_get_orders_fallback_marks_degraded(honesty_api):
     """Fail-case: broker error must not look like a clean broker book."""
     honesty_api["broker"].api.get_orders.side_effect = RuntimeError("alpaca unavailable")
@@ -150,6 +269,14 @@ def test_d5_get_orders_fallback_marks_degraded(honesty_api):
     assert body.get("verified") is not True
     assert body.get("live") is not True
     assert any(row.get("id") == "loc-fallback-1" or row.get("symbol") == "MSFT" for row in body["orders"])
+    row = next(r for r in body["orders"] if r.get("id") == "loc-fallback-1" or r.get("symbol") == "MSFT")
+    assert row["source"] == "local_store"
+    assert row["degraded"] is True
+    assert row["unverified"] is True
+    assert row.get("verified") is not True
+    assert row.get("live") is not True
+    assert LOCAL_ORDER_CUE in (row.get("display_status") or "")
+    assert "broker" not in (row.get("display_status") or "").lower()
 
 
 def test_d5_get_orders_broker_success_is_labeled_broker(honesty_api):
@@ -173,6 +300,50 @@ def test_d5_get_orders_broker_success_is_labeled_broker(honesty_api):
     assert body.get("verified") is not True
     assert body.get("live") is not True
     assert body["orders"][0]["id"] == "brk-1"
+    assert body["orders"][0]["source"] == "broker"
+    assert body["orders"][0]["degraded"] is False
+    assert LOCAL_ORDER_CUE not in (body["orders"][0].get("display_status") or "")
+
+
+def test_d5_open_fallback_does_not_present_filled_local_as_broker(honesty_api):
+    """Fail-case: broker down + status=open must not list a priced local fill as a live broker row."""
+    honesty_api["broker"].api.get_orders.side_effect = RuntimeError("alpaca unavailable")
+    honesty_api["store"].save_order(
+        Order(
+            id="loc-filled",
+            symbol="NVDA",
+            side=OrderSide.BUY,
+            order_type=OrderType.MARKET,
+            quantity=1,
+            status=OrderStatus.FILLED,
+            filled_avg_price=12.5,
+            idempotency_key="idem-filled",
+        )
+    )
+    honesty_api["store"].save_order(
+        Order(
+            id="loc-open",
+            symbol="MSFT",
+            side=OrderSide.BUY,
+            order_type=OrderType.MARKET,
+            quantity=2,
+            status=OrderStatus.SUBMITTED,
+            idempotency_key="idem-open",
+        )
+    )
+    res = honesty_api["client"].get("/api/orders?status=open")
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["source"] == "local_store"
+    assert body["degraded"] is True
+    ids = [row.get("id") for row in body["orders"]]
+    assert "loc-filled" not in ids
+    assert "loc-open" in ids
+    open_row = next(row for row in body["orders"] if row["id"] == "loc-open")
+    assert open_row["source"] == "local_store"
+    assert open_row["unverified"] is True
+    assert LOCAL_ORDER_CUE in open_row["display_status"]
+    assert order_display_status(open_row) == open_row["display_status"]
 
 
 def test_d5_ui_surfaces_degraded_orders_source():
@@ -183,6 +354,9 @@ def test_d5_ui_surfaces_degraded_orders_source():
     assert "not a clean broker book" in html
     assert "ordersBookDirty" in tsx
     assert "not a clean broker book" in tsx
+    assert "local/unverified" in tsx
+    assert "display_status" in tsx
+    assert "display_status" in html
 
 
 # --- D6: KPI labeled backtest can show paper --------------------------------
@@ -206,20 +380,31 @@ def test_d6_paper_kpis_are_not_labeled_backtest():
     }
     out = compose_performance_kpis(paper, summary)
     assert out["kpi_source"] == "paper"
+    assert out["empty_book"] is False
+    assert out["kpi_label"] == "paper"
     assert out["win_rate_pct"] == 40.0
     assert out["win_rate_pct"] != summary["win_rate_pct"]
     assert out["total_return_pct"] == 3.2
     assert out["verified"] is False
     assert out["live"] is False
+    assert desk_kpi_source_label(kpi_source="paper", empty_book=False) == "paper"
 
 
-def test_d6_empty_paper_falls_back_to_backtest_with_source():
+def test_d6_empty_paper_does_not_copy_backtest_into_kpis():
+    """Fail-case: empty_book must not silently show stable backtest numbers."""
     paper = {"empty_book": True, "trading": {"win_rate_pct": None, "num_trades": 0}}
     summary = {"win_rate_pct": 55.0, "num_trades": 12, "total_return_pct": 10.0}
     out = compose_performance_kpis(paper, summary)
-    assert out["kpi_source"] == "backtest"
-    assert out["win_rate_pct"] == 55.0
-    assert out["num_trades"] == 12
+    assert out["kpi_source"] != "backtest"
+    assert out["kpi_source"] == "none"
+    assert out["empty_book"] is True
+    assert out["kpi_label"] == "empty"
+    assert out["win_rate_pct"] is None
+    assert out["win_rate_pct"] != summary["win_rate_pct"]
+    assert out["num_trades"] is None
+    assert out["kpi_cue"] == KPI_EMPTY_CUE
+    assert desk_kpi_source_label(kpi_source="none", empty_book=True) == "empty"
+    assert desk_kpi_source_label(kpi_source="backtest", empty_book=True) == "empty"
 
 
 def test_d6_no_evidence_is_none_not_backtest():
@@ -253,9 +438,50 @@ def test_d6_performance_api_labels_paper_not_backtest(honesty_api, monkeypatch, 
     assert res.status_code == 200, res.text
     body = res.json()
     assert body["kpi_source"] == "paper"
+    assert body["empty_book"] is False
+    assert body["kpi_label"] == "paper"
     assert body["win_rate_pct"] == 33.0
     assert body["win_rate_pct"] != 99.0
     assert body["backtest"]["win_rate_pct"] == 99.0
+    assert body.get("verified") is not True
+    assert body.get("live") is not True
+
+
+def test_d6_performance_api_empty_book_does_not_show_backtest_kpis(honesty_api, monkeypatch, tmp_path):
+    """Fail-case: empty paper + stable summary must not fill Desk KPIs with backtest."""
+    from backend.api import app as app_mod
+    from backend.api import paper_performance
+
+    paper = {
+        "available": True,
+        "empty_book": True,
+        "source": "alpaca_equity_only",
+        "trading": {"win_rate_pct": None, "profit_factor": None, "num_trades": 0},
+        "risk": {"sharpe_ratio": None, "max_drawdown_pct": None},
+        "pnl": {"total_return_pct": None},
+        "benchmark": {"spy_return_pct": None, "alpha_net_of_costs_pct": None, "beats_spy_net": None},
+        "disclaimer": "paper only",
+    }
+    monkeypatch.setattr(paper_performance, "load_cached_paper_report", lambda: None)
+    monkeypatch.setattr(paper_performance, "build_paper_report", lambda persist=True: paper)
+    monkeypatch.setattr(app_mod, "DATA_DIR", tmp_path)
+    (tmp_path / "strategy_backtest_stable_summary.json").write_text(
+        '{"win_rate_pct": 99.0, "total_return_pct": 77.0, "num_trades": 500, "sharpe_ratio": 2.5}',
+        encoding="utf-8",
+    )
+    res = honesty_api["client"].get("/api/performance")
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["empty_book"] is True
+    assert body["kpi_source"] != "backtest"
+    assert body["kpi_label"] == "empty"
+    assert body["win_rate_pct"] is None
+    assert body["win_rate_pct"] != 99.0
+    assert body["sharpe_ratio"] is None
+    assert body["sharpe_ratio"] != 2.5
+    assert body["kpi_cue"] == KPI_EMPTY_CUE
+    assert body["backtest"]["win_rate_pct"] == 99.0
+    assert body["backtest"]["sharpe_ratio"] == 2.5
     assert body.get("verified") is not True
     assert body.get("live") is not True
 
@@ -269,6 +495,10 @@ def test_d6_ui_does_not_hardcode_backtest_over_paper_kpis():
     assert "Max DD ({kpiSourceLabel(perf)})" in tsx
     assert "kpi_source" in html
     assert "Win rate (${esc(kpiSource)})" in html or "Win rate (${esc(kpiSource)}" in html
+    assert "Empty paper book — not backtest" in tsx
+    assert "desk.kpi.empty" in html
+    assert 'kpiSource==="empty"' in html
+    assert 'empty_book' in tsx
 
 
 def test_d6_paper_vs_spy_empty_book_does_not_surface_backtest_risk():
@@ -282,8 +512,10 @@ def test_d6_paper_vs_spy_empty_book_does_not_surface_backtest_risk():
         paper,
         {"sharpe_ratio": 2.5, "max_drawdown_pct": 1.0, "win_rate_pct": 90.0},
     )
-    assert kpis["kpi_source"] == "backtest"
-    assert kpis["sharpe_ratio"] == 2.5
+    assert kpis["kpi_source"] != "backtest"
+    assert kpis["empty_book"] is True
+    assert kpis["sharpe_ratio"] is None
+    assert kpis["sharpe_ratio"] != 2.5
     card = paper_vs_spy_risk(paper)
     assert card["sharpe_ratio"] is None
     assert card["max_drawdown_pct"] is None
