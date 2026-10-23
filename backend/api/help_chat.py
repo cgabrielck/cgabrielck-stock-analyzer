@@ -146,14 +146,25 @@ _DISHONEST_RE = re.compile(
     r"這是\s*live\s*成交|这是\s*live\s*成交",
     re.I,
 )
+# Same-sentence negation only. A later claim after 「。」/「.」 still counts.
 _NEGATED_CLAIM_RE = re.compile(
     r"(?:不會|不会|不要|不能|沒有|没有|不是|未|絕不|绝不|"
     r"never|not|won'?t|will not|cannot|can'?t|"
     r"do not|don'?t|did not|didn'?t|without)"
-    r".{0,36}?"
+    r"[^.。!！?？\n]{0,36}?"
     r"(?:已成交|成交了|已下單|已下单|已送出|規則已改|规则已改|"
     r"verified|live fill|filled|submitted|execution|fill happened)",
-    re.I | re.S,
+    re.I,
+)
+_START_STOP_HOWTO_RE = re.compile(
+    r"如何到\s*AI\s*Mode\s*開紙上自動|"
+    r"開關請去\s*AI\s*Mode|"
+    r"選策略＋手動\s*Start|"
+    r"Start\s*/\s*Stop stays in AI Mode|"
+    r"manually\s+Start\s*/\s*Stop paper auto|"
+    r"how to reach AI Mode for paper auto|"
+    r"open AI Mode for trading",
+    re.I,
 )
 
 GUIDE_STEPS: List[Dict[str, Any]] = [
@@ -311,6 +322,29 @@ def guest_refuse_copy(lang: str) -> str:
     return GUEST_REFUSE_ZH if lang == "zh" else GUEST_REFUSE_EN
 
 
+def guest_research_copy(lang: str) -> str:
+    """Guest teaching: Scan / Deep / Chart only. Never how to Start/Stop auto."""
+    if lang == "zh":
+        return (
+            "目前是 Guest（LAN 研究）角色。\n"
+            "我只能說明 Scan／Deep／Chart 研究面："
+            "Scan 是掃描總覽，Deep 是單一代碼更深報告，Chart 是日線快照。"
+            "這些不是 verified、不是 live、不是下單。\n"
+            "本聊天不會下單，也不會改自動交易。"
+        )
+    return (
+        "You are a research guest (LAN).\n"
+        "I can only explain Scan / Deep / Chart: Scan ranks the universe,"
+        " Deep is a per-ticker report, Chart is a daily snapshot."
+        " Those are not verified, not live, and not orders.\n"
+        "This chat does not trade and does not change paper auto."
+    )
+
+
+def teaches_start_stop_howto(text: str) -> bool:
+    return bool(_START_STOP_HOWTO_RE.search(text or ""))
+
+
 def is_hard_refuse(text: str) -> bool:
     return bool(
         _ORDER_RE.search(text)
@@ -382,18 +416,21 @@ def _fallback_teach(message: str, lang: str, role: str) -> str:
     q = message
     zh = lang == "zh"
     guest = role == "guest"
+    ui = "zh" if zh else "en"
     # Guests never receive Start/Stop auto teaching, even if a classifier miss
     # lets a holdings / AI Mode prompt through.
     if guest and (is_guest_sensitive(q) or is_hard_refuse(q)):
-        return guest_refuse_copy("zh" if zh else "en")
+        return guest_refuse_copy(ui)
     if guest and re.search(r"ai\s*mode|aimode|自動|自动|paper auto", q, re.I):
-        return guest_refuse_copy("zh" if zh else "en")
-    if re.search(r"scan|掃描|扫描|deep|深度", q, re.I):
+        return guest_refuse_copy(ui)
+    if re.search(r"scan|掃描|扫描|deep|深度|chart|圖表|图表", q, re.I):
+        if guest:
+            return guest_research_copy(ui)
         if zh:
             return (
                 "Scan＝側欄 Navigation · 掃描：對關注清單／宇宙做掃描總覽。\n"
                 "Deep＝頁內動作：在 Scan 或 Research 對單一代碼做更深報告，不是第三個平級殼項。\n"
-                "Auto＝頂欄／AI Mode 的紙上 worker 狀態，與 Help 聊天無關。\n"
+                "Chart＝日線快照，不是 live、不是下單。\n"
                 "掃描分數／報告不是 verified、不是 live、不是下單指令。"
             )
         return (
@@ -401,9 +438,11 @@ def _fallback_teach(message: str, lang: str, role: str) -> str:
             " sentiment, risk, regime).\n"
             "Deep is an in-page action on Scan or Research — not a third sidebar"
             " shell item.\n"
-            "Auto is the top-bar paper-worker chip, unrelated to this help chat.\n"
+            "Chart is a daily snapshot — not live, not an order.\n"
             "Scan scores / Deep reports are not verified, not live, and not orders."
         )
+    if guest:
+        return guest_research_copy(ui)
     if re.search(r"持倉|仓位|沒持倉|没持仓|empty|為何沒|为何没|no positions", q, re.I):
         if zh:
             return (
@@ -566,6 +605,8 @@ def answer_help_chat(
     knowledge = load_knowledge()
     llm_text = _llm_reply(_system_prompt(role, ui_lang, knowledge), text)
     source = (llm_text or _fallback_teach(text, ui_lang, role) or "").strip()
+    if role == "guest" and teaches_start_stop_howto(source):
+        source = guest_research_copy(ui_lang)
     dishonest = reply_is_dishonest(source)
     reply = sanitize_reply(source, ui_lang) if dishonest else source
     return _envelope(

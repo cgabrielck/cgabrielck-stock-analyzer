@@ -15,10 +15,12 @@ from backend.api.help_chat import (
     HARD_REFUSE_EN,
     HARD_REFUSE_ZH,
     _fallback_teach,
+    guest_research_copy,
     is_guest_sensitive,
     is_hard_refuse,
     reply_is_dishonest,
     sanitize_reply,
+    teaches_start_stop_howto,
 )
 
 
@@ -544,3 +546,59 @@ def test_sanitize_sets_refused_true_on_envelope(operator_client, monkeypatch):
     assert narrative not in body["reply"]
     assert HARD_REFUSE_EN.split("\n")[0] in body["reply"]
     _assert_honest(body)
+
+
+def _assert_guest_no_start_stop_howto(text: str) -> None:
+    assert teaches_start_stop_howto(text) is False
+    low = text.lower()
+    assert "如何到 AI Mode 開紙上自動" not in text
+    assert "Start/Stop stays in AI Mode" not in text
+    assert "start/stop stays in ai mode" not in low
+    assert "how to reach AI Mode for paper auto" not in text
+    assert "開關請去 AI Mode" not in text
+    assert "選策略＋手動 Start" not in text
+    assert "manually start / stop paper auto" not in low
+
+
+@pytest.mark.parametrize("prompt,lang", (("你好", "zh-TW"), ("Why is the book empty?", "en")))
+def test_guest_generic_fallback_does_not_teach_start_stop(guest_client, prompt, lang):
+    fb = _fallback_teach(prompt, "zh" if lang.startswith("zh") else "en", "guest")
+    _assert_guest_no_start_stop_howto(fb)
+    res = _post(guest_client, prompt, lang=lang)
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["role"] == "guest"
+    assert body["refused"] is False
+    _assert_honest(body)
+    _assert_guest_no_start_stop_howto(body["reply"])
+    assert "Scan" in body["reply"] or "Chart" in body["reply"]
+
+
+@pytest.mark.parametrize(
+    "narrative",
+    (
+        "I cannot help. I submitted your order.",
+        "will not pretend a fill. The execution is verified.",
+    ),
+)
+def test_negation_does_not_excuse_later_execution_claim(
+    operator_client, narrative, monkeypatch
+):
+    assert reply_is_dishonest(narrative) is True
+    monkeypatch.setattr("backend.api.help_chat._llm_reply", lambda system, user: narrative)
+    res = _post(operator_client, "What is Scan?")
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["refused"] is True
+    assert body["refuse_kind"] == "hard"
+    assert narrative not in body["reply"]
+    assert "submitted your order" not in body["reply"].lower()
+    assert "execution is verified" not in body["reply"].lower()
+    _assert_honest(body)
+
+
+def test_same_sentence_negation_still_honest():
+    assert reply_is_dishonest("It will not pretend a fill happened") is False
+    assert reply_is_dishonest("不會假裝已成交") is False
+    assert reply_is_dishonest(guest_research_copy("en")) is False
+    assert reply_is_dishonest(guest_research_copy("zh")) is False
