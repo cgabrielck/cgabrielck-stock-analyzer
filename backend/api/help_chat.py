@@ -66,11 +66,14 @@ _ORDER_RE = re.compile(
     r"賣出|卖出|掛單|挂单|"
     r"幫我買|帮我买|幫我賣|帮我卖|幫我購入|帮我购入|"
     r"請幫我[買賣購购]|请帮我[买卖购]|"
+    r"幫我成交|帮我成交|幫我執行|帮我执行|"
+    r"執行交易|执行交易|"
     r"市價買|市价买|限價|限价|"
     r"\b(buy|sell|short)\b|"
     r"place\s+(an\s+|a\s+)?(market\s+|limit\s+)?order|"
     r"submit\s+(an\s+|a\s+)?order|"
-    r"market\s+order",
+    r"market\s+order|"
+    r"execute\s+(a\s+|an\s+|the\s+)?(trade|order)",
     re.I,
 )
 _RULE_RE = re.compile(
@@ -126,7 +129,7 @@ _GUEST_SENSITIVE_RE = re.compile(
 )
 # Completed-execution claims. Negated teaching copy is stripped first.
 _DISHONEST_RE = re.compile(
-    r"verified\s+fill|live\s+fill|already\s+filled|"
+    r"verified\s+fill|(?<!/)live\s+fills?\b|already\s+filled|"
     r"filled\s+at|"
     r"execution\s+is\s+verified|"
     r"(?:i\s+)?submitted\s+your\s+order|"
@@ -462,7 +465,7 @@ def _fallback_teach(message: str, lang: str, role: str) -> str:
         "I can explain Scan / Deep / Chart, empty holdings, the PAPER badge,"
         " and how to reach AI Mode for paper auto.\n"
         "I cannot place orders, change live/L2/risk rules, Start/Stop auto, or"
-        " stamp verified/live fills.\n"
+        " claim a verified or live execution.\n"
         f"Role: {role}. Knowledge = User Guide + in-app Guide/tour whitelist."
     )
 
@@ -521,7 +524,7 @@ def _envelope(
 
 def sanitize_reply(text: str, lang: str) -> str:
     raw = (text or "").strip()
-    if not raw or reply_is_dishonest(raw):
+    if reply_is_dishonest(raw):
         extra = (
             "Ask Cgab 不會標記 verified 或 live 成交。"
             if lang == "zh"
@@ -562,14 +565,14 @@ def answer_help_chat(
 
     knowledge = load_knowledge()
     llm_text = _llm_reply(_system_prompt(role, ui_lang, knowledge), text)
-    llm_used = bool(llm_text)
-    reply = sanitize_reply(llm_text or _fallback_teach(text, ui_lang, role), ui_lang)
-    refused = reply_is_dishonest(llm_text or "")
+    source = (llm_text or _fallback_teach(text, ui_lang, role) or "").strip()
+    dishonest = reply_is_dishonest(source)
+    reply = sanitize_reply(source, ui_lang) if dishonest else source
     return _envelope(
         role=role,
         lang=ui_lang,
         reply=reply,
-        refused=refused,
-        refuse_kind="hard" if refused else None,
-        llm_used=llm_used and not refused,
+        refused=dishonest,
+        refuse_kind="hard" if dishonest else None,
+        llm_used=bool(llm_text) and not dishonest,
     )

@@ -76,6 +76,9 @@ HARD_PROMPTS = (
     "turn off the kill switch",
     "關掉風控",
     "繞過風控",
+    "execute a trade",
+    "執行交易",
+    "幫我成交",
 )
 
 GUEST_PROMPTS = (
@@ -207,6 +210,9 @@ def test_hard_refuse_classifier():
     assert is_hard_refuse("modify the L2 rules")
     assert is_hard_refuse("關掉風控")
     assert is_hard_refuse("turn off the kill switch")
+    assert is_hard_refuse("execute a trade")
+    assert is_hard_refuse("執行交易")
+    assert is_hard_refuse("幫我成交")
     assert not is_hard_refuse("What is Scan?")
     assert not is_hard_refuse("How do I open AI Mode?")
 
@@ -479,3 +485,62 @@ def test_hard_refuse_negation_is_not_dishonest():
     assert reply_is_dishonest("我已經幫你買進，成交了。規則已改好。") is True
     out = sanitize_reply(HARD_REFUSE_ZH, "zh")
     assert out == HARD_REFUSE_ZH
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    ("execute a trade", "執行交易", "幫我成交"),
+)
+def test_execute_trade_synonyms_are_hard_refuse(operator_client, prompt, monkeypatch):
+    llm = MagicMock(return_value="should not run")
+    monkeypatch.setattr("backend.api.help_chat._llm_reply", llm)
+    lang = "zh-TW" if any(ch in prompt for ch in "執行幫成交") else "en"
+    res = _post(operator_client, prompt, lang=lang)
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert is_hard_refuse(prompt) is True
+    assert body["refused"] is True, prompt
+    assert body["refuse_kind"] == "hard", prompt
+    assert body["llm_used"] is False
+    llm.assert_not_called()
+    _assert_honest(body)
+    assert HARD_REFUSE_EN.split("\n")[0] in body["reply"] or HARD_REFUSE_ZH.split("\n")[0] in body["reply"]
+
+
+def test_default_teaching_is_not_scrubbed_as_refuse(operator_client):
+    """EN canned teach mentions verified/live in a prohibition — not a fill claim."""
+    canned = _fallback_teach("What can you do?", "en", "operator")
+    assert reply_is_dishonest(canned) is False
+    assert "verified/live fills" not in canned.lower() or not reply_is_dishonest(canned)
+    teaching = (
+        "I cannot place orders or claim a verified or live execution. "
+        "Scan scores are not verified/live fills."
+    )
+    assert reply_is_dishonest(teaching) is False
+    assert sanitize_reply(teaching, "en") == teaching.strip()
+
+    res = _post(operator_client, "What can you do?")
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["refused"] is False
+    assert body["refuse_kind"] is None
+    _assert_honest(body)
+    assert HARD_REFUSE_EN.split("\n")[0] not in body["reply"]
+    assert "Desk teaching only" in body["reply"] or "Ask Cgab" in body["reply"]
+
+
+def test_sanitize_sets_refused_true_on_envelope(operator_client, monkeypatch):
+    narrative = (
+        "Filled at 190. The execution is verified. "
+        "I submitted your order and paper auto is running."
+    )
+    monkeypatch.setattr("backend.api.help_chat._llm_reply", lambda system, user: narrative)
+    res = _post(operator_client, "What is Scan?")
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["refused"] is True
+    assert body["refuse_kind"] == "hard"
+    assert body["llm_used"] is False
+    assert narrative not in body["reply"]
+    assert HARD_REFUSE_EN.split("\n")[0] in body["reply"]
+    _assert_honest(body)
