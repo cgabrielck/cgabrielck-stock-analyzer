@@ -323,6 +323,18 @@ def test_lab_advisory_api_does_not_touch_broker_or_desk_order(lab_data_dir, monk
     stamp_fn.assert_not_called()
 
 
+def test_desk_chart_source_has_no_advisory_debate():
+    """S11: chart payload path must not import or name lab advisory_debate."""
+    chart = (ROOT / "backend/api/desk_chart.py").read_text(encoding="utf-8")
+    indicators = (ROOT / "backend/utils/desk_indicators.py").read_text(encoding="utf-8")
+    assert "advisory_debate" not in chart
+    assert "advisory_debate" not in indicators
+    assert "place_desk_order" not in chart
+    assert "from backend.trading.engine.order_manager" not in chart
+    assert "from backend.lab.advisory_debate" not in chart
+    assert "from backend.lab.advisory_debate" not in indicators
+
+
 def test_desk_committee_run_posts_lab_advisory_not_orders():
     html = (ROOT / "web/static/index.html").read_text(encoding="utf-8")
     start = html.index('root.querySelectorAll(".runAdv")')

@@ -67,6 +67,55 @@ def test_macd_shape_on_rising_series():
     assert abs(float(out["hist"].iloc[-1]) - (float(out["macd"].iloc[-1]) - float(out["signal"].iloc[-1]))) < 1e-9
 
 
+def test_all_nan_close_yields_empty_indicator_lists():
+    """M10: all-NaN Close must not invent SMA/RSI points (including v:0)."""
+    idx = pd.bdate_range("2026-01-05", periods=30)
+    frame = pd.DataFrame(
+        {
+            "Open": [float("nan")] * 30,
+            "High": [float("nan")] * 30,
+            "Low": [float("nan")] * 30,
+            "Close": [float("nan")] * 30,
+            "Volume": [1000] * 30,
+        },
+        index=idx,
+    )
+    series = compute_closed_set(frame)
+    for key, points in series.items():
+        assert points == [], key
+        assert not any(p.get("v") == 0 for p in points)
+
+
+def test_strictly_rising_rsi_does_not_invent_hundred():
+    """S06: Wilder loss=0 → RSI undefined; do not invent v==100."""
+    frame = _close_frame([float(i) for i in range(1, 40)])
+    series = compute_closed_set(frame)
+    for point in series["rsi14"]:
+        assert point["v"] != 100
+        assert point["v"] == point["v"]  # not NaN
+    # Tip: every RSI point is skipped because loss=0 → NaN.
+    assert series["rsi14"] == []
+
+
+def test_sma50_warmup_point_count():
+    """S07: n=60 → 11 SMA50 points; first t is index[49]."""
+    frame = _close_frame(list(range(1, 61)))
+    series = compute_closed_set(frame)
+    assert len(series["sma50"]) == 11
+    assert series["sma50"][0]["t"] == frame.index[49].strftime("%Y-%m-%d")
+    assert series["sma50"][0]["v"] != 0 or series["sma50"][0]["v"] == round(sum(range(1, 51)) / 50, 4)
+
+
+def test_missing_close_column_empty_set():
+    """S08: frame without Close yields empty indicator lists, not invented closes."""
+    idx = pd.bdate_range("2026-01-05", periods=20)
+    frame = pd.DataFrame({"Open": list(range(1, 21)), "Volume": [1] * 20}, index=idx)
+    series = compute_closed_set(frame)
+    assert series["sma20"] == []
+    assert series["rsi14"] == []
+    assert series["macd"] == []
+
+
 def test_compute_closed_set_skips_warmup_and_does_not_invent_empty():
     empty = compute_closed_set(pd.DataFrame())
     assert empty["sma20"] == []
