@@ -137,3 +137,4 @@ No live trading without paper/shadow seal per PAPER_VALIDATION_RUNBOOK.md.
 | 2026-09-14 | Lab citation-try：可選 Instructor／FinBERT／QuantStats／Advisory（預設關）；主線仍 P3 paper／shadow 封印。見 LAB_CITATION_TRY / CITATION_REFUSALS。 |
 | 2026-09-13 | P0–P2 落地：訊號一體化、真 RS（filter only）、ATR 1R sizing、breakout MACD hist≥0。P3 仍為 §4「應做」，本 sprint defer（金鑰／運維），下一步見 PROCUREMENT_GUIDE。未贏 SPY 唔宣稱 alpha。 |
 | 2026-09-12 | 初版：三輪覆核寫入；應引／唔應引定稿並推送 `main` |
+| 2026-09-12 | 關聯 [`CITATION_CANDIDATES.md`](CITATION_CANDIDATES.md)：可引用 OSS 推介名單（只推介、唔 build） |

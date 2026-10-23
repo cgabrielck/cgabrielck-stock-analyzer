@@ -14,6 +14,8 @@ See [`docs/ADR-003-live-ai-trading-desk.md`](docs/ADR-003-live-ai-trading-desk.m
 
 **Strategy adoption (what to cite / not cite):** [`docs/STRATEGY_ADOPTION.md`](docs/STRATEGY_ADOPTION.md) — three-pass audit; binding for Agents.
 
+**Citation candidates (OSS to cite next — recommend-only):** [`docs/CITATION_CANDIDATES.md`](docs/CITATION_CANDIDATES.md) — LangGraph/TradingAgents/FinBERT/QuantStats/OpenBB/LEAN etc.; no build in that doc.
+
 **World-class upgrade (grade vs OSS, two SKUs, P0–P4):** [`docs/CGAB_WORLD_CLASS_UPGRADE.md`](docs/CGAB_WORLD_CLASS_UPGRADE.md).
 
 ## Quick Wins (1-2 hours total)
