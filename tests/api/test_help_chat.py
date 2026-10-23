@@ -79,6 +79,10 @@ HARD_PROMPTS = (
     "關掉風控",
     "繞過風控",
     "execute a trade",
+    "Please execute this trade",
+    "execute my trade",
+    "execute your trade",
+    "execute that trade",
     "執行交易",
     "幫我成交",
 )
@@ -213,6 +217,10 @@ def test_hard_refuse_classifier():
     assert is_hard_refuse("關掉風控")
     assert is_hard_refuse("turn off the kill switch")
     assert is_hard_refuse("execute a trade")
+    assert is_hard_refuse("Please execute this trade")
+    assert is_hard_refuse("execute my trade")
+    assert is_hard_refuse("execute your trade")
+    assert is_hard_refuse("execute that trade")
     assert is_hard_refuse("執行交易")
     assert is_hard_refuse("幫我成交")
     assert not is_hard_refuse("What is Scan?")
@@ -491,7 +499,15 @@ def test_hard_refuse_negation_is_not_dishonest():
 
 @pytest.mark.parametrize(
     "prompt",
-    ("execute a trade", "執行交易", "幫我成交"),
+    (
+        "execute a trade",
+        "Please execute this trade",
+        "execute my trade",
+        "execute your trade",
+        "execute that trade",
+        "執行交易",
+        "幫我成交",
+    ),
 )
 def test_execute_trade_synonyms_are_hard_refuse(operator_client, prompt, monkeypatch):
     llm = MagicMock(return_value="should not run")

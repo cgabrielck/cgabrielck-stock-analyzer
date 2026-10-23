@@ -73,7 +73,7 @@ _ORDER_RE = re.compile(
     r"place\s+(an\s+|a\s+)?(market\s+|limit\s+)?order|"
     r"submit\s+(an\s+|a\s+)?order|"
     r"market\s+order|"
-    r"execute\s+(a\s+|an\s+|the\s+)?(trade|order)",
+    r"execute\s+(?:(?:a|an|the|this|that|my|your|our|their)\s+)?(trade|order)",
     re.I,
 )
 _RULE_RE = re.compile(
