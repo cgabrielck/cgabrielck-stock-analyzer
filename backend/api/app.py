@@ -25,6 +25,7 @@ ensure_backend_on_path()
 from backend.api import intents as intents_api
 from backend.api import research_jobs, worker_ctl
 from backend.api.desk_auth import is_operator, require_operator
+from backend.api.help_chat import HelpChatIn, answer_help_chat, guide_payload
 from backend.api.desk_display import compose_performance_kpis, dual_book_envelope, orders_book
 from backend.trading.fill_honesty import recorded_fill_price
 from backend.trading import telegram_inbox
@@ -451,100 +452,13 @@ def worker_stop(_auth: None = Depends(_require_paper_operator)) -> Dict[str, Any
 
 @app.get("/api/guide")
 def guide() -> Dict[str, Any]:
-    return {
-        "languages": ["en", "zh-TW"],
-        "default": "en",
-        "steps": [
-            {
-                "id": "welcome",
-                "en": {
-                    "title": "Welcome to Cgab",
-                    "body": "This is a US-equity research desk with optional AI paper trading. Nothing here spends real money while the PAPER badge is on.",
-                },
-                "zh": {
-                    "title": "歡迎使用 Cgab",
-                    "body": "這是美股研究工作台，可選用 AI 模擬自動交易。只要右上角顯示 PAPER，就不會動用真實資金。",
-                },
-            },
-            {
-                "id": "nav",
-                "en": {
-                    "title": "Three sidebar groups",
-                    "body": "Navigation is the daily workspace (Desk, Orders, Research, Market, Chart). Apps are tools (AI Mode, Strategies, Alerts, Calendar). More holds Journal, Options, Settings, and this Guide.",
-                },
-                "zh": {
-                    "title": "側欄三個分組",
-                    "body": "導覽是日常工作區（工作台、訂單、研究、行情、圖表）。應用是工具（AI 模式、策略、警示、行事曆）。更多包含日誌、選擇權、設定與本教學。",
-                },
-            },
-            {
-                "id": "desk",
-                "en": {
-                    "title": "Desk is the paper book",
-                    "body": "Equity, cash, and holdings come from your Alpaca paper account. An empty table means no fills yet — not that the desk is broken. Two books, two directories. Desk broker journal/ledger is backend/data/. Streamlit Kelly/lab portfolio is data/. They are not the same book.",
-                },
-                "zh": {
-                    "title": "工作台是模擬持倉",
-                    "body": "權益、現金與持倉來自 Alpaca 模擬帳戶。表格空白代表還沒成交，不是畫面壞掉。兩本帳、兩個目錄。Desk 券商日誌／帳本在 backend/data/。Streamlit Kelly／實驗室組合在 data/。兩者不是同一本帳。",
-                },
-            },
-            {
-                "id": "books",
-                "en": {
-                    "title": "Two books, two directories",
-                    "body": "Two books, two directories. Desk broker journal/ledger is backend/data/. Streamlit Kelly/lab portfolio is data/. They are not the same book.",
-                },
-                "zh": {
-                    "title": "兩本帳、兩個目錄",
-                    "body": "兩本帳、兩個目錄。Desk 券商日誌／帳本在 backend/data/。Streamlit Kelly／實驗室組合在 data/。兩者不是同一本帳。",
-                },
-            },
-            {
-                "id": "auto",
-                "en": {
-                    "title": "How paper auto trading works",
-                    "body": "Open AI Mode → pick a strategy → Start paper auto. The top bar shows AUTO ON only when the worker process is running (live pid, heartbeat not stale) — not when the account is loaded, not from an unverified heartbeat, and not from a stale pid. The worker scans during US regular hours unless IGNORE_MARKET_HOURS=true.",
-                },
-                "zh": {
-                    "title": "如何開啟紙上自動交易",
-                    "body": "打開 AI 模式 → 選擇策略 → 按「啟動紙上自動交易」。只有工作行程進程在跑（有活 PID 且心跳未過期）時，頂欄才會顯示 AUTO ON。不是帳戶已載入，不是未驗證心跳，也不是過期 PID。預設只在美股正規交易時段掃描，除非 .env 設 IGNORE_MARKET_HOURS=true。",
-                },
-            },
-            {
-                "id": "empty",
-                "en": {
-                    "title": "Why you may see no trades",
-                    "body": "The bot does not buy every minute. A signal must beat the entry threshold, Kelly size, RiskEngine, and mandate. Yahoo data gaps can skip a cycle. Manual Buy on Desk still works anytime in paper.",
-                },
-                "zh": {
-                    "title": "為什麼看不到成交",
-                    "body": "機器人不會每分鐘都買。訊號必須通過進場門檻、凱利倉位、風控與授權。Yahoo 行情中斷時該輪會跳過。工作台上的手動買入隨時可在模擬盤下單。",
-                },
-            },
-            {
-                "id": "journal",
-                "en": {
-                    "title": "Trade journal is on the Desk",
-                    "body": "More → Journal shows recent orders, risk rejects, and notes with audit/provenance links. Empty means nothing was recorded — not a live fill. Streamlit’s journal is lab/legacy only.",
-                },
-                "zh": {
-                    "title": "交易日誌在 Desk",
-                    "body": "更多 → 交易日誌顯示近期訂單、風控拒絕與筆記，並可跟著 audit／provenance 連結。空白代表尚未入帳，不是即時成交。Streamlit 日誌只是實驗室／舊介面。",
-                },
-            },
-            {
-                "id": "lang",
-                "en": {
-                    "title": "English and 繁體中文",
-                    "body": "Use the EN / 繁 switch in the top bar. Replay this tour anytime from Guide or the ? button.",
-                },
-                "zh": {
-                    "title": "英文與繁體中文",
-                    "body": "用頂欄的 EN / 繁 切換語言。之後可從「教學」或問號按鈕再看一次導覽。",
-                },
-            },
-        ],
-    }
+    return guide_payload()
+
+
+@app.post("/api/help-chat")
+def help_chat(body: HelpChatIn, request: Request) -> Dict[str, Any]:
+    """Ask Cgab — teaching/guide only. Does not trade or start the worker."""
+    return answer_help_chat(request, body.message, lang=body.lang)
 
 
 @app.get("/api/watchlist")

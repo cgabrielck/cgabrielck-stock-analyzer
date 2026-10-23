@@ -58,6 +58,37 @@ def get_public_config() -> Dict[str, Any]:
     }
 
 
+def complete_chat(
+    messages: List[Dict[str, str]],
+    *,
+    task: str = "help",
+    temperature: float = 0.2,
+    max_tokens: int = 700,
+) -> Optional[str]:
+    """Plain-text chat on the shared OpenAI-compatible LLM_* client.
+
+    Returns None when the client is unconfigured or the call fails.
+    Help chat and other teaching paths should use this instead of a second
+    provider stack. Does not place orders.
+    """
+    client = _get_client()
+    if client is None:
+        return None
+    try:
+        resp = _create_completion(
+            client,
+            task,
+            messages=messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+        content = resp.choices[0].message.content if resp and resp.choices else None
+        text = (content or "").strip()
+        return text or None
+    except Exception:
+        return None
+
+
 def _create_completion(client: OpenAI, task: str, **kwargs: Any) -> Any:
     primary_model = get_model_for_task(task)
     max_retries = 3

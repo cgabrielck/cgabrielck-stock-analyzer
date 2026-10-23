@@ -18,7 +18,7 @@ From the repo folder:
 
 Open http://127.0.0.1:8000/ — you should see a **PAPER** badge. That means orders go to Alpaca paper, not live cash. Phones on the same Wi-Fi use **http://<pc-lan-ip>:8000/** (research guests; see §7).
 
-First visit: a short tour appears. Replay it from **More → Guide** or the **?** button. Switch language with **EN / 繁** in the top bar.
+First visit: a short tour appears. Replay it from **More → Guide**. The bottom-right **Ask Cgab** button and the top-bar **?** open the same teaching help chat (not AI Mode — it will not place orders, change rules, or Start/Stop paper auto). Switch language with **EN / 繁** in the top bar.
 
 ### 2. Sidebar groups
 
@@ -32,6 +32,7 @@ First visit: a short tour appears. Replay it from **More → Guide** or the **?*
 
 - **Desk** shows the real Alpaca paper book: equity, cash, positions, manual ticket.
 - **AI Mode** is the only place to pick the strategy and **Start / Stop paper auto**.
+- **Ask Cgab** (bottom-right FAB, or top-bar **?** / Guide) is teaching/guide chat. It is not AI Mode, not verified, not live, and it never places orders or changes rules.
 - Saving sliders does **not** start the bot. You must press **Start paper auto**.
 - Two books, two directories. Desk broker journal/ledger is backend/data/. Streamlit Kelly/lab portfolio is data/. They are not the same book. Holdings “not a model portfolio” is still true; it is not enough by itself — the two directories are separate writers.
 
@@ -91,7 +92,7 @@ Bind the FastAPI Desk so phones on the same Wi-Fi can open the **same** UI as lo
 
 打開 http://127.0.0.1:8000/ ，頂欄應有 **PAPER**。代表下單走 Alpaca 模擬盤，不是真錢。同一 Wi-Fi 的手機開 **http://<電腦區網IP>:8000/**（研究訪客；見第 7 節）。
 
-第一次進入會出現導覽。之後可到 **更多 → 教學** 或按 **?** 重看。語言用頂欄 **EN / 繁** 切換。
+第一次進入會出現導覽。之後可到 **更多 → 教學** 重看。右下角 **Ask Cgab** 與頂欄 **?** 打開同一個教學聊天（不是 AI Mode；不會下單、改規則或 Start／Stop 紙上自動）。語言用頂欄 **EN / 繁** 切換。
 
 ### 2. 側欄分組
 
@@ -105,6 +106,7 @@ Bind the FastAPI Desk so phones on the same Wi-Fi can open the **same** UI as lo
 
 - **工作台**顯示 Alpaca 模擬帳戶的真實帳本：權益、現金、持倉、手動下單。
 - **AI 模式**才是選擇策略並 **啟動 / 停止紙上自動交易** 的地方。
+- **Ask Cgab**（右下角浮層，或頂欄 **?**／教學）是教學說明聊天。不是 AI Mode、不是 verified、不是 live，也不會下單或改規則。
 - 只儲存參數 **不會** 啟動機器人，必須再按啟動。
 - 兩本帳、兩個目錄。Desk 券商日誌／帳本在 backend/data/。Streamlit Kelly／實驗室組合在 data/。兩者不是同一本帳。持倉「不是模型組合」仍然正確，但單靠那句不夠——兩個目錄是分開的帳本。
 
