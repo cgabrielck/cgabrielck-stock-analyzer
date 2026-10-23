@@ -14,6 +14,8 @@ from backend.api.help_chat import (
     GUEST_REFUSE_EN,
     HARD_REFUSE_EN,
     HARD_REFUSE_ZH,
+    _fallback_teach,
+    is_guest_sensitive,
     is_hard_refuse,
     reply_is_dishonest,
     sanitize_reply,
@@ -59,12 +61,20 @@ HARD_PROMPTS = (
     "Buy 1 share of AAPL now",
     "place a market order for AAPL",
     "幫我買 AAPL",
+    "請幫我購入 AAPL",
+    "請購入 TSLA",
     "Start paper auto now",
     "啟動自動交易",
+    "開啟紙上自動",
+    "開啟紙上自動交易",
     "stop the paper auto",
     "change L2 live rules",
+    "modify the L2 rules",
+    "adjust the live rules",
     "改 L2 規則",
     "bypass the kill switch",
+    "turn off the kill switch",
+    "關掉風控",
     "繞過風控",
 )
 
@@ -73,9 +83,21 @@ GUEST_PROMPTS = (
     "Show holdings",
     "Why no holdings?",
     "為何沒持倉",
+    "我的倉位",
+    "持股明細",
+    "獲利多少",
+    "目前權益",
     "Open the trade journal",
     "Start paper auto now",
     "啟動自動交易",
+    "啟動 AI 模式",
+    "開啟紙上自動",
+)
+
+DISHONEST_NARRATIVES = (
+    "Filled at 190. The execution is verified. I submitted your order and paper auto is running.",
+    "我已經幫你買進，成交了。規則已改好。",
+    "Order submitted. 已送出.",
 )
 
 
@@ -123,13 +145,19 @@ def _assert_honest(body: dict) -> None:
     assert body["writes_intent"] is False
     text = body["reply"]
     low = text.lower()
-    assert "verified fill" not in low
     assert "this is a verified" not in low
     assert "this is a live fill" not in low
     assert "order placed" not in low
-    assert "已成交" not in text
-    assert "已下單" not in text
-    assert "已下单" not in text
+    assert "execution is verified" not in low
+    assert "submitted your order" not in low
+    assert "成交了" not in text
+    assert "已送出" not in text
+    assert "規則已改好" not in text
+    # 「不會假裝已成交」 is the fixed refuse negation, not a fill claim.
+    if "已成交" in text:
+        assert "不會假裝已成交" in text
+    if "已下單" in text or "已下单" in text:
+        assert "不會" in text or "不会" in text
     assert not reply_is_dishonest(text)
     honesty = body["honesty"]
     assert "verified" in honesty.lower() or "verified" in honesty
@@ -174,6 +202,11 @@ def test_hard_refuse_classifier():
     assert is_hard_refuse("change L2 live rules")
     assert is_hard_refuse("bypass the kill switch")
     assert is_hard_refuse("幫我買 AAPL")
+    assert is_hard_refuse("請幫我購入 AAPL")
+    assert is_hard_refuse("開啟紙上自動")
+    assert is_hard_refuse("modify the L2 rules")
+    assert is_hard_refuse("關掉風控")
+    assert is_hard_refuse("turn off the kill switch")
     assert not is_hard_refuse("What is Scan?")
     assert not is_hard_refuse("How do I open AI Mode?")
 
@@ -314,6 +347,9 @@ def test_desk_html_has_ask_cgab_fab_and_honesty_bar():
     assert 'id="helpHonesty"' in html
     assert "help-honesty" in html
     assert "/api/help-chat" in html
+    assert "function helpClaimedFill(" in html
+    assert "function helpSafeReply(" in html
+    assert "成交了" in html[html.find("function helpClaimedFill("):html.find("async function sendHelpMessage(")]
     assert "IntentStore" not in html[html.find("function sendHelpMessage") :]
     assert "圖表筆記" not in html
     assert "chart notes" not in html.lower()
@@ -344,3 +380,102 @@ def test_user_guide_mentions_ask_cgab_as_teaching():
 def test_empty_message_is_422(operator_client):
     res = operator_client.post("/api/help-chat", json={"message": "   "})
     assert res.status_code == 422
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    (
+        "請幫我購入 AAPL",
+        "開啟紙上自動",
+        "modify the L2 rules",
+        "關掉風控",
+        "turn off the kill switch",
+        "請購入 TSLA",
+        "開啟紙上自動交易",
+        "adjust the live rules",
+        "修改 L2 規則",
+    ),
+)
+def test_hard_refuse_synonyms_are_not_teaching(operator_client, prompt, monkeypatch):
+    llm = MagicMock(return_value="should not run")
+    monkeypatch.setattr("backend.api.help_chat._llm_reply", llm)
+    res = _post(operator_client, prompt, lang="zh-TW" if any(ch in prompt for ch in "請開改關") else "en")
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["refused"] is True, prompt
+    assert body["refuse_kind"] == "hard", prompt
+    llm.assert_not_called()
+    _assert_honest(body)
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    (
+        "我的倉位",
+        "持股明細",
+        "啟動 AI 模式",
+        "開啟紙上自動",
+        "獲利多少",
+        "目前權益",
+    ),
+)
+def test_guest_refuses_position_profit_equity_and_ai_start(
+    guest_client, prompt, monkeypatch
+):
+    llm = MagicMock(return_value="should not run")
+    monkeypatch.setattr("backend.api.help_chat._llm_reply", llm)
+    res = _post(guest_client, prompt, lang="zh-TW")
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["role"] == "guest"
+    assert body["refused"] is True, prompt
+    assert body["refuse_kind"] in {"guest", "hard"}, prompt
+    llm.assert_not_called()
+    _assert_honest(body)
+    low = body["reply"].lower()
+    assert "start / stop paper auto" not in low
+    assert "選策略＋手動 Start" not in body["reply"]
+
+
+def test_guest_fallback_does_not_teach_start_stop_auto():
+    assert is_guest_sensitive("我的倉位")
+    assert is_guest_sensitive("持股明細")
+    assert is_guest_sensitive("啟動 AI 模式")
+    assert is_guest_sensitive("開啟紙上自動")
+    for prompt in ("How do I start paper auto?", "啟動 AI 模式", "什麼是 AI Mode"):
+        text = _fallback_teach(prompt, "en", "guest")
+        low = text.lower()
+        assert "pick a strategy" not in low
+        assert "manually start / stop" not in low
+        assert "選策略＋手動" not in text
+        assert "Guest" in text or "guest" in low
+
+
+@pytest.mark.parametrize("narrative", DISHONEST_NARRATIVES)
+def test_sanitize_blocks_completed_execution_narratives(operator_client, narrative, monkeypatch):
+    monkeypatch.setattr("backend.api.help_chat._llm_reply", lambda system, user: narrative)
+    res = _post(operator_client, "What is Scan?", lang="zh-TW" if "成交" in narrative else "en")
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["refused"] is True
+    _assert_honest(body)
+    reply = body["reply"]
+    assert narrative not in reply
+    assert "Filled at 190" not in reply
+    assert "execution is verified" not in reply.lower()
+    assert "submitted your order" not in reply.lower()
+    assert "成交了" not in reply
+    assert "已送出" not in reply
+    assert "規則已改好" not in reply
+    assert "我已經幫你買進" not in reply
+
+
+def test_hard_refuse_negation_is_not_dishonest():
+    assert reply_is_dishonest(HARD_REFUSE_ZH) is False
+    assert reply_is_dishonest(HARD_REFUSE_EN) is False
+    assert reply_is_dishonest("不會假裝已成交") is False
+    assert reply_is_dishonest("It will not pretend a fill happened") is False
+    assert reply_is_dishonest("Filled at 190. The execution is verified.") is True
+    assert reply_is_dishonest("我已經幫你買進，成交了。規則已改好。") is True
+    out = sanitize_reply(HARD_REFUSE_ZH, "zh")
+    assert out == HARD_REFUSE_ZH

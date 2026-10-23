@@ -62,7 +62,10 @@ GUEST_REFUSE_EN = (
 
 # Imperative money / control — never execute; always the fixed refuse copy.
 _ORDER_RE = re.compile(
-    r"下單|下单|買入|买入|賣出|卖出|掛單|挂单|幫我買|帮我买|幫我賣|帮我卖|"
+    r"下單|下单|買入|买入|購入|购入|買進|买进|購進|购进|"
+    r"賣出|卖出|掛單|挂单|"
+    r"幫我買|帮我买|幫我賣|帮我卖|幫我購入|帮我购入|"
+    r"請幫我[買賣購购]|请帮我[买卖购]|"
     r"市價買|市价买|限價|限价|"
     r"\b(buy|sell|short)\b|"
     r"place\s+(an\s+|a\s+)?(market\s+|limit\s+)?order|"
@@ -72,8 +75,10 @@ _ORDER_RE = re.compile(
 )
 _RULE_RE = re.compile(
     r"改規則|改规则|改\s*l2|改\s*live|改風控|改风控|"
+    r"修改.{0,12}(l2|live|規則|规则|風控|风控)|"
     r"change[- ]rules?|"
-    r"change\s+(the\s+)?(.{0,24}\b)?(live|l2|risk)\b.{0,24}\brules?|"
+    r"(?:change|modify|edit|update|adjust|tweak)\s+"
+    r"(the\s+)?(.{0,24}\b)?(live|l2|risk)\b.{0,24}\brules?|"
     r"edit\s+(the\s+)?(live|l2)\s+rules?|"
     r"update\s+(the\s+)?(live|l2)\s+rules?",
     re.I,
@@ -81,39 +86,71 @@ _RULE_RE = re.compile(
 _AUTO_CMD_RE = re.compile(
     r"啟動\s*(?:紙上)?自動|启动\s*(?:纸上)?自动|"
     r"開始\s*(?:紙上)?自動|开始\s*(?:纸上)?自动|"
+    r"開啟\s*(?:紙上)?自動|开启\s*(?:纸上)?自动|"
+    r"打開\s*(?:紙上)?自動|打开\s*(?:纸上)?自动|"
     r"停止\s*(?:紙上|纸上)?自動|停止\s*(?:纸上)?自动|"
+    r"啟動\s*AI|启动\s*AI|開啟\s*AI\s*模式|开启\s*AI\s*模式|"
     r"幫我啟動|帮我启动|打開自動交易|打开自动交易|"
     r"(?:please\s+)?(?:start|stop|enable|disable)\s+"
     r"(?:the\s+)?(?:paper\s+)?(?:auto|worker|bot)\b|"
     r"start\s+paper(\s+auto)?|"
     r"stop\s+paper(\s+auto)?|"
     r"turn\s+(?:on|off)\s+(?:the\s+)?(?:paper\s+)?auto|"
+    r"open\s+paper\s+auto|"
     r"kill\s+the\s+worker",
     re.I,
 )
 _BYPASS_RE = re.compile(
-    r"繞過|绕过|關掉\s*kill|关掉\s*kill|關閉風控|关闭风控|"
+    r"繞過|绕过|"
+    r"關掉\s*(?:kill|風控|风控)|关掉\s*(?:kill|風控|风控)|"
+    r"關閉風控|关闭风控|關閉\s*kill|关闭\s*kill|"
     r"bypass\s+(the\s+)?(risk|mandate|kill)|"
     r"disable\s+(the\s+)?(risk|mandate|kill)|"
-    r"ignore\s+(the\s+)?(risk|mandate|kill)",
+    r"ignore\s+(the\s+)?(risk|mandate|kill)|"
+    r"turn\s+off\s+(the\s+)?(risk|mandate|kill)|"
+    r"switch\s+off\s+(the\s+)?(risk|mandate|kill)",
     re.I,
 )
 _GUEST_SENSITIVE_RE = re.compile(
-    r"持倉|仓位|持仓|損益|损益|日誌|日志|"
-    r"\b(pnl|p&l|holdings?|positions?|journal|balance)\b|"
+    r"持倉|仓位|持仓|倉位|"
+    r"持股|獲利|获利|權益|权益|"
+    r"損益|损益|日誌|日志|"
+    r"\b(pnl|p&l|holdings?|positions?|journal|balance|equity|profit)\b|"
     r"啟動\s*(?:紙上)?自動|启动\s*(?:纸上)?自动|"
     r"開始\s*(?:紙上)?自動|开始\s*(?:纸上)?自动|"
+    r"開啟\s*(?:紙上)?自動|开启\s*(?:纸上)?自动|"
+    r"啟動\s*AI|启动\s*AI|開啟\s*AI|开启\s*AI|"
     r"start\s+(?:paper\s+)?auto|start\s+ai\s*mode|"
-    r"ai\s*mode\s+start",
+    r"ai\s*mode\s+start|open\s+paper\s+auto",
     re.I,
 )
+# Completed-execution claims. Negated teaching copy is stripped first.
 _DISHONEST_RE = re.compile(
     r"verified\s+fill|live\s+fill|already\s+filled|"
-    r"order\s+(?:was\s+)?placed|i\s+placed\s+(?:the\s+)?order|"
-    r"auto\s+is\s+now\s+on|worker\s+is\s+now\s+running|"
-    r"已成交|已下單|已下单|已啟動自動|已启动自动|"
-    r"這是\s*verified|这是\s*verified|這是\s*live\s*成交|这是\s*live\s*成交",
+    r"filled\s+at|"
+    r"execution\s+is\s+verified|"
+    r"(?:i\s+)?submitted\s+your\s+order|"
+    r"order\s+(?:was\s+)?(?:placed|submitted)|"
+    r"i\s+placed\s+(?:the\s+)?order|"
+    r"auto\s+is\s+now\s+on|"
+    r"paper\s+auto\s+is\s+(?:now\s+)?running|"
+    r"worker\s+is\s+now\s+running|"
+    r"已成交|成交了|已下單|已下单|已送出|"
+    r"已啟動自動|已启动自动|"
+    r"規則已改好|规则已改好|"
+    r"我已經幫你買|我已经帮你买|"
+    r"這是\s*verified|这是\s*verified|"
+    r"這是\s*live\s*成交|这是\s*live\s*成交",
     re.I,
+)
+_NEGATED_CLAIM_RE = re.compile(
+    r"(?:不會|不会|不要|不能|沒有|没有|不是|未|絕不|绝不|"
+    r"never|not|won'?t|will not|cannot|can'?t|"
+    r"do not|don'?t|did not|didn'?t|without)"
+    r".{0,36}?"
+    r"(?:已成交|成交了|已下單|已下单|已送出|規則已改|规则已改|"
+    r"verified|live fill|filled|submitted|execution|fill happened)",
+    re.I | re.S,
 )
 
 GUIDE_STEPS: List[Dict[str, Any]] = [
@@ -285,7 +322,12 @@ def is_guest_sensitive(text: str) -> bool:
 
 
 def reply_is_dishonest(text: str) -> bool:
-    return bool(_DISHONEST_RE.search(text or ""))
+    """True when the reply claims an execution. Negations are not hits.
+
+    「不會假裝已成交」 and "will not pretend a fill happened" stay honest.
+    """
+    cleaned = _NEGATED_CLAIM_RE.sub(" ", text or "")
+    return bool(_DISHONEST_RE.search(cleaned))
 
 
 def load_knowledge() -> str:
@@ -336,6 +378,13 @@ def _llm_reply(system: str, user: str) -> Optional[str]:
 def _fallback_teach(message: str, lang: str, role: str) -> str:
     q = message
     zh = lang == "zh"
+    guest = role == "guest"
+    # Guests never receive Start/Stop auto teaching, even if a classifier miss
+    # lets a holdings / AI Mode prompt through.
+    if guest and (is_guest_sensitive(q) or is_hard_refuse(q)):
+        return guest_refuse_copy("zh" if zh else "en")
+    if guest and re.search(r"ai\s*mode|aimode|自動|自动|paper auto", q, re.I):
+        return guest_refuse_copy("zh" if zh else "en")
     if re.search(r"scan|掃描|扫描|deep|深度", q, re.I):
         if zh:
             return (

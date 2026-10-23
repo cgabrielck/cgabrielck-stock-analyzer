@@ -1150,6 +1150,20 @@ function renderHelpMessages(){
   });
   list.scrollTop = list.scrollHeight;
 }
+function helpClaimedFill(text){
+  const s = String(text || "");
+  if (s.indexOf("不會假裝已成交") >= 0 || /will not pretend a fill/i.test(s)) return false;
+  return /成交了|已送出|execution is verified|submitted your order|規則已改好|filled at\s+\d/i.test(s);
+}
+function helpSafeReply(data){
+  let reply = String((data && data.reply) || t("help.error"));
+  let refuse = !!(data && data.refused);
+  if (helpClaimedFill(reply)) {
+    refuse = true;
+    reply = t("help.honesty");
+  }
+  return { reply, refuse };
+}
 async function sendHelpMessage(text){
   const q = String(text || "").trim();
   if(!q || helpBusy) return;
@@ -1169,10 +1183,11 @@ async function sendHelpMessage(text){
       body: JSON.stringify({ message:q, lang })
     });
     helpMessages = helpMessages.filter(m=>!m.pending);
+    const safe = helpSafeReply(data);
     helpMessages.push({
       role:"bot",
-      text: String(data.reply || t("help.error")),
-      refuse: !!data.refused
+      text: safe.reply,
+      refuse: safe.refuse
     });
   } catch(e){
     helpMessages = helpMessages.filter(m=>!m.pending);
