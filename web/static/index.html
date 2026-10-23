@@ -10,6 +10,7 @@
       --bg:#071016; --card:#0e1c22; --card2:#12242c; --line:#1a3d44;
       --cyan:#2de2c5; --purple:#7c6cff; --mint:#3ee0a0; --rose:#ff6b81;
       --text:#e8fffb; --muted:#8aa8ae; --sidebar:#050b0e; --nav:#0b1820;
+      --warn:#e7c36a;
     }
     * { box-sizing:border-box; }
     html,body { margin:0; height:100%; font-family:"Segoe UI",Inter,system-ui,sans-serif; background:radial-gradient(1200px 600px at 80% -10%, #14343a 0%, transparent 50%), var(--bg); color:var(--text); }
@@ -59,7 +60,7 @@
     .lang { display:flex; background:#0b1820; border:1px solid var(--line); border-radius:999px; padding:3px; }
     .lang button { border:0; background:transparent; color:var(--muted); border-radius:999px; padding:6px 12px; cursor:pointer; font-weight:700; font-size:12px; }
     .lang button.on { background:var(--cyan); color:#052226; }
-    .content { padding:20px 22px 32px; }
+    .content { padding:20px 22px 100px; }
     .kpis { display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); gap:12px; margin-bottom:16px; }
     .card { background:linear-gradient(180deg,var(--card2),var(--card)); border:1px solid var(--line); border-radius:16px; padding:16px; }
     .card h3 { margin:0 0 10px; font-size:15px; }
@@ -129,7 +130,101 @@
     .jnl-row { cursor:pointer; }
     .jnl-row:hover td { background:rgba(45,226,197,.04); }
     .jnl-detail { background:#0b1820; border:1px solid var(--line); border-radius:12px; padding:12px; margin-top:12px; font-size:12px; color:var(--muted); white-space:pre-wrap; }
-    .icon-btn { width:36px; height:36px; border-radius:50%; border:1px solid var(--line); background:var(--card); color:var(--cyan); cursor:pointer; font-weight:800; }
+    .icon-btn { width:36px; height:36px; border-radius:50%; border:1px solid var(--line); background:var(--card); color:var(--cyan); cursor:pointer; font-weight:800; display:inline-flex; align-items:center; justify-content:center; }
+    .icon-btn:hover { border-color:var(--cyan); }
+    .help-fab {
+      position:fixed; right:22px; bottom:22px; z-index:50;
+      display:inline-flex; align-items:center; gap:8px;
+      background:linear-gradient(135deg,var(--cyan),#1ab9a0);
+      color:#052226; border:0; border-radius:999px;
+      padding:12px 18px; font-weight:800; font-size:14px; cursor:pointer;
+      box-shadow:0 8px 28px rgba(45,226,197,.35), 0 0 0 1px rgba(45,226,197,.4);
+    }
+    .help-fab:hover { filter:brightness(1.05); }
+    .help-fab .fab-ico {
+      width:22px; height:22px; border-radius:50%; background:#052226; color:var(--cyan);
+      display:grid; place-items:center; font-size:12px; font-weight:900;
+    }
+    .help-panel {
+      position:fixed; right:22px; bottom:78px; z-index:51;
+      width:min(390px, calc(100vw - 24px)); height:min(480px, calc(100vh - 110px));
+      display:none; flex-direction:column;
+      background:linear-gradient(180deg,#0f1f26,#0a151a);
+      border:1px solid rgba(45,226,197,.35);
+      border-radius:18px;
+      box-shadow:0 16px 48px rgba(0,0,0,.55), 0 0 0 1px rgba(255,255,255,.04);
+      overflow:hidden;
+    }
+    .help-panel.open { display:flex; }
+    .help-hd {
+      display:flex; align-items:flex-start; justify-content:space-between; gap:10px;
+      padding:12px 14px 10px; border-bottom:1px solid var(--line);
+      background:rgba(7,20,26,.85);
+    }
+    .help-hd h3 { margin:0; font-size:14px; color:var(--cyan); }
+    .help-hd .sub { margin:2px 0 0; font-size:11px; color:var(--muted); }
+    .help-close {
+      width:30px; height:30px; border-radius:50%; border:1px solid var(--line);
+      background:var(--card); color:var(--muted); cursor:pointer; font-size:16px; line-height:1;
+      flex-shrink:0;
+    }
+    .help-close:hover { color:var(--text); border-color:var(--cyan); }
+    .help-honesty {
+      margin:0; padding:8px 14px; font-size:11px; line-height:1.45; color:#d4c49a;
+      background:rgba(231,195,106,.1); border-bottom:1px solid rgba(231,195,106,.35);
+    }
+    .help-status {
+      display:flex; gap:6px; flex-wrap:wrap; align-items:center;
+      padding:8px 14px; border-bottom:1px solid var(--line); font-size:11px;
+    }
+    .help-status .sc {
+      border-radius:999px; padding:3px 9px; font-weight:800; letter-spacing:.04em;
+      border:1px solid var(--line); color:var(--muted); background:#0b1820;
+    }
+    .help-status .sc.paper { border-color:rgba(45,226,197,.4); color:var(--cyan); }
+    .help-status .hint { color:var(--muted); font-size:10px; }
+    .help-msgs {
+      flex:1; overflow:auto; padding:12px 14px; display:flex; flex-direction:column; gap:10px;
+      background:#07141a;
+    }
+    .help-msg {
+      max-width:92%; padding:10px 12px; border-radius:14px; font-size:13px; line-height:1.5;
+      white-space:pre-wrap; word-break:break-word;
+    }
+    .help-msg.user {
+      align-self:flex-end; background:rgba(45,226,197,.15); border:1px solid rgba(45,226,197,.35);
+      color:#d8fff7; border-bottom-right-radius:4px;
+    }
+    .help-msg.bot {
+      align-self:flex-start; background:#0e1c22; border:1px solid var(--line);
+      color:#cfe8e3; border-bottom-left-radius:4px;
+    }
+    .help-msg.bot.refuse {
+      border-color:rgba(255,107,129,.45); background:rgba(255,107,129,.08); color:#ffd0d7;
+    }
+    .help-msg .who { display:block; font-size:10px; font-weight:800; letter-spacing:.06em; text-transform:uppercase; margin-bottom:4px; opacity:.7; }
+    .help-empty { margin:auto; text-align:center; padding:18px 8px; color:var(--muted); font-size:13px; line-height:1.5; }
+    .help-empty strong { display:block; color:var(--text); margin-bottom:6px; font-size:14px; }
+    .help-quick { display:flex; flex-direction:column; gap:8px; margin-top:14px; }
+    .quick-chip {
+      background:#0d1f26; border:1px dashed rgba(45,226,197,.4); color:var(--cyan);
+      border-radius:12px; padding:9px 12px; cursor:pointer; font-size:12px; font-weight:700; text-align:left;
+    }
+    .quick-chip:hover { background:rgba(45,226,197,.1); border-style:solid; }
+    .help-composer {
+      display:flex; gap:8px; padding:10px 12px; border-top:1px solid var(--line);
+      background:rgba(7,20,26,.9);
+    }
+    .help-composer input {
+      flex:1; min-width:0; background:#07141a; border:1px solid var(--line);
+      border-radius:999px; padding:10px 14px; outline:none; font-size:13px;
+    }
+    .help-composer input:focus { border-color:var(--cyan); }
+    .help-composer .send {
+      background:var(--cyan); color:#052226; border:0; border-radius:999px;
+      padding:0 16px; font-weight:800; cursor:pointer; white-space:nowrap;
+    }
+    .help-composer .send:disabled { opacity:.45; cursor:not-allowed; }
     .menu-btn { display:none; }
     .nav-scrim { display:none; }
     body.guest .nav-paper { display:none !important; }
@@ -190,8 +285,10 @@
       .nav-scrim { position:fixed; inset:0; background:rgba(2,8,10,.55); z-index:34; }
       .nav-scrim.open { display:block; }
       .topbar { padding:10px 12px; }
-      .content { padding:14px 12px 28px; }
+      .content { padding:14px 12px 110px; }
       .search { min-width:0; max-width:none; flex:1; }
+      .help-fab { right:14px; bottom:14px; }
+      .help-panel { right:12px; bottom:70px; width:calc(100vw - 24px); height:min(480px, calc(100vh - 96px)); }
     }
   </style>
 </head>
@@ -241,7 +338,7 @@
         <button type="button" id="langEn" class="on">EN</button>
         <button type="button" id="langZh">繁</button>
       </div>
-      <button class="icon-btn" id="helpBtn" title="Guide">?</button>
+      <button class="icon-btn help-top" id="helpBtn" type="button" title="Ask Cgab" aria-label="Ask Cgab" aria-controls="helpPanel" aria-expanded="false">?</button>
       <button class="btn ghost" id="refresh" data-i18n="btn.refresh">Refresh</button>
     </header>
     <div class="books-banner" id="booksBanner" data-i18n="desk.books">Two books, two directories. Desk broker journal/ledger is backend/data/. Streamlit Kelly/lab portfolio is data/. They are not the same book.</div>
@@ -249,6 +346,30 @@
   </section>
 </div>
 <div id="navScrim" class="nav-scrim"></div>
+<button type="button" class="help-fab" id="helpFab" aria-controls="helpPanel" aria-expanded="false">
+  <span class="fab-ico" aria-hidden="true">?</span>
+  Ask Cgab
+</button>
+<aside class="help-panel" id="helpPanel" role="dialog" aria-labelledby="helpTitle" aria-modal="false" hidden>
+  <div class="help-hd">
+    <div>
+      <h3 id="helpTitle">Ask Cgab</h3>
+      <p class="sub" id="helpSub">Help / guide · not AI Mode</p>
+    </div>
+    <button type="button" class="help-close" id="helpClose" aria-label="Close">×</button>
+  </div>
+  <p class="help-honesty" id="helpHonesty">教學說明 · 不是 verified／live · 不會下單或改規則 · 自動交易請去 AI Mode</p>
+  <div class="help-status">
+    <span class="sc paper" id="helpChipPaper">PAPER</span>
+    <span class="sc" id="helpChipAuto">AUTO OFF</span>
+    <span class="hint" id="helpChipHint">read-only · chat cannot change this</span>
+  </div>
+  <div class="help-msgs" id="helpMsgs" aria-live="polite"></div>
+  <form class="help-composer" id="helpComposer" autocomplete="off">
+    <input type="text" id="helpInput" maxlength="400" placeholder="Ask about Desk, Scan, or paper auto…" aria-label="Help message" />
+    <button type="submit" class="send" id="helpSend">Send</button>
+  </form>
+</aside>
 <div id="tour" class="tour-mask hidden"></div>
 <script>
 const I18N = {
@@ -471,9 +592,29 @@ const I18N = {
     "t4.t":"Why you may see no trades",
     "t4.b":"Run Scan so fund scores feed the AI (≥65). Then signals must still pass RSI/BB, Kelly, and risk gates.",
     "t5.t":"English and 繁體中文",
-    "t5.b":"Switch anytime with EN / 繁. Replay this tour from Guide or the ? button.",
+    "t5.b":"Switch anytime with EN / 繁. Replay this tour from Guide. The ? button and Ask Cgab open the teaching chat (not AI Mode).",
     "guide.title":"New user guide",
-    "guide.lead":"A short map of Cgab. Details are also in docs/CGAB_USER_GUIDE.md."
+    "guide.lead":"A short map of Cgab. Details are also in docs/CGAB_USER_GUIDE.md.",
+    "guide.ask":"Open Ask Cgab",
+    "help.title":"Ask Cgab · teaching",
+    "help.sub":"Help / guide · not AI Mode",
+    "help.honesty":"Teaching only · not verified/live · will not place orders or change rules · paper auto is in AI Mode",
+    "help.hint":"read-only · chat cannot change this",
+    "help.empty.title":"Ask about Desk, Scan, or paper auto",
+    "help.empty.body":"Teaching only. Knowledge = User Guide and in-app Guide/tour. Not AI Mode, not an order agent.",
+    "help.ph":"Ask about Desk, Scan, or paper auto…",
+    "help.send":"Send",
+    "help.close":"Close",
+    "help.you":"You",
+    "help.bot":"Ask Cgab",
+    "help.refuse":"Ask Cgab · refused",
+    "help.q.scan":"What is Scan?",
+    "help.q.empty":"Why no holdings?",
+    "help.q.aimode":"How do I open AI Mode?",
+    "help.q.deep":"What is Deep?",
+    "help.q.chart":"What is Chart?",
+    "help.pending":"Thinking…",
+    "help.error":"Help chat is unavailable. This did not place an order."
   },
   "zh-TW": {
     "brand.tag":"美股 AI 工作台",
@@ -694,9 +835,29 @@ const I18N = {
     "t4.t":"為什麼可能沒有成交",
     "t4.b":"先跑掃描讓基本面分數餵給 AI（≥65）。訊號還要通過 RSI/布林、凱利倉位與風控。",
     "t5.t":"英文與繁體中文",
-    "t5.b":"用頂欄 EN / 繁 隨時切換。之後可從教學或問號再看導覽。",
+    "t5.b":"用頂欄 EN / 繁 隨時切換。第一次導覽可從教學重看。問號與 Ask Cgab 打開教學聊天（不是 AI Mode）。",
     "guide.title":"新手教學",
-    "guide.lead":"Cgab 的快速地圖。完整說明也寫在 docs/CGAB_USER_GUIDE.md。"
+    "guide.lead":"Cgab 的快速地圖。完整說明也寫在 docs/CGAB_USER_GUIDE.md。",
+    "guide.ask":"開啟 Ask Cgab",
+    "help.title":"Ask Cgab · 教學說明",
+    "help.sub":"Help／導覽 · 不是 AI Mode",
+    "help.honesty":"教學說明 · 不是 verified／live · 不會下單或改規則 · 自動交易請去 AI Mode",
+    "help.hint":"唯讀示意 · 聊天無法改狀態",
+    "help.empty.title":"問我 Desk／掃描／紙上自動的問題",
+    "help.empty.body":"只做教學說明。知識＝User Guide 與畫面導覽。不是 AI Mode，也不是下單代理。",
+    "help.ph":"輸入問題…（例如：Deep 跟 Scan 差在哪）",
+    "help.send":"送出",
+    "help.close":"關閉",
+    "help.you":"你",
+    "help.bot":"Ask Cgab",
+    "help.refuse":"Ask Cgab · 拒答",
+    "help.q.scan":"Scan 是什麼",
+    "help.q.empty":"為何沒持倉",
+    "help.q.aimode":"AI Mode 怎麼開",
+    "help.q.deep":"Deep 是什麼",
+    "help.q.chart":"Chart 是什麼",
+    "help.pending":"思考中…",
+    "help.error":"教學聊天暫時無法使用。這次沒有下單。"
   }
 };
 const $ = (s) => document.querySelector(s);
@@ -704,6 +865,7 @@ const $$ = (s) => [...document.querySelectorAll(s)];
 const root = $("#root");
 let page = "desk", symbol = "AAPL", account = null, worker = null, tourStep = 0, lang = localStorage.getItem("cgab.lang") || "en";
 let paperControls = false, metaState = null;
+let helpOpen = false, helpBusy = false, helpMessages = [];
 let chartPeriod = localStorage.getItem("cgab.chart.period") || "6mo";
 let chartInd = null;
 let _deskCharts = [];
@@ -849,6 +1011,7 @@ function applyChrome(){
   $("#chipPaper").style.display = paper ? "" : "none";
   $("#paperPill").style.display = paper ? "" : "none";
   applyRoleChrome();
+  syncHelpChrome();
 }
 async function api(path, opt={}) {
   const headers = operatorHeaders(opt.headers||{});
@@ -879,13 +1042,14 @@ function navTo(p){
   $$(".nav-btn[data-page]").forEach(b=>b.classList.toggle("on", b.dataset.page===p));
   closeMobileNav();
   render();
+  if(p==="guide") setHelpOpen(true);
 }
 $$(".nav-btn[data-page]").forEach(b=>b.onclick=()=>navTo(b.dataset.page));
 $("#refresh").onclick=async()=>{ await Promise.all([loadAccount(), loadWorker()]); render(); };
 $("#search").addEventListener("keydown", e=>{ if(e.key==="Enter"){ symbol=e.target.value.toUpperCase(); navTo("research"); }});
 $("#langEn").onclick=()=>{ lang="en"; localStorage.setItem("cgab.lang", lang); applyChrome(); render(); };
 $("#langZh").onclick=()=>{ lang="zh-TW"; localStorage.setItem("cgab.lang", lang); applyChrome(); render(); };
-$("#helpBtn").onclick=()=>{ tourStep=0; showTour(); };
+$("#helpBtn").onclick=()=>setHelpOpen(true);
 const menuBtn = $("#menuBtn");
 if(menuBtn){
   menuBtn.onclick=()=>{
@@ -898,6 +1062,156 @@ if(menuBtn){
 }
 const navScrim = $("#navScrim");
 if(navScrim) navScrim.onclick=()=>closeMobileNav();
+
+function helpAutoLabel(){
+  if(!paperControls) return "";
+  const on = workerProcessOn(worker);
+  const stale = !!(worker && worker.stale);
+  const unverified = !!(worker && (worker.unverified || worker.process_evidence==="heartbeat_unverified"));
+  return on ? "AUTO ON" : (stale ? "AUTO STALE" : unverified ? "AUTO UNVERIFIED" : "AUTO OFF");
+}
+function syncHelpChrome(){
+  const title = $("#helpTitle");
+  if(title) title.textContent = t("help.title");
+  const sub = $("#helpSub");
+  if(sub) sub.textContent = t("help.sub");
+  const honesty = $("#helpHonesty");
+  if(honesty) honesty.textContent = t("help.honesty");
+  const hint = $("#helpChipHint");
+  if(hint) hint.textContent = t("help.hint");
+  const input = $("#helpInput");
+  if(input) input.placeholder = t("help.ph");
+  const send = $("#helpSend");
+  if(send) send.textContent = t("help.send");
+  const close = $("#helpClose");
+  if(close) close.setAttribute("aria-label", t("help.close"));
+  const paper = (metaState?.paper !== false) && (worker?.paper !== false);
+  const paperEl = $("#helpChipPaper");
+  if(paperEl) paperEl.style.display = paper ? "" : "none";
+  const autoEl = $("#helpChipAuto");
+  if(autoEl){
+    if(!paperControls){
+      autoEl.style.display = "none";
+    } else {
+      autoEl.style.display = "";
+      autoEl.textContent = helpAutoLabel() || "AUTO OFF";
+    }
+  }
+  if(helpOpen) renderHelpMessages();
+}
+function setHelpOpen(open){
+  helpOpen = !!open;
+  const panel = $("#helpPanel");
+  const fab = $("#helpFab");
+  const top = $("#helpBtn");
+  if(panel){
+    panel.classList.toggle("open", helpOpen);
+    panel.hidden = !helpOpen;
+  }
+  if(fab) fab.setAttribute("aria-expanded", helpOpen ? "true" : "false");
+  if(top) top.setAttribute("aria-expanded", helpOpen ? "true" : "false");
+  if(helpOpen){
+    syncHelpChrome();
+    renderHelpMessages();
+    setTimeout(()=>{ try { $("#helpInput").focus(); } catch(e){} }, 30);
+  }
+}
+function renderHelpMessages(){
+  const list = $("#helpMsgs");
+  if(!list) return;
+  list.innerHTML = "";
+  if(!helpMessages.length){
+    const wrap = document.createElement("div");
+    wrap.className = "help-empty";
+    const chips = paperControls
+      ? [t("help.q.scan"), t("help.q.empty"), t("help.q.aimode")]
+      : [t("help.q.scan"), t("help.q.deep"), t("help.q.chart")];
+    wrap.innerHTML =
+      "<strong>"+esc(t("help.empty.title"))+"</strong>"+
+      esc(t("help.empty.body"))+
+      '<div class="help-quick">'+
+      chips.map(q=>'<button type="button" class="quick-chip" data-q="'+esc(q)+'">'+esc(q)+"</button>").join("")+
+      "</div>";
+    list.appendChild(wrap);
+    wrap.querySelectorAll(".quick-chip").forEach(btn=>{
+      btn.addEventListener("click", ()=>sendHelpMessage(btn.getAttribute("data-q")));
+    });
+    return;
+  }
+  helpMessages.forEach(m=>{
+    const el = document.createElement("div");
+    el.className = "help-msg " + (m.role==="user" ? "user" : "bot") + (m.refuse ? " refuse" : "");
+    const who = document.createElement("span");
+    who.className = "who";
+    who.textContent = m.role==="user" ? t("help.you") : (m.refuse ? t("help.refuse") : t("help.bot"));
+    el.appendChild(who);
+    el.appendChild(document.createTextNode(m.text));
+    list.appendChild(el);
+  });
+  list.scrollTop = list.scrollHeight;
+}
+function helpClaimedFill(text){
+  const s = String(text || "");
+  if (s.indexOf("不會假裝已成交") >= 0 || /will not pretend a fill/i.test(s)) return false;
+  return /成交了|已送出|execution is verified|submitted your order|規則已改好|filled at\s+\d/i.test(s);
+}
+function helpSafeReply(data){
+  let reply = String((data && data.reply) || t("help.error"));
+  let refuse = !!(data && data.refused);
+  if (helpClaimedFill(reply)) {
+    refuse = true;
+    reply = t("help.honesty");
+  }
+  return { reply, refuse };
+}
+async function sendHelpMessage(text){
+  const q = String(text || "").trim();
+  if(!q || helpBusy) return;
+  helpMessages.push({ role:"user", text:q });
+  if(helpMessages.length > 40) helpMessages = helpMessages.slice(-40);
+  renderHelpMessages();
+  const input = $("#helpInput");
+  if(input) input.value = "";
+  helpBusy = true;
+  const send = $("#helpSend");
+  if(send) send.disabled = true;
+  helpMessages.push({ role:"bot", text:t("help.pending"), refuse:false, pending:true });
+  renderHelpMessages();
+  try {
+    const data = await api("/api/help-chat", {
+      method:"POST",
+      body: JSON.stringify({ message:q, lang })
+    });
+    helpMessages = helpMessages.filter(m=>!m.pending);
+    const safe = helpSafeReply(data);
+    helpMessages.push({
+      role:"bot",
+      text: safe.reply,
+      refuse: safe.refuse
+    });
+  } catch(e){
+    helpMessages = helpMessages.filter(m=>!m.pending);
+    helpMessages.push({ role:"bot", text:t("help.error"), refuse:true });
+  }
+  helpBusy = false;
+  if(send) send.disabled = false;
+  if(helpMessages.length > 40) helpMessages = helpMessages.slice(-40);
+  renderHelpMessages();
+}
+const helpFab = $("#helpFab");
+if(helpFab) helpFab.onclick=()=>setHelpOpen(!helpOpen);
+const helpClose = $("#helpClose");
+if(helpClose) helpClose.onclick=()=>setHelpOpen(false);
+const helpComposer = $("#helpComposer");
+if(helpComposer){
+  helpComposer.addEventListener("submit", (e)=>{
+    e.preventDefault();
+    sendHelpMessage($("#helpInput") && $("#helpInput").value);
+  });
+}
+document.addEventListener("keydown", (e)=>{
+  if(e.key==="Escape" && helpOpen) setHelpOpen(false);
+});
 
 function showTour(){
   const total=6;
@@ -2162,9 +2476,13 @@ async function guide(){
   const pick = (s) => lang==="zh-TW" ? (s.zh||s.en) : (s.en||s.zh);
   root.innerHTML = `<div class="card"><h3>${t("guide.title")}</h3>
     <p class="muted">${t("guide.lead")}</p>
-    <button class="btn" id="replay">${t("btn.tour")}</button>
+    <div class="row" style="margin:10px 0 0">
+      <button class="btn" id="openHelp">${t("guide.ask")}</button>
+      <button class="btn ghost" id="replay">${t("btn.tour")}</button>
+    </div>
     <div style="margin-top:16px">${steps.map((s,i)=>{ const x=pick(s); return `<div class="guide-step"><b>${i+1}. ${x.title}</b><p class="muted" style="margin:8px 0 0">${x.body}</p></div>`; }).join("")}</div>
   </div>`;
+  $("#openHelp").onclick=()=>setHelpOpen(true);
   $("#replay").onclick=()=>{ tourStep=0; showTour(); };
 }
 
